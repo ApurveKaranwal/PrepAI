@@ -32,7 +32,7 @@ export default function PerformanceAnalytics({ user }) {
   useEffect(() => {
     async function fetchHistory() {
       try {
-        const res = await fetch("http://localhost:8000/api/history");
+        const res = await fetch("http://localhost:8001/api/history");
         if (res.ok) {
           const data = await res.json();
           if (data) {

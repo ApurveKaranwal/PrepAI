@@ -90,6 +90,18 @@ def init_db():
         )
     """)
     
+    # Create messages table for conversational interview
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
+        )
+    """)
+    
     conn.commit()
     conn.close()
     print("SQLite Database successfully initialized at:", DB_FILE)
@@ -199,6 +211,24 @@ def save_questions(session_id: int, questions_list: list):
         )
     conn.commit()
     conn.close()
+
+def save_message(session_id: int, role: str, content: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
+        (session_id, role, content)
+    )
+    conn.commit()
+    conn.close()
+
+def get_messages_for_session(session_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC", (session_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def save_answer(session_id: int, question_id_in_session: int, answer_text: str, score: float, wpm: int, fillers: int, live_tip: str, matched_keywords: list, missing_keywords: list):
     conn = get_db_connection()

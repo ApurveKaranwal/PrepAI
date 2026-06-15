@@ -4,6 +4,7 @@ import os
 import zipfile
 import requests
 import json
+import random
 import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -46,6 +47,10 @@ if client:
     print("Groq API successfully initialized for live evaluations using llama-3.3-70b-versatile!")
 else:
     print("Groq API key not set in backend/.env. Running on local ML engine.")
+
+class TTSRequest(BaseModel):
+    text: str
+    language_code: str = "en-IN"
 
 class AnswerSubmission(BaseModel):
     session_id: int
@@ -118,81 +123,107 @@ def download_github_code(github_url: str) -> List[dict]:
     return repo_files
 
 # Prompt templates for Groq
-SYSTEM_PROMPT = """You are an expert technical interviewer. Your task is to analyze the candidate's Resume text and their GitHub repository files, and generate exactly 4 highly technical mock interview questions.
-The questions must alternate between:
-- Conceptual questions about their codebase architecture, asynchronous patterns, state management, or API designs.
-- Code snippet analysis questions where you extract an actual code segment (10-20 lines) from one of their source files and ask them to explain its execution order, execution context, or potential issues.
+SYSTEM_PROMPT = """# Role & Objective
+You are an elite, AI-powered Technical Interview Simulator designed to prepare candidates for highly competitive software engineering roles. Your goal is to conduct a realistic, high-pressure, two-phase technical interview tailored exactly to the target company's actual hiring standards and patterns.
 
-You must output a JSON object with a single root key "questions" containing a list of exactly 4 objects. Each object must have these keys:
-- "id": integer (1 to 4)
-- "type": "conceptual" or "code-analysis"
-- "title": string (short title)
-- "code": string (only if type is "code-analysis", containing the code block)
-- "question": string (the question text)
-- "initialTip": string (a tip to help them answer)
-- "streamTranscript": list of strings (3 sentences simulating what their voice response might look like)
+You will be supplied with the user's target company, their Resume, and a structured summary of their project data scraped directly from their GitHub repository. You will use this technical context to conduct the interview sequentially.
 
-Do not return any conversational text or explanation outside the JSON block. Return ONLY the JSON object.
+---
+
+# Phase 1: Deep GitHub Project Grilling
+Act as a Principal Engineer / Bar Raiser from the candidate's target company. Analyze the scraped repository context and stress-test their implementation.
+1. **Codebase-Specific Scrutiny:** Avoid generic questions. Challenge their choices on concurrency, technical debt, caching layers, and database schemas found in the provided code snippet.
+2. **System Resiliency & "What-If" Stress Tests:** Present demanding infrastructure failure scenarios tailored to their specific stack.
+3. **Execution Flow:** Ask exactly **one core question at a time**. Wait for the candidate to reply, analyze their answer critically, provide immediate sharp feedback, and then ask a follow-up question.
+
+---
+
+# Phase 2: Historical Pattern-Based DSA Round
+Explicitly state that you are moving to the DSA technical round. Mirror the exact, high-frequency algorithmic patterns that historical applicant data shows top companies favor.
+1. Present a distinct coding problem.
+2. Require the user to explain logic and Big O first.
+
+---
+
+# Strict Interaction Rules
+- **No Bulleted Lists of Questions:** Ask exactly ONE question per turn.
+- **Realistic Demeanor:** Be professional, deeply technical, and rigorous. Do not sugarcoat flaws.
+- **Anti-Vagueness Enforcement:** If the candidate gives a vague, evasive, or extremely brief answer (e.g., "I don't know", "I just used a library", "stuff"), DO NOT move on to the next question. You MUST stay on the current topic, call out their lack of depth in the `feedback` field, and demand a specific, technical elaboration in the `question` field.
+- **The Final Evaluation:** Only after both phases are fully completed (after about 4-5 total questions), break character to deliver a comprehensive performance scorecard detailing: Project Architecture Rating (1-10), DSA Rating (1-10), Red Flags.
+
+IMPORTANT: YOU MUST ALWAYS RESPOND IN JSON FORMAT.
+Your JSON must strictly match this schema:
+{
+    "feedback": "Your evaluation/feedback on their PREVIOUS answer (leave empty if this is the first question)",
+    "question": "Your next question for the user (or the final evaluation scorecard if the interview is over)",
+    "is_final": boolean (true ONLY if you are giving the final scorecard, false otherwise)
+}
 """
 
-EVAL_SYSTEM_PROMPT = """You are an expert technical interviewer. You will receive a question and a candidate's answer.
-Analyze the answer for technical correctness and depth. Compare it against standard engineering practices.
-You must output a JSON object containing:
-- "score": a float score between 1.0 and 10.0.
-- "live_tip": a brief, constructive tip (1-2 sentences) on how they can improve their response or what technical terms they missed.
-- "matched_keywords": list of technical keywords they correctly mentioned.
-- "missing_keywords": list of technical keywords they should have mentioned.
-
-Return ONLY the JSON block.
-"""
-
-def generate_groq_questions(resume_text: str, repo_files: List[dict]) -> List[dict]:
-    if not client:
-        return []
-    
-    files_summary = ""
-    # Sort files by content length (larger files usually contain more logic) and limit to top 15
-    sorted_files = sorted(repo_files, key=lambda f: len(f['content']), reverse=True)
-    for f in sorted_files[:15]:
-        files_summary += f"\n--- File: {f['name']} ---\n{f['content'][:1000]}\n"
-        
-    user_prompt = f"Resume Content:\n{resume_text}\n\nGitHub Codebase:\n{files_summary}"
-    
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
-            ],
-            model="llama-3.3-70b-versatile",
-            response_format={"type": "json_object"},
-            temperature=0.3,
-        )
-        result = json.loads(chat_completion.choices[0].message.content)
-        return result.get("questions", [])
-    except Exception as e:
-        print(f"Failed to generate questions from Groq: {e}")
-        return []
-
-def evaluate_groq_answer(question_text: str, candidate_answer: str) -> dict:
+def generate_initial_question(resume_text: str, repo_files: List[dict], role: str) -> dict:
     if not client:
         return {}
     
-    user_prompt = f"Question:\n{question_text}\n\nCandidate Answer:\n{candidate_answer}"
+    files_summary = ""
+    sorted_files = sorted(repo_files, key=lambda f: len(f['content']), reverse=True)
+    selected_files = []
+    
+    if len(sorted_files) <= 10:
+        selected_files = sorted_files
+    else:
+        top_files = sorted_files[:3]
+        remaining_files = sorted_files[3:]
+        random_files = random.sample(remaining_files, min(7, len(remaining_files)))
+        selected_files = top_files + random_files
+        random.shuffle(selected_files)
+
+    for f in selected_files:
+        files_summary += f"\n--- File: {f['name']} ---\n{f['content'][:1500]}\n"
+        
+    user_prompt = f"Candidate Target Role: {role}\nResume Content:\n{resume_text}\n\nGitHub Codebase:\n{files_summary}\n\nStart the interview now with your first Phase 1 question."
+    
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt}
+    ]
     
     try:
         chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": EVAL_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
-            ],
-            model="llama-3.1-8b-instant",
+            messages=messages,
+            model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"},
-            temperature=0.2,
+            temperature=0.7,
         )
-        return json.loads(chat_completion.choices[0].message.content)
+        result = json.loads(chat_completion.choices[0].message.content)
+        return {
+            "result": result,
+            "raw_prompt": user_prompt
+        }
     except Exception as e:
-        print(f"Failed to evaluate answer using Groq: {e}")
+        print(f"Failed to generate initial question: {e}")
+        return {}
+
+def generate_next_turn(session_id: int) -> dict:
+    if not client:
+        return {}
+        
+    history = database.get_messages_for_session(session_id)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+        
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=messages,
+            model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"},
+            temperature=0.7,
+        )
+        result = json.loads(chat_completion.choices[0].message.content)
+        return result
+    except Exception as e:
+        print(f"Failed to generate next turn: {e}")
         return {}
 
 @app.get("/")
@@ -263,84 +294,68 @@ async def ingest_details(
                 role = r_name
                 break
 
-    # 4. Generate Questions: Groq Llama-3.3 or Local Fallback model
-    questions = []
-    if client:
-        questions = generate_groq_questions(resume_text, repo_files)
-        
-    if not questions:
-        print("Using local keyword question builder fallback...")
-        questions = ml_engine.generate_questions_from_stack(resume_text, repo_files)
-        
-    # 5. Create Session in SQLite database and save questions
+    # 4. Generate Initial Question & Create Session
     session_id = database.create_session(github_url, resume_name, resume_text, role)
-    database.save_questions(session_id, questions)
-    print(f"Created real session ID: {session_id} for role: {role}")
+    
+    initial_payload = generate_initial_question(resume_text, repo_files, role)
+    if initial_payload and "result" in initial_payload:
+        database.save_message(session_id, "user", initial_payload["raw_prompt"])
+        database.save_message(session_id, "assistant", json.dumps(initial_payload["result"]))
+        first_q = initial_payload["result"]
+    else:
+        first_q = {"question": "Could you explain your background and a recent project?", "feedback": "", "is_final": False}
+        database.save_message(session_id, "assistant", json.dumps(first_q))
+
+    print(f"Created stateful session ID: {session_id} for role: {role}")
 
     return {
         "status": "success",
         "session_id": session_id,
         "github_url": github_url,
-        "questions": questions
+        "first_question": first_q
     }
 
 @app.post("/api/submit-answer")
 def submit_answer(submission: AnswerSubmission):
     print(f"Submitting answer for Session: {submission.session_id}, Question: {submission.question_id}")
     
-    # 1. Fetch question text from database
-    questions = database.get_questions_for_session(submission.session_id)
-    q_data = next((q for q in questions if q["id"] == submission.question_id), {})
-    q_text = q_data.get("question", "Explain your implementation details.")
-    
-    # 2. Estimate WPM & fillers
+    # Estimate WPM & fillers
     word_count = len(submission.answer.split())
-    # Standard conversation pacing WPM
     wpm = 135 if word_count > 30 else 120
-    
     cleaned_answer = re.sub(r"[^\w\s]", "", submission.answer.lower())
     filler_list = ["um", "uh", "like", "actually", "basically", "so", "well"]
     filler_count = sum(1 for t in cleaned_answer.split() if t in filler_list)
     
-    # 3. Evaluate: Groq Llama-3.1 or Local fallback
-    if client:
-        evaluation = evaluate_groq_answer(q_text, submission.answer)
-        if evaluation:
-            score = evaluation.get("score", 7.5)
-            live_tip = evaluation.get("live_tip", "Good answer structure!")
-            matched_keywords = evaluation.get("matched_keywords", [])
-            missing_keywords = evaluation.get("missing_keywords", [])
-        else:
-            score, live_tip, matched_keywords, missing_keywords = 7.0, "Could not compute live metrics.", [], []
-    else:
-        # Fallback to local model
-        evaluation = ml_engine.evaluate_answer(q_text, submission.answer)
-        score = evaluation["score"]
-        live_tip = evaluation["live_tip"]
-        matched_keywords = evaluation["matched_keywords"]
-        missing_keywords = evaluation["missing_keywords"]
-        
-    # 4. Save answer to SQLite DB
+    # 1. Save candidate's answer to DB
+    database.save_message(submission.session_id, "user", submission.answer)
+    
+    # 2. Save to old 'answers' table for analytics compatibility (dummy metrics since we defer to next msg)
     database.save_answer(
         session_id=submission.session_id,
         question_id_in_session=submission.question_id,
         answer_text=submission.answer,
-        score=score,
+        score=8.0,
         wpm=wpm,
         fillers=filler_count,
-        live_tip=live_tip,
-        matched_keywords=matched_keywords,
-        missing_keywords=missing_keywords
+        live_tip="Computing next step...",
+        matched_keywords=[],
+        missing_keywords=[]
     )
     
+    # 3. Generate Next Turn using full history
+    next_turn = generate_next_turn(submission.session_id)
+    
+    if next_turn:
+        database.save_message(submission.session_id, "assistant", json.dumps(next_turn))
+    else:
+        next_turn = {"question": "Could you clarify your previous point?", "feedback": "Connection error", "is_final": False}
+        database.save_message(submission.session_id, "assistant", json.dumps(next_turn))
+        
     return {
         "status": "success",
         "wpm": wpm,
         "fillers": filler_count,
-        "live_tip": live_tip,
-        "score": score,
-        "matched_keywords": matched_keywords,
-        "missing_keywords": missing_keywords
+        "next_turn": next_turn
     }
 
 @app.post("/api/end-session")
@@ -352,6 +367,93 @@ def end_session(request: EndSessionRequest):
         "score": result["score"],
         "duration": result["duration"]
     }
+
+@app.post("/api/text-to-speech")
+def text_to_speech(req: TTSRequest):
+    sarvam_api_key = os.environ.get("SARVAM_API_KEY")
+    if not sarvam_api_key:
+        raise HTTPException(status_code=400, detail="Sarvam API key not set in backend/.env file.")
+    
+    text_to_speak = req.text
+    # 1. Translate to Indic language if not en-IN
+    if req.language_code != "en-IN":
+        try:
+            translate_url = "https://api.sarvam.ai/translate"
+            headers = {
+                "api-subscription-key": sarvam_api_key,
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "input": req.text,
+                "source_language_code": "en-IN",
+                "target_language_code": req.language_code
+            }
+            r = requests.post(translate_url, json=payload, headers=headers, timeout=10)
+            if r.status_code == 200:
+                text_to_speak = r.json().get("translated_text", req.text)
+            else:
+                print(f"Sarvam translation failed status {r.status_code}: {r.text}")
+        except Exception as e:
+            print(f"Translation exception: {e}")
+
+    # 2. Convert to Speech using bulbul:v3
+    try:
+        tts_url = "https://api.sarvam.ai/text-to-speech"
+        headers = {
+            "api-subscription-key": sarvam_api_key,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "text": text_to_speak,
+            "target_language_code": req.language_code,
+            "speaker": "shubh",
+            "model": "bulbul:v3"
+        }
+        r = requests.post(tts_url, json=payload, headers=headers, timeout=10)
+        if r.status_code == 200:
+            audios = r.json().get("audios", [])
+            if audios:
+                return {
+                    "status": "success",
+                    "audio_base64": audios[0],
+                    "translated_text": text_to_speak if req.language_code != "en-IN" else None
+                }
+        raise HTTPException(status_code=r.status_code if r.status_code >= 400 else 500, detail=f"Sarvam TTS failed: {r.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/speech-to-text")
+def speech_to_text(file: UploadFile = File(...), language_code: str = Form("en-IN")):
+    sarvam_api_key = os.environ.get("SARVAM_API_KEY")
+    if not sarvam_api_key:
+        raise HTTPException(status_code=400, detail="Sarvam API key not set in backend/.env file.")
+    
+    try:
+        audio_bytes = file.file.read()
+        stt_url = "https://api.sarvam.ai/speech-to-text"
+        headers = {
+            "api-subscription-key": sarvam_api_key
+        }
+        data = {
+            "model": "saaras:v3",
+            "mode": "translate"
+        }
+        files = {
+            "file": (file.filename, audio_bytes, file.content_type or "audio/webm")
+        }
+        
+        r = requests.post(stt_url, files=files, data=data, headers=headers, timeout=15)
+        if r.status_code == 200:
+            res_json = r.json()
+            return {
+                "status": "success",
+                "transcript": res_json.get("transcript", ""),
+                "detected_language": res_json.get("language_code", "")
+            }
+        raise HTTPException(status_code=r.status_code if r.status_code >= 400 else 500, detail=f"Sarvam STT failed: {r.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/history")
 def get_history():
@@ -478,4 +580,66 @@ async def analyze_resume(
          raise HTTPException(status_code=500, detail="Failed to parse analysis from AI.")
     except Exception as e:
         print(f"Error analyzing resume: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/resume-rewrite")
+async def rewrite_resume(
+    resume: UploadFile = File(...),
+    job_role: str = Form(...)
+):
+    if not client:
+        raise HTTPException(status_code=500, detail="Groq API key not configured")
+        
+    if not resume.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF resumes are supported at this time.")
+        
+    try:
+        content = await resume.read()
+        pdf_reader = pypdf.PdfReader(io.BytesIO(content))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+            
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from the provided PDF.")
+            
+        prompt = f"""
+        You are an elite Career Coach and Resume Writer. 
+        Your task is to identify the 3 weakest experience bullet points in the provided resume and completely rewrite them to be highly optimized for the target job role: "{job_role}".
+        
+        The rewritten bullet points must:
+        - Naturally integrate missing ATS keywords relevant to the role.
+        - Start with strong action verbs.
+        - Follow the STAR method (Situation, Task, Action, Result) where possible.
+        - Emphasize quantifiable metrics and impact.
+        
+        Resume Text:
+        {text[:8000]}
+        
+        Provide your response in EXACTLY the following JSON format:
+        {{
+            "rewrites": [
+                {{
+                    "original": "The exact original weak bullet point from the resume.",
+                    "optimized": "The fully rewritten, highly impactful, ATS-optimized version.",
+                    "explanation": "A 1-sentence explanation of why this new version is better (e.g., added metrics, injected specific keywords)."
+                }}
+            ]
+        }}
+        """
+        
+        completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        
+        response_json = json.loads(completion.choices[0].message.content)
+        return {"status": "success", "data": response_json}
+        
+    except json.JSONDecodeError:
+         raise HTTPException(status_code=500, detail="Failed to parse rewrite from AI.")
+    except Exception as e:
+        print(f"Error rewriting resume: {e}")
         raise HTTPException(status_code=500, detail=str(e))
