@@ -6,6 +6,7 @@ import Sidebar from "@/components/navigation/Sidebar";
 import DashboardHome from "@/components/dashboard/DashboardHome";
 import InterviewPrep from "@/components/interview/InterviewPrep";
 import PerformanceAnalytics from "@/components/analytics/PerformanceAnalytics";
+import ResumeAnalyzer from "@/components/resume/ResumeAnalyzer";
 import { Award, BarChart3, RotateCcw, LogOut } from "lucide-react";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
 
@@ -140,6 +141,11 @@ export default function Home() {
         )}
         {activeTab === "analytics" && (
           <PerformanceAnalytics user={user} />
+        )}
+        {activeTab === "resume-analyzer" && (
+          <div className="flex-1 overflow-y-auto bg-slate-50/50 p-6">
+            <ResumeAnalyzer />
+          </div>
         )}
         {activeTab === "settings" && (
           <div className="flex-1 p-8 bg-white flex flex-col justify-center items-center select-none text-center">

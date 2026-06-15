@@ -417,3 +417,65 @@ async def process_gaze(frame: UploadFile = File(...)):
     except Exception as e:
         print(f"Error processing vision frame: {e}")
         return {"looking_at_screen": False, "error": str(e)}
+
+@app.post("/api/resume-analyze")
+async def analyze_resume(
+    resume: UploadFile = File(...),
+    job_role: str = Form(...)
+):
+    if not client:
+        raise HTTPException(status_code=500, detail="Groq API key not configured")
+        
+    if not resume.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF resumes are supported at this time.")
+        
+    try:
+        content = await resume.read()
+        pdf_reader = pypdf.PdfReader(io.BytesIO(content))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+            
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from the provided PDF.")
+            
+        prompt = f"""
+        You are an elite Technical Recruiter and an advanced ATS (Applicant Tracking System).
+        Conduct a deep, critical analysis of the following resume against the target job role: "{job_role}".
+        
+        Resume Text:
+        {text[:8000]}
+        
+        Provide your analysis in EXACTLY the following JSON format:
+        {{
+            "overall_summary": "A 2-3 sentence paragraph summarizing their overall fit and the initial impression they give for this role.",
+            "ats_score": <a number between 0 and 100 representing the match percentage>,
+            "sub_scores": {{
+                "skills": <number 0-100>,
+                "experience": <number 0-100>,
+                "formatting": <number 0-100>,
+                "impact": <number 0-100>
+            }},
+            "pros": ["detailed pro 1", "detailed pro 2"],
+            "cons": ["detailed con 1", "detailed con 2"],
+            "missing_keywords": ["keyword1", "keyword2", "tool1", "skill1"],
+            "experience_feedback": "A 2-3 sentence critique specifically on how their experience bullet points are written (e.g., use of metrics, impact, action verbs).",
+            "suggestions": ["specific actionable step 1", "specific actionable step 2"]
+        }}
+        """
+        
+        completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        response_json = json.loads(completion.choices[0].message.content)
+        return {"status": "success", "analysis": response_json}
+        
+    except json.JSONDecodeError:
+         raise HTTPException(status_code=500, detail="Failed to parse analysis from AI.")
+    except Exception as e:
+        print(f"Error analyzing resume: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
