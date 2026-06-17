@@ -164,6 +164,20 @@ export function authOnAuthStateChanged(callback) {
         callback(null);
       }
     } else {
+      // For email/password users logged in via local DB (provider === "password"),
+      // Firebase auth state is null. We must check localStorage before clearing session.
+      const cachedUserStr = typeof window !== "undefined" ? localStorage.getItem("prepflow_user") : null;
+      if (cachedUserStr) {
+        try {
+          const cachedUser = JSON.parse(cachedUserStr);
+          if (cachedUser && cachedUser.provider === "password") {
+            // Keep the local email/password user logged in
+            return;
+          }
+        } catch (e) {
+          console.error("Error reading cached user", e);
+        }
+      }
       callback(null);
     }
   });
