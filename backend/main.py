@@ -27,8 +27,13 @@ database.init_db()
 
 app = FastAPI(title="PrepAI Real Backend")
 
+# Import and include Voice Copilot router
+from voice_copilot.router import router as voice_copilot_router
+app.include_router(voice_copilot_router, prefix="/api/voice-copilot")
+
 # Enable CORS
 app.add_middleware(
+
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:3001", "*"],
     allow_credentials=True,
@@ -534,9 +539,12 @@ async def analyze_resume(
     try:
         content = await resume.read()
         pdf_reader = pypdf.PdfReader(io.BytesIO(content))
-        text = ""
+        text_parts = []
         for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text)
+        text = "\n".join(text_parts)
             
         if not text.strip():
             raise HTTPException(status_code=400, detail="Could not extract text from the provided PDF.")
@@ -596,9 +604,12 @@ async def rewrite_resume(
     try:
         content = await resume.read()
         pdf_reader = pypdf.PdfReader(io.BytesIO(content))
-        text = ""
+        text_parts = []
         for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text)
+        text = "\n".join(text_parts)
             
         if not text.strip():
             raise HTTPException(status_code=400, detail="Could not extract text from the provided PDF.")

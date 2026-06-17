@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import {
-  Upload,
+  UploadCloud,
   Link2,
   Play,
   CheckCircle,
@@ -451,25 +451,25 @@ export default function InterviewPrep({ user, onEndInterview }) {
   // INGESTION COMPONENT
   if (ingestState !== "idle" && !sessionStarted) {
     return (
-      <div className="flex-1 bg-white flex items-center justify-center p-8 font-sans text-black select-none">
-        <div className="max-w-md w-full border border-slate-100 rounded-xl shadow-sm p-8 space-y-8 text-center bg-white">
+      <div className="flex-1 bg-[#FAF6F0] flex items-center justify-center p-8 font-sans text-[#262626] select-none">
+        <div className="max-w-md w-full border border-[#DFD5C6] rounded-xl shadow-sm p-8 space-y-8 text-center bg-[#FCFAF7]">
           <div className="flex flex-col items-center justify-center">
-            <RefreshCw className="h-10 w-10 text-[#4F46E5] animate-spin mb-4" />
-            <h3 className="text-lg font-bold tracking-tight">AI Codebase Analyzer</h3>
-            <p className="text-xs text-gray-500 mt-2">Setting up your sandbox environment...</p>
+            <RefreshCw className="h-10 w-10 text-[#C85A32] animate-spin mb-4" />
+            <h3 className="text-lg font-serif font-medium tracking-tight text-[#262626]">AI Codebase Analyzer</h3>
+            <p className="text-xs text-[#6E6359] mt-2 font-medium">Setting up your sandbox environment...</p>
           </div>
 
           <div className="space-y-4 text-left">
             {/* Stage 1 */}
             <div className="flex items-center gap-3">
               {ingestState === "reading_resume" ? (
-                <div className="h-2 w-2 rounded-full bg-[#4F46E5] animate-ping" />
+                <div className="h-2 w-2 rounded-full bg-[#C85A32] animate-ping" />
               ) : ingestState !== "reading_resume" ? (
-                <CheckCircle className="h-5 w-5 text-green-500" />
+                <CheckCircle className="h-5 w-5 text-[#2E5A44]" />
               ) : (
-                <div className="h-5 w-5 rounded-full border border-gray-200" />
+                <div className="h-5 w-5 rounded-full border border-[#DFD5C6]" />
               )}
-              <span className={`text-xs font-semibold ${ingestState === "reading_resume" ? "text-black" : "text-gray-400"}`}>
+              <span className={`text-xs font-bold ${ingestState === "reading_resume" ? "text-[#262626]" : "text-[#6E6359]/60"}`}>
                 Reading Resume data...
               </span>
             </div>
@@ -477,13 +477,13 @@ export default function InterviewPrep({ user, onEndInterview }) {
             {/* Stage 2 */}
             <div className="flex items-center gap-3">
               {ingestState === "scraping_github" ? (
-                <div className="h-2 w-2 rounded-full bg-[#4F46E5] animate-ping" />
+                <div className="h-2 w-2 rounded-full bg-[#C85A32] animate-ping" />
               ) : ingestState === "parsing_code" || ingestState === "completed" ? (
-                <CheckCircle className="h-5 w-5 text-green-500" />
+                <CheckCircle className="h-5 w-5 text-[#2E5A44]" />
               ) : (
-                <div className="h-5 w-5 rounded-full border border-gray-200" />
+                <div className="h-5 w-5 rounded-full border border-[#DFD5C6]" />
               )}
-              <span className={`text-xs font-semibold ${ingestState === "scraping_github" ? "text-black" : "text-gray-400"}`}>
+              <span className={`text-xs font-bold ${ingestState === "scraping_github" ? "text-[#262626]" : "text-[#6E6359]/60"}`}>
                 Scraping GitHub Repository...
               </span>
             </div>
@@ -491,21 +491,21 @@ export default function InterviewPrep({ user, onEndInterview }) {
             {/* Stage 3 */}
             <div className="flex items-center gap-3">
               {ingestState === "parsing_code" ? (
-                <div className="h-2 w-2 rounded-full bg-[#4F46E5] animate-ping" />
+                <div className="h-2 w-2 rounded-full bg-[#C85A32] animate-ping" />
               ) : ingestState === "completed" ? (
-                <CheckCircle className="h-5 w-5 text-green-500" />
+                <CheckCircle className="h-5 w-5 text-[#2E5A44]" />
               ) : (
-                <div className="h-5 w-5 rounded-full border border-gray-200" />
+                <div className="h-5 w-5 rounded-full border border-[#DFD5C6]" />
               )}
-              <span className={`text-xs font-semibold ${ingestState === "parsing_code" ? "text-black" : "text-gray-400"}`}>
+              <span className={`text-xs font-bold ${ingestState === "parsing_code" ? "text-[#262626]" : "text-[#6E6359]/60"}`}>
                 Parsing repository code snippets...
               </span>
             </div>
           </div>
 
-          <div className="w-full bg-gray-100 rounded-full h-1 overflow-hidden">
+          <div className="w-full bg-[#FAF6F0] rounded-full h-1 overflow-hidden">
             <div
-              className="bg-[#4F46E5] h-1 transition-all duration-500"
+              className="bg-[#C85A32] h-1 transition-all duration-500"
               style={{
                 width:
                   ingestState === "reading_resume"
@@ -525,98 +525,153 @@ export default function InterviewPrep({ user, onEndInterview }) {
 
   if (ingestState === "idle" && !sessionStarted) {
     return (
-      <div className="flex-1 bg-white overflow-y-auto h-screen flex flex-col justify-between py-12 px-8 font-sans text-black">
-        <div className="max-w-xl mx-auto w-full space-y-8 my-auto">
-          <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight">GitHub & Resume AI Interrogator</h1>
-            <p className="text-xs text-gray-500 mt-2">
-              Upload your Resume and supply a GitHub link to run a mock interview session customized to your repository code.
-            </p>
-          </div>
-
-          <form onSubmit={handleStartIngestion} className="space-y-6">
-            {/* Resume File */}
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 font-mono mb-2">
-                1. Upload Resume
-              </label>
-              <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                className={`flex flex-col items-center justify-center border border-dashed rounded-lg p-8 cursor-pointer transition-colors ${
-                  dragOver ? "border-[#4F46E5] bg-indigo-50/20" : resumeFile ? "border-green-200 bg-green-50/10" : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <input
-                  id="resume-file"
-                  type="file"
-                  accept=".pdf,.docx"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      setResumeFile(e.target.files[0]);
-                    }
-                  }}
-                  className="hidden"
-                />
-                <label htmlFor="resume-file" className="cursor-pointer flex flex-col items-center">
-                  {resumeFile ? (
-                    <>
-                      <FileText className="h-8 w-8 text-green-500 mb-2" />
-                      <span className="text-xs font-semibold text-gray-800">{resumeFile.name}</span>
-                      <span className="text-[10px] text-gray-400 mt-1">Uploaded. Click to replace.</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                      <span className="text-xs font-semibold text-gray-700">Drag & drop your Resume, or browse</span>
-                      <span className="text-[10px] text-gray-400 mt-1">Supports PDF, DOCX up to 10MB</span>
-                    </>
-                  )}
-                </label>
+      <div className="flex-1 bg-[#FAF6F0] overflow-y-auto h-screen flex flex-col justify-between py-12 px-8 font-sans text-[#262626]">
+        <div className="max-w-5xl mx-auto w-full my-auto py-4">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+            
+            {/* Left Column: Product Info & Features */}
+            <div className="lg:col-span-5 space-y-6 text-left">
+              <div className="space-y-2.5">
+                <span className="text-[10px] font-bold uppercase tracking-widest bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/20 px-3 py-1 rounded-full font-mono">
+                  Codebase Sandbox
+                </span>
+                <h1 className="text-3xl md:text-4xl font-serif font-medium text-[#262626] leading-tight">
+                  GitHub & Resume AI Interrogator
+                </h1>
               </div>
-            </div>
+              
+              <p className="text-[#6E6359] text-xs md:text-sm leading-relaxed font-medium">
+                Upload your Resume and supply a GitHub link to run a mock interview session customized to your repository code.
+              </p>
 
-            {/* GitHub URL */}
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 font-mono mb-2">
-                2. GitHub Project URL
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Link2 className="h-4 w-4 text-gray-400" />
+              <div className="space-y-4 pt-5 border-t border-[#DFD5C6]/60">
+                <div className="flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-[#C85A32]/5 border border-[#C85A32]/15 flex items-center justify-center text-[#C85A32] shrink-0">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+                      <path d="M9 18c-4.51 2-5-2-7-2" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[#262626]">Codebase Extraction</h4>
+                    <p className="text-[11px] text-[#6E6359] mt-0.5 leading-relaxed font-medium">Analyzes class structures, code styles, and key implementation files from your GitHub repository.</p>
+                  </div>
                 </div>
-                <input
-                  type="url"
-                  required
-                  value={githubUrl}
-                  onChange={(e) => setGithubUrl(e.target.value)}
-                  placeholder="https://github.com/username/project"
-                  className="block w-full rounded-md border border-gray-200 pl-9 pr-3 py-2 text-xs text-black placeholder-gray-400 focus:border-black focus:outline-none transition-colors"
-                />
+
+                <div className="flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-[#C85A32]/5 border border-[#C85A32]/15 flex items-center justify-center text-[#C85A32] shrink-0">
+                    <Brain className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[#262626]">Custom Technical Drill</h4>
+                    <p className="text-[11px] text-[#6E6359] mt-0.5 leading-relaxed font-medium">Generates conceptual and code analysis questions tailored precisely to your own code.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-[#C85A32]/5 border border-[#C85A32]/15 flex items-center justify-center text-[#C85A32] shrink-0">
+                    <Clock className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[#262626]">Live Communication Tracker</h4>
+                    <p className="text-[11px] text-[#6E6359] mt-0.5 leading-relaxed font-medium">Measures answer timing, structure, and focus cues in real-time during your practice round.</p>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Error Message */}
-            {ingestError && (
-              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-md text-red-600 text-xs">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{ingestError}</span>
+            {/* Right Column: Upload Card */}
+            <div className="lg:col-span-7 bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-6 md:p-8 shadow-sm space-y-6">
+              <div className="space-y-1 text-left">
+                <h3 className="text-lg font-serif text-[#262626] font-medium">Start Mock Session</h3>
+                <p className="text-xs text-[#6E6359] font-medium">Connect your code and attach your resume below.</p>
               </div>
-            )}
 
-            {/* Submit */}
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center gap-2 rounded-lg bg-black hover:bg-gray-900 text-white py-3 px-4 font-bold text-xs transition-colors shadow-sm cursor-pointer"
-            >
-              <Play className="h-3.5 w-3.5 fill-white" />
-              Analyze Codebase & Resume
-            </button>
-          </form>
+              <form onSubmit={handleStartIngestion} className="space-y-6">
+                {/* Resume File */}
+                <div className="text-left">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono mb-2">
+                    1. Upload Resume
+                  </label>
+                  <label
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={`flex flex-col items-center justify-center border border-dashed rounded-xl h-44 cursor-pointer transition-colors duration-200 ${
+                      dragOver ? "border-[#C85A32] bg-[#C85A32]/5" : resumeFile ? "border-[#B3D6C2] bg-[#E8F2EC]/20" : "border-[#DFD5C6] bg-[#FAF6F0] hover:bg-[#C85A32]/5 hover:border-[#C85A32]"
+                    }`}
+                  >
+                    <input
+                      id="resume-file"
+                      type="file"
+                      accept=".pdf,.docx"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setResumeFile(e.target.files[0]);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                      {resumeFile ? (
+                        <>
+                          <FileText className="h-8 w-8 text-[#2E5A44] mb-2" />
+                          <span className="text-xs font-bold text-[#262626]">{resumeFile.name}</span>
+                          <span className="text-[10px] text-[#6E6359]/65 mt-1 font-medium">Click to replace.</span>
+                        </>
+                      ) : (
+                        <>
+                          <UploadCloud className="h-8 w-8 text-[#C85A32] mb-3 animate-bounce" />
+                          <span className="text-xs font-bold text-[#6E6359]">Drag & drop your Resume, or <span className="text-[#C85A32]">browse</span></span>
+                          <span className="text-[10px] text-[#6E6359]/60 mt-1 font-medium">Supports PDF, DOCX up to 10MB</span>
+                        </>
+                      )}
+                    </div>
+                  </label>
+                </div>
+
+                {/* GitHub URL */}
+                <div className="text-left">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono mb-2">
+                    2. GitHub Project URL
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Link2 className="h-4 w-4 text-[#6E6359]/60" />
+                    </div>
+                    <input
+                      type="url"
+                      required
+                      value={githubUrl}
+                      onChange={(e) => setGitHubUrl(e.target.value)}
+                      placeholder="https://github.com/username/project"
+                      className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] pl-9 pr-3 py-2.5 text-xs text-[#262626] placeholder-[#6E6359]/40 focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-colors font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Error Message */}
+                {ingestError && (
+                  <div className="flex items-center gap-2 p-3 bg-[#FAF4EB] border border-[#C85A32]/30 rounded-xl text-[#C85A32] text-xs font-semibold">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{ingestError}</span>
+                  </div>
+                )}
+
+                {/* Submit */}
+                <button
+                  type="submit"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] py-3 px-4 font-bold text-xs transition-all shadow-sm cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                >
+                  <Play className="h-3.5 w-3.5 fill-[#FCFAF7]" />
+                  Analyze Codebase & Resume
+                </button>
+              </form>
+            </div>
+          </div>
         </div>
 
-        <footer className="text-center text-[10px] text-gray-400 border-t border-slate-50 pt-6">
+        <footer className="text-center text-[10px] text-[#6E6359]/60 border-t border-[#DFD5C6]/40 pt-6">
           © 2026 PrepAI Performance Engine. All data is processed using proprietary LLMs.
         </footer>
       </div>
@@ -625,15 +680,15 @@ export default function InterviewPrep({ user, onEndInterview }) {
 
   // ACTIVE INTERVIEW COMPONENT
   return (
-    <div className="flex-1 bg-white overflow-hidden h-screen flex flex-col font-sans text-black">
+    <div className="flex-1 bg-[#FAF6F0] overflow-hidden h-screen flex flex-col font-sans text-[#262626]">
       {/* Top Header Row */}
-      <header className="border-b border-slate-100 py-3.5 px-6 flex items-center justify-between shrink-0 select-none bg-white">
+      <header className="border-b border-[#DFD5C6] py-3.5 px-6 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]">
         <div className="flex items-center gap-3">
-          <span className="font-extrabold text-lg tracking-tight">PrepAI</span>
-          <div className="h-4 w-[1px] bg-gray-200"></div>
-          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100/50 px-2.5 py-0.5 rounded-full">
-            <span className="h-2 w-2 rounded-full bg-red-500 recording-indicator"></span>
-            <span className="text-[9px] font-bold font-mono text-gray-500 uppercase tracking-widest">
+          <span className="font-serif font-semibold text-lg tracking-tight text-[#262626]">PrepAI</span>
+          <div className="h-4 w-[1px] bg-[#DFD5C6]"></div>
+          <div className="flex items-center gap-1.5 bg-[#FAF6F0] border border-[#DFD5C6] px-2.5 py-0.5 rounded-full">
+            <span className="h-2 w-2 rounded-full bg-[#C85A32] recording-indicator"></span>
+            <span className="text-[9px] font-bold font-mono text-[#C85A32] uppercase tracking-widest">
               Session Live
             </span>
           </div>
@@ -643,7 +698,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
           <select
             value={languageCode}
             onChange={(e) => setLanguageCode(e.target.value)}
-            className="bg-slate-50 border border-slate-200 text-xs px-2.5 py-1.5 rounded-lg text-gray-700 font-semibold focus:outline-none focus:border-black cursor-pointer"
+            className="bg-[#FCFAF7] border border-[#DFD5C6] text-xs px-2.5 py-1.5 rounded-lg text-[#6E6359] font-bold focus:outline-none focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] cursor-pointer"
           >
             <option value="en-IN">English (India)</option>
             <option value="hi-IN">Hindi (हिन्दी)</option>
@@ -662,8 +717,8 @@ export default function InterviewPrep({ user, onEndInterview }) {
             onClick={() => setTtsEnabled(!ttsEnabled)}
             className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
               ttsEnabled
-                ? "bg-indigo-50 border-indigo-200 text-[#4F46E5]"
-                : "bg-white border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                ? "bg-[#C85A32]/10 border-[#C85A32]/30 text-[#C85A32]"
+                : "bg-[#FCFAF7] border-[#DFD5C6] text-[#6E6359]/60 hover:text-[#262626] hover:bg-[#FAF6F0]"
             }`}
             title={ttsEnabled ? "Disable Read Aloud" : "Enable Read Aloud"}
           >
@@ -674,10 +729,10 @@ export default function InterviewPrep({ user, onEndInterview }) {
             )}
           </button>
 
-          <div className="h-4 w-[1px] bg-gray-200"></div>
+          <div className="h-4 w-[1px] bg-[#DFD5C6]"></div>
 
-          <div className="flex items-center gap-1.5 text-gray-500 font-semibold font-mono text-xs">
-            <Clock className="h-3.5 w-3.5 text-gray-400" />
+          <div className="flex items-center gap-1.5 text-[#6E6359] font-bold font-mono text-xs">
+            <Clock className="h-3.5 w-3.5 text-[#6E6359]/60" />
             <span>{formatTime(secondsElapsed)}</span>
           </div>
           <button
@@ -685,7 +740,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
               await triggerEndSession();
               onEndInterview();
             }}
-            className="bg-black hover:bg-gray-900 text-white text-xs px-4 py-2 rounded-lg font-bold transition-colors shadow-sm cursor-pointer"
+            className="bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] text-xs px-4 py-2 rounded-lg font-bold transition-colors shadow-sm cursor-pointer"
           >
             End Interview
           </button>
@@ -696,7 +751,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
       <div className="flex-1 flex overflow-hidden">
         
         {/* Left Side: Conversation Area (Chat-like layout) */}
-        <section className="flex-1 flex flex-col bg-slate-50/20 overflow-hidden">
+        <section className="flex-1 flex flex-col bg-[#FAF6F0] overflow-hidden">
           
           {/* Scrollable Conversation History */}
           <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 custom-scrollbar">
@@ -713,8 +768,8 @@ export default function InterviewPrep({ user, onEndInterview }) {
                   <div
                     className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-[10px] font-extrabold font-mono ${
                       isInterviewer
-                        ? "bg-slate-900 text-white"
-                        : "bg-[#4F46E5] text-white"
+                        ? "bg-[#262626] text-[#FCFAF7]"
+                        : "bg-[#C85A32] text-[#FCFAF7]"
                     }`}
                   >
                     {isInterviewer ? "AI" : "YOU"}
@@ -723,10 +778,10 @@ export default function InterviewPrep({ user, onEndInterview }) {
                   {/* Message Bubble */}
                   <div className="space-y-1.5 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-xs font-bold text-gray-900">
+                      <span className="text-xs font-bold text-[#262626]">
                         {isInterviewer ? "AI Interviewer" : "You"}
                       </span>
-                      <span className="text-[9px] text-gray-400 font-mono">
+                      <span className="text-[9px] text-[#6E6359]/60 font-mono">
                         {t.time}
                       </span>
                     </div>
@@ -734,16 +789,28 @@ export default function InterviewPrep({ user, onEndInterview }) {
                     <div
                       className={`p-4 rounded-xl text-xs leading-relaxed border ${
                         isInterviewer
-                          ? "bg-white border-slate-100 text-gray-800 shadow-2xs"
-                          : "bg-[#4F46E5] border-[#4338CA] text-white shadow-2xs"
+                          ? "bg-[#FCFAF7] border-[#DFD5C6] text-[#262626] shadow-2xs"
+                          : "bg-[#C85A32]/5 border-[#C85A32]/20 text-[#262626] shadow-2xs"
                       }`}
                     >
-                      <p className="whitespace-pre-wrap">{t.text}</p>
+                      <p className="whitespace-pre-wrap font-medium">{t.text}</p>
                       
                       {/* Code Snippet (if available in this turn) */}
                       {t.code && (
-                        <div className="mt-3 rounded-lg bg-gray-950 border border-gray-800 p-4 font-mono text-[11px] overflow-x-auto text-gray-300">
-                          <pre>{t.code}</pre>
+                        <div className="mt-3 rounded-xl overflow-hidden border border-[#DFD5C6] shadow-xs">
+                          {/* Title bar */}
+                          <div className="bg-[#FAF6F0] px-4 py-2 border-b border-[#DFD5C6] flex items-center justify-between select-none">
+                            <span className="text-[10px] font-bold text-[#6E6359] font-mono uppercase tracking-wider">
+                              Target Implementation
+                            </span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#FCFAF7] border border-[#DFD5C6] font-mono text-[#6E6359] font-semibold">
+                              Code Block
+                            </span>
+                          </div>
+                          {/* Code container */}
+                          <div className="bg-[#2E2A27] p-4 font-mono text-[11px] overflow-x-auto text-[#FCFAF7] leading-relaxed select-text">
+                            <pre>{t.code}</pre>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -755,7 +822,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
           </div>
 
           {/* Dedicated Text Input Box */}
-          <div className="p-4 md:p-6 bg-white border-t border-slate-100 shrink-0">
+          <div className="p-4 md:p-6 bg-[#FCFAF7] border-t border-[#DFD5C6] shrink-0">
             <div className="max-w-3xl mx-auto space-y-3">
               <textarea
                 rows={3}
@@ -768,16 +835,16 @@ export default function InterviewPrep({ user, onEndInterview }) {
                   }
                 }}
                 placeholder="Type your structured answer here... (Press Ctrl + Enter to submit)"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-xs text-black placeholder-gray-400 focus:border-black focus:bg-white focus:outline-none transition-all resize-none font-sans"
+                className="w-full rounded-xl border border-[#DFD5C6] bg-[#FAF6F0] p-4 text-xs text-[#262626] placeholder-[#6E6359]/40 focus:border-[#C85A32] focus:bg-[#FCFAF7] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all resize-none font-sans font-medium"
               />
-              <div className="flex justify-between items-center text-[10px] text-gray-400">
-                <span>Protip: Press <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded font-mono text-[9px] text-gray-600 font-bold">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded font-mono text-[9px] text-gray-600 font-bold">Enter</kbd> to submit</span>
+              <div className="flex justify-between items-center text-[10px] text-[#6E6359]">
+                <span className="font-medium">Protip: Press <kbd className="px-1.5 py-0.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded font-mono text-[9px] text-[#6E6359] font-bold">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded font-mono text-[9px] text-[#6E6359] font-bold">Enter</kbd> to submit</span>
                 <div className="flex items-center gap-2">
                   {/* Record Button */}
                   {isRecordingAudio ? (
                     <button
                       onClick={stopAudioRecording}
-                      className="flex items-center gap-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-white px-4 py-2 text-xs font-bold transition-all animate-pulse cursor-pointer shadow-xs"
+                      className="flex items-center gap-1.5 rounded-lg bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] px-4 py-2 text-xs font-bold transition-all animate-pulse cursor-pointer shadow-xs"
                     >
                       <span className="h-2 w-2 rounded-full bg-white recording-indicator inline-block"></span>
                       Stop ({formatTime(recordDuration)})
@@ -785,7 +852,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
                   ) : audioLoading ? (
                     <button
                       disabled
-                      className="flex items-center gap-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 px-4 py-2 text-xs font-bold transition-all"
+                      className="flex items-center gap-1.5 rounded-lg bg-[#FAF6F0] border border-[#DFD5C6] text-[#6E6359]/50 px-4 py-2 text-xs font-bold transition-all"
                     >
                       <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                       Transcribing...
@@ -793,9 +860,9 @@ export default function InterviewPrep({ user, onEndInterview }) {
                   ) : (
                     <button
                       onClick={startAudioRecording}
-                      className="flex items-center gap-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-4 py-2 text-xs font-bold transition-all cursor-pointer shadow-xs"
+                      className="flex items-center gap-1.5 rounded-lg bg-[#FCFAF7] border border-[#DFD5C6] text-[#6E6359] hover:bg-[#FAF6F0] hover:text-[#262626] px-4 py-2 text-xs font-bold transition-all cursor-pointer shadow-xs"
                     >
-                      <Mic className="h-3.5 w-3.5 text-gray-500" />
+                      <Mic className="h-3.5 w-3.5 text-[#6E6359]/70" />
                       Record Answer
                     </button>
                   )}
@@ -804,7 +871,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
                   <button
                     onClick={handleSubmitAnswer}
                     disabled={!answerText.trim() || isRecordingAudio || audioLoading}
-                    className="flex items-center gap-1.5 rounded-lg bg-black hover:bg-gray-900 text-white px-5 py-2 text-xs font-bold transition-all disabled:opacity-30 disabled:hover:bg-black shadow-xs cursor-pointer"
+                    className="flex items-center gap-1.5 rounded-lg bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] px-5 py-2 text-xs font-bold transition-all disabled:opacity-30 disabled:hover:bg-[#C85A32] shadow-xs cursor-pointer"
                   >
                     <Send className="h-3.5 w-3.5" />
                     Submit Answer
@@ -817,17 +884,17 @@ export default function InterviewPrep({ user, onEndInterview }) {
         </section>
 
         {/* Right Sidebar: Camera Preview & Dynamic Context Panel */}
-        <aside className="w-80 border-l border-slate-100 bg-white flex flex-col select-none shrink-0 p-5 space-y-6 overflow-y-auto custom-scrollbar">
+        <aside className="w-80 border-l border-[#DFD5C6] bg-[#FCFAF7] flex flex-col select-none shrink-0 p-5 space-y-6 overflow-y-auto custom-scrollbar">
           
           {/* Webcam Preview Container */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold font-mono uppercase tracking-widest text-gray-400 flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></span>
+              <span className="text-xs font-bold text-[#262626] font-serif flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#2E5A44] animate-pulse"></span>
                 Webcam Feed
               </span>
             </div>
-            <div className="relative aspect-[4/3] rounded-lg overflow-hidden border border-slate-200 bg-slate-50 flex items-center justify-center shadow-xs">
+            <div className="relative aspect-[4/3] rounded-lg overflow-hidden border border-[#DFD5C6] bg-[#FAF6F0] flex items-center justify-center shadow-xs">
               <video
                 ref={videoRef}
                 autoPlay
@@ -841,19 +908,19 @@ export default function InterviewPrep({ user, onEndInterview }) {
 
               {/* Focus warning */}
               {isLookingAway && (
-                <div className="absolute inset-0 bg-red-950/85 flex items-center justify-center p-4 text-center pointer-events-none transition-all">
+                <div className="absolute inset-0 bg-[#C85A32]/90 flex items-center justify-center p-4 text-center pointer-events-none transition-all">
                   <div className="flex flex-col items-center">
-                    <AlertCircle className="h-6 w-6 text-red-500 mb-1.5 animate-pulse" />
-                    <span className="font-bold text-xs text-white">Please look at the screen</span>
-                    <span className="text-[9px] text-red-200 mt-0.5">Focus is required during the interview</span>
+                    <AlertCircle className="h-6 w-6 text-[#FCFAF7] mb-1.5 animate-pulse" />
+                    <span className="font-bold text-xs text-[#FCFAF7]">Please look at the screen</span>
+                    <span className="text-[9px] text-[#FAF6F0]/85 mt-0.5 font-medium">Focus is required during the interview</span>
                   </div>
                 </div>
               )}
 
               {/* Camera access error */}
               {cameraError && (
-                <div className="absolute inset-0 bg-red-50 flex items-center justify-center p-4 text-center pointer-events-none">
-                  <div className="flex flex-col items-center text-red-650">
+                <div className="absolute inset-0 bg-[#FAF4EB] flex items-center justify-center p-4 text-center pointer-events-none">
+                  <div className="flex flex-col items-center text-[#C85A32]">
                     <AlertCircle className="h-6 w-6 mb-1.5" />
                     <span className="font-semibold text-xs text-center">{cameraError}</span>
                   </div>
@@ -863,14 +930,14 @@ export default function InterviewPrep({ user, onEndInterview }) {
           </div>
 
           {/* Active Round Info */}
-          <div className="border border-slate-100 rounded-lg p-4 space-y-3 bg-slate-50/50">
-            <span className="text-[9px] font-bold font-mono uppercase tracking-wider text-gray-400 block">
+          <div className="border border-[#DFD5C6] rounded-lg p-4 space-y-3 bg-[#FAF6F0]">
+            <span className="text-xs font-bold text-[#262626] font-serif block">
               Interview State
             </span>
             <div className="space-y-2 text-xs">
               <div className="flex justify-between">
-                <span className="text-gray-500">Current Phase</span>
-                <span className="font-bold text-gray-800">
+                <span className="text-[#6E6359] font-medium">Current Phase</span>
+                <span className="font-bold text-[#262626]">
                   {currentQuestion?.type === "conceptual"
                     ? "Phase 1: Project Grilling"
                     : currentQuestion?.type === "code-analysis"
@@ -879,8 +946,8 @@ export default function InterviewPrep({ user, onEndInterview }) {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Timer</span>
-                <span className="font-mono font-bold text-gray-800">
+                <span className="text-[#6E6359] font-medium">Timer</span>
+                <span className="font-mono font-bold text-[#262626]">
                   {formatTime(secondsElapsed)}
                 </span>
               </div>
@@ -889,14 +956,14 @@ export default function InterviewPrep({ user, onEndInterview }) {
 
           {/* Interviewer Feedback (Not WPM or voice slop) */}
           {liveTip && (
-            <div className="ai-feedback-accent p-4 rounded-r-lg space-y-2">
-              <div className="flex items-center gap-1.5 text-[#4F46E5]">
+            <div className="ai-feedback-accent p-4 rounded-r-lg space-y-2 shadow-2xs">
+              <div className="flex items-center gap-1.5 text-[#C85A32]">
                 <Brain className="h-4 w-4" />
-                <span className="text-[9px] font-bold uppercase tracking-wider font-mono">
+                <span className="text-xs font-bold text-[#C85A32] font-serif">
                   Interviewer Guidance
                 </span>
               </div>
-              <p className="text-xs text-gray-600 leading-relaxed font-medium">
+              <p className="text-xs text-[#6E6359] leading-relaxed font-semibold">
                 {liveTip}
               </p>
             </div>

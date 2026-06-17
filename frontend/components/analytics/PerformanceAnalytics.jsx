@@ -11,15 +11,31 @@ import {
   Camera,
   RefreshCw,
   Search,
-  Bell,
-  HelpCircle
+  CheckCircle,
+  FileText,
+  Activity,
+  ArrowRight,
+  TrendingUp as TrendUpIcon,
+  MessageSquare,
+  ShieldCheck,
+  Brain,
+  Video
 } from "lucide-react";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer
+} from "recharts";
 
 export default function PerformanceAnalytics({ user }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // Real stats states
+  // Stats states
   const [overallReadiness, setOverallReadiness] = useState(0);
   const [communication, setCommunication] = useState(0);
   const [technical, setTechnical] = useState(0);
@@ -57,7 +73,6 @@ export default function PerformanceAnalytics({ user }) {
         console.warn("Backend not active:", err);
       }
       
-      // No fallback dummy data — show empty state
       setHistory([]);
       setOverallReadiness(0);
       setCommunication(0);
@@ -72,85 +87,110 @@ export default function PerformanceAnalytics({ user }) {
     fetchHistory();
   }, []);
 
+  // Format history for AreaChart (reversing to plot oldest to newest)
+  const chartData = [...history]
+    .reverse()
+    .map((h) => ({
+      date: h.date,
+      scoreValue: parseFloat(h.score.replace("%", "")),
+      role: h.role
+    }));
+
+  const CustomAreaTooltip = ({ active, payload }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-[#FCFAF7] border border-[#DFD5C6] p-2.5 rounded-lg shadow-lg text-[11px]">
+          <p className="font-bold text-[#6E6359]">{payload[0].payload.date}</p>
+          <p className="font-serif font-extrabold text-[#262626] mt-0.5 truncate max-w-[150px]">{payload[0].payload.role}</p>
+          <p className="font-mono text-[#C85A32] font-bold mt-1">Score: {payload[0].value}%</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <div className="flex-1 bg-white overflow-y-auto h-screen flex flex-col font-sans text-black">
+    <div className="flex-1 bg-[#FAF6F0] bg-grid-overlay overflow-y-auto h-screen flex flex-col font-sans text-[#262626]">
       {/* Top Header Row */}
-      <header className="border-b border-slate-100 py-3.5 px-8 flex items-center justify-between shrink-0 select-none bg-white">
+      <header className="border-b border-[#DFD5C6] py-3.5 px-8 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]/90 backdrop-blur-md sticky top-0 z-10">
         <div className="relative w-80">
-          <Search className="absolute inset-y-0 left-3 my-auto h-4 w-4 text-gray-400" />
+          <Search className="absolute inset-y-0 left-3 my-auto h-4 w-4 text-[#6E6359]/60" />
           <input
             type="text"
             placeholder="Search analytics..."
-            className="w-full pl-9 pr-4 py-1.5 bg-gray-50 border border-transparent rounded-lg text-xs text-black focus:outline-none focus:bg-white focus:border-gray-200 transition-colors"
+            className="w-full pl-9 pr-4 py-1.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#C85A32] transition-colors placeholder-[#6E6359]/40"
           />
         </div>
-        <div className="flex items-center gap-4 text-gray-400">
-          <button className="hover:text-black transition-colors">
-            <Bell className="h-4.5 w-4.5" />
-          </button>
-          <button className="hover:text-black transition-colors">
-            <HelpCircle className="h-4.5 w-4.5" />
-          </button>
-          <div className="h-7 w-7 rounded-full bg-[#4F46E5] text-white flex items-center justify-center text-xs font-bold uppercase shadow-sm">
+        <div className="flex items-center gap-4 text-[#6E6359]">
+          <div className="h-7 w-7 rounded-full bg-[#C85A32] text-[#FCFAF7] flex items-center justify-center text-xs font-bold uppercase shadow-sm border border-[#C85A32]/20">
             {user?.name ? user.name.slice(0, 2) : "US"}
           </div>
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 p-8 space-y-8 max-w-5xl w-full mx-auto select-none">
+      <main className="flex-1 p-6 lg:p-8 space-y-8 max-w-5xl w-full mx-auto">
         
         {/* Title Block */}
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Performance Analytics</h1>
-          <p className="text-xs text-gray-500 mt-1">
-            A comprehensive breakdown of your interview readiness and AI-driven skill assessment.
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-[#DFD5C6]/40 select-none">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-serif font-medium tracking-tight text-[#262626]">Performance Analytics</h1>
+            <p className="text-xs text-[#6E6359] font-medium">
+              A comprehensive breakdown of your interview readiness and AI-driven skill assessment.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 bg-[#FCFAF7] border border-[#DFD5C6] px-3 py-1.5 rounded-lg shadow-2xs">
+            <Activity className="h-4 w-4 text-[#C85A32] animate-pulse" />
+            <span className="text-[10px] font-mono font-bold text-[#6E6359] uppercase tracking-wider">
+              Real-time engine
+            </span>
+          </div>
         </div>
 
         {/* Analytics Summary Cards (Donut + Subscores) */}
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* Card 1: Donut circle - Overall Readiness */}
-          <div className="border border-slate-100 rounded-xl p-6 shadow-xs bg-white flex flex-col items-center justify-between text-center min-h-[260px]">
-            <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest font-semibold">
+          <div className="border border-[#DFD5C6] rounded-2xl p-6 shadow-sm bg-[#FCFAF7] flex flex-col items-center justify-between text-center min-h-[300px] premium-glow-card select-none">
+            <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-[#6E6359]">
               Overall Readiness
-            </span>
+            </h3>
 
             {/* Circular Donut Indicator */}
-            <div className="relative w-36 h-36 flex items-center justify-center my-3">
+            <div className="relative w-36 h-36 flex items-center justify-center my-4 animate-float">
               {/* Outer ring */}
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                 <circle
                   cx="50"
                   cy="50"
                   r="40"
-                  stroke="#f3f4f6"
-                  strokeWidth="8"
+                  stroke="#FAF6F0"
+                  strokeWidth="7"
                   fill="transparent"
                 />
                 <circle
                   cx="50"
                   cy="50"
                   r="40"
-                  stroke="black"
-                  strokeWidth="9"
+                  stroke="#C85A32"
+                  strokeWidth="7.5"
                   fill="transparent"
                   strokeDasharray="251.2"
                   strokeDashoffset={251.2 - (251.2 * overallReadiness) / 100}
                   strokeLinecap="round"
+                  className="transition-all duration-1000 ease-out"
                 />
               </svg>
               {/* Center text */}
               <div className="absolute flex flex-col items-center justify-center">
-                <span className="text-3xl font-extrabold text-black">{overallReadiness}</span>
-                <span className="text-[10px] text-gray-500 font-semibold font-mono uppercase tracking-wider">
+                <span className="text-3xl font-extrabold text-[#262626] font-mono">{overallReadiness}</span>
+                <span className="px-2 py-0.5 rounded-full text-[8px] font-bold bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/20 font-mono uppercase tracking-wider mt-1.5">
                   {overallReadiness >= 85 ? "Expert Level" : overallReadiness >= 70 ? "Intermediate" : "Beginner"}
                 </span>
               </div>
             </div>
 
-            <p className="text-xs text-gray-500 px-3 pb-2">
+            <p className="text-[11px] text-[#6E6359] px-2 font-medium leading-relaxed">
               {overallReadiness > 0
                 ? `Your interview readiness index is calculated at ${overallReadiness}% based on your dynamic feedback loops.`
                 : "No readiness rating. Complete your first practice session to run an AI assessment."}
@@ -158,68 +198,82 @@ export default function PerformanceAnalytics({ user }) {
 
             {/* Questions Correct Footer */}
             {totalAnswers > 0 && (
-              <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-4 pb-1 px-3 w-full">
-                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest font-semibold">Questions Correct</span>
-                <span className="text-sm font-extrabold text-[#4F46E5]">{correctAnswers} <span className="text-gray-400 font-medium">/ {totalAnswers}</span></span>
+              <div className="mt-4 flex items-center justify-between border-t border-[#DFD5C6]/60 pt-3.5 px-2 w-full">
+                <span className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">Accuracy</span>
+                <span className="text-xs font-extrabold text-[#C85A32] font-mono">
+                  {correctAnswers} <span className="text-[#6E6359]/60 font-medium">/ {totalAnswers} correct</span>
+                </span>
               </div>
             )}
           </div>
 
           {/* Subscores 2x2 grid */}
-          <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4 select-none">
             
             {/* Communication */}
-            <div className="border border-slate-100 rounded-xl p-5 shadow-xs bg-white flex flex-col justify-between">
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">Communication</span>
-                <span className="text-sm font-extrabold text-black">{communication}/100</span>
+            <div className="border border-[#DFD5C6] rounded-2xl p-5 shadow-sm bg-[#FCFAF7] flex flex-col justify-between premium-glow-card">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold font-mono uppercase tracking-wider text-[#6E6359] flex items-center gap-1.5">
+                  <MessageSquare className="h-4 w-4 text-[#C85A32]" />
+                  Communication
+                </span>
+                <span className="text-sm font-extrabold text-[#262626] font-mono">{communication}/100</span>
               </div>
-              <div className="w-full bg-gray-100 h-1.5 rounded-full mt-3 overflow-hidden">
-                <div className="h-full bg-black" style={{ width: `${communication}%` }} />
+              <div className="w-full bg-[#FAF6F0] h-1.5 rounded-full mt-4 overflow-hidden border border-[#DFD5C6]/30">
+                <div className="h-full bg-[#C85A32] rounded-full" style={{ width: `${communication}%` }} />
               </div>
-              <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+              <p className="text-[11px] text-[#6E6359] mt-4 leading-relaxed font-medium">
                 {communication >= 85 ? "Excellent clarity, structured framing, and professional conversation pacing." : "Solid delivery. Focus on pausing naturally instead of using sound fillers."}
               </p>
             </div>
 
             {/* Technical Knowledge */}
-            <div className="border border-slate-100 rounded-xl p-5 shadow-xs bg-white flex flex-col justify-between">
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">Technical Knowledge</span>
-                <span className="text-sm font-extrabold text-black">{technical}/100</span>
+            <div className="border border-[#DFD5C6] rounded-2xl p-5 shadow-sm bg-[#FCFAF7] flex flex-col justify-between premium-glow-card">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold font-mono uppercase tracking-wider text-[#6E6359] flex items-center gap-1.5">
+                  <Brain className="h-4 w-4 text-[#A6690B]" />
+                  Technical Knowledge
+                </span>
+                <span className="text-sm font-extrabold text-[#262626] font-mono">{technical}/100</span>
               </div>
-              <div className="w-full bg-gray-100 h-1.5 rounded-full mt-3 overflow-hidden">
-                <div className="h-full bg-black" style={{ width: `${technical}%` }} />
+              <div className="w-full bg-[#FAF6F0] h-1.5 rounded-full mt-4 overflow-hidden border border-[#DFD5C6]/30">
+                <div className="h-full bg-[#A6690B] rounded-full" style={{ width: `${technical}%` }} />
               </div>
-              <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+              <p className="text-[11px] text-[#6E6359] mt-4 leading-relaxed font-medium">
                 {technical >= 80 ? "Comprehensive codebase architecture details and strong core concept awareness." : "Good foundations. Focus on providing deeper code level specifications."}
               </p>
             </div>
 
             {/* Body Language */}
-            <div className="border border-slate-100 rounded-xl p-5 shadow-xs bg-white flex flex-col justify-between">
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">Body Language</span>
-                <span className="text-sm font-extrabold text-black">{bodyLanguage}/100</span>
+            <div className="border border-[#DFD5C6] rounded-2xl p-5 shadow-sm bg-[#FCFAF7] flex flex-col justify-between premium-glow-card">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold font-mono uppercase tracking-wider text-[#6E6359] flex items-center gap-1.5">
+                  <Video className="h-4 w-4 text-[#2E5A44]" />
+                  Body Language
+                </span>
+                <span className="text-sm font-extrabold text-[#262626] font-mono">{bodyLanguage}/100</span>
               </div>
-              <div className="w-full bg-gray-100 h-1.5 rounded-full mt-3 overflow-hidden">
-                <div className="h-full bg-black" style={{ width: `${bodyLanguage}%` }} />
+              <div className="w-full bg-[#FAF6F0] h-1.5 rounded-full mt-4 overflow-hidden border border-[#DFD5C6]/30">
+                <div className="h-full bg-[#2E5A44] rounded-full" style={{ width: `${bodyLanguage}%` }} />
               </div>
-              <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+              <p className="text-[11px] text-[#6E6359] mt-4 leading-relaxed font-medium">
                 {bodyLanguage >= 80 ? "Consistent posture and active presentation focus maintained throughout." : "Frequent gaze diversions detected. Maintain consistent focus on the screen."}
               </p>
             </div>
 
             {/* Confidence */}
-            <div className="border border-slate-100 rounded-xl p-5 shadow-xs bg-white flex flex-col justify-between">
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-wider font-semibold">Confidence</span>
-                <span className="text-sm font-extrabold text-black">{confidence}/100</span>
+            <div className="border border-[#DFD5C6] rounded-2xl p-5 shadow-sm bg-[#FCFAF7] flex flex-col justify-between premium-glow-card">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold font-mono uppercase tracking-wider text-[#6E6359] flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-[#6E6359]" />
+                  Confidence
+                </span>
+                <span className="text-sm font-extrabold text-[#262626] font-mono">{confidence}/100</span>
               </div>
-              <div className="w-full bg-gray-100 h-1.5 rounded-full mt-3 overflow-hidden">
-                <div className="h-full bg-black" style={{ width: `${confidence}%` }} />
+              <div className="w-full bg-[#FAF6F0] h-1.5 rounded-full mt-4 overflow-hidden border border-[#DFD5C6]/30">
+                <div className="h-full bg-[#6E6359] rounded-full" style={{ width: `${confidence}%` }} />
               </div>
-              <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+              <p className="text-[11px] text-[#6E6359] mt-4 leading-relaxed font-medium">
                 {confidence >= 80 ? "Assertive communication and rapid technical decision explanation." : "Flow is steady, but minor hesitation patterns were detected during complex analysis."}
               </p>
             </div>
@@ -227,92 +281,164 @@ export default function PerformanceAnalytics({ user }) {
           </div>
         </section>
 
+        {/* Historical Score Progression Chart */}
+        {history.length > 0 && (
+          <section className="border border-[#DFD5C6] rounded-2xl p-6 bg-[#FCFAF7] space-y-4 premium-glow-card select-none">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <h3 className="text-sm font-serif font-semibold text-[#262626]">
+                  Interview Score Progression
+                </h3>
+                <p className="text-[10px] text-[#6E6359] font-medium">
+                  Track your overall mock session ratings sequentially over time
+                </p>
+              </div>
+              <span className="text-[10px] font-mono font-bold text-[#C85A32] uppercase bg-[#C85A32]/10 border border-[#C85A32]/20 px-2.5 py-1 rounded-full flex items-center gap-1">
+                <TrendingUp className="h-3.5 w-3.5" />
+                Score Trend
+              </span>
+            </div>
+            
+            <div className="w-full h-56 pt-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={chartData}
+                  margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="scoreColor" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#C85A32" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#C85A32" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#DFD5C6" opacity={0.4} vertical={false} />
+                  <XAxis 
+                    dataKey="date" 
+                    tick={{ fill: '#6E6359', fontSize: 9, fontWeight: 600 }}
+                    stroke="#DFD5C6"
+                  />
+                  <YAxis 
+                    domain={[0, 100]} 
+                    tick={{ fill: '#6E6359', fontSize: 9 }}
+                    stroke="#DFD5C6"
+                  />
+                  <RechartsTooltip content={<CustomAreaTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="scoreValue"
+                    stroke="#C85A32"
+                    strokeWidth={2}
+                    fillOpacity={1}
+                    fill="url(#scoreColor)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        )}
+
         {/* Bottom Section: Top Improvements + Session History */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-2">
           
           {/* Left: Top Improvements */}
           <div className="space-y-4">
-            <h2 className="text-base font-bold text-black">Top Improvements</h2>
+            <h3 className="text-base font-serif font-bold text-[#262626] select-none">Top Improvements</h3>
             
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               {improvements.length === 0 ? (
-                <div className="text-xs text-gray-400 py-6 text-center select-none bg-gray-50/20 border border-dashed rounded-lg">
+                <div className="text-xs text-[#6E6359]/60 py-12 text-center select-none bg-[#FCFAF7] border border-[#DFD5C6] border-dashed rounded-2xl font-medium">
                   No improvements suggested yet. Complete an interview to analyze.
                 </div>
               ) : (
-                improvements.map((imp, idx) => (
-                  <div key={idx} className="ai-feedback-accent p-4 rounded-r-lg flex gap-3">
-                    {imp.type === "warning" && <AlertTriangle className="h-4 w-4 text-[#4F46E5] shrink-0 mt-0.5" />}
-                    {imp.type === "lightbulb" && <Lightbulb className="h-4 w-4 text-[#4F46E5] shrink-0 mt-0.5" />}
-                    {imp.type === "camera" && <Camera className="h-4 w-4 text-[#4F46E5] shrink-0 mt-0.5" />}
-                    <div className="space-y-1">
-                      <h4 className="text-xs font-bold uppercase tracking-wider font-mono text-gray-900 leading-none">
-                        {imp.title}
-                      </h4>
-                      <p className="text-xs text-gray-600 leading-relaxed">
-                        {imp.detail}
-                      </p>
+                improvements.map((imp, idx) => {
+                  const isWarning = imp.type === "warning";
+                  const isLightbulb = imp.type === "lightbulb";
+                  const cardBg = isWarning 
+                    ? "bg-[#FCEBE6]/60 border-l-[3px] border-l-[#C85A32] border border-[#FCEBE6]" 
+                    : isLightbulb 
+                    ? "bg-[#FAF4EB]/60 border-l-[3px] border-l-[#A6690B] border border-[#FAF4EB]" 
+                    : "bg-[#FAF6F0]/60 border-l-[3px] border-l-[#6E6359] border border-[#FAF6F0]";
+                  const iconColor = isWarning 
+                    ? "text-[#C85A32]" 
+                    : isLightbulb 
+                    ? "text-[#A6690B]" 
+                    : "text-[#6E6359]";
+                  
+                  return (
+                    <div key={idx} className={`${cardBg} p-4 rounded-r-xl flex gap-3 shadow-2xs transition-all hover:scale-[1.01] duration-150`}>
+                      {isWarning && <AlertTriangle className={`h-4.5 w-4.5 ${iconColor} shrink-0 mt-0.5`} />}
+                      {isLightbulb && <Lightbulb className={`h-4.5 w-4.5 ${iconColor} shrink-0 mt-0.5`} />}
+                      {!isWarning && !isLightbulb && <Camera className={`h-4.5 w-4.5 ${iconColor} shrink-0 mt-0.5`} />}
+                      
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-bold text-[#262626] font-serif leading-tight">
+                          {imp.title}
+                        </h4>
+                        <p className="text-[11px] text-[#6E6359] leading-relaxed font-medium">
+                          {imp.detail}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
 
           {/* Right: Session History */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-black">Session History</h2>
-              <button className="flex items-center gap-1 text-[10px] font-mono text-gray-400 hover:text-black uppercase tracking-wider font-semibold">
+            <div className="flex items-center justify-between select-none">
+              <h3 className="text-base font-serif font-bold text-[#262626]">Session History</h3>
+              <button className="flex items-center gap-1.5 text-[10px] font-mono text-[#6E6359] hover:text-[#C85A32] uppercase tracking-wider font-bold cursor-pointer transition-colors">
                 <Download className="h-3.5 w-3.5" />
                 Export Data
               </button>
             </div>
 
-            <div className="border border-slate-100 rounded-xl overflow-hidden shadow-xs bg-white">
+            <div className="border border-[#DFD5C6] rounded-2xl overflow-hidden shadow-sm bg-[#FCFAF7]">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-gray-50/50 text-[10px] font-mono text-gray-400 uppercase">
-                    <th className="py-3 px-5 font-semibold">Date</th>
-                    <th className="py-3 px-5 font-semibold">Role</th>
-                    <th className="py-3 px-5 font-semibold">Score</th>
-                    <th className="py-3 px-5 font-semibold">Trend</th>
+                  <tr className="border-b border-[#DFD5C6] bg-[#FAF6F0] text-xs text-[#262626] font-serif font-bold select-none">
+                    <th className="py-3.5 px-5">Date</th>
+                    <th className="py-3.5 px-5">Role</th>
+                    <th className="py-3.5 px-5">Score</th>
+                    <th className="py-3.5 px-5">Trend</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
+                <tbody className="divide-y divide-[#DFD5C6]/60 text-xs">
                   {loading ? (
                     <tr>
-                      <td colSpan={4} className="py-8 text-center text-gray-400">
-                        <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-gray-300" />
+                      <td colSpan={4} className="py-8 text-center text-[#6E6359]/70">
+                        <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-[#DFD5C6]" />
                         Loading session history...
                       </td>
                     </tr>
                   ) : history.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="py-8 text-center text-gray-400">
+                      <td colSpan={4} className="py-8 text-center text-[#6E6359]/70 font-medium font-serif">
                         No session history records.
                       </td>
                     </tr>
                   ) : (
                     history.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50/20 transition-colors">
-                        <td className="py-3.5 px-5 text-gray-500 font-mono">{row.date}</td>
-                        <td className="py-3.5 px-5 font-bold text-gray-900">{row.role}</td>
-                        <td className="py-3.5 px-5 font-bold text-gray-900 font-mono">{row.score}</td>
-                        <td className="py-3.5 px-5">
+                      <tr key={idx} className="hover:bg-[#FAF6F0]/40 transition-colors">
+                        <td className="py-3.5 px-5 text-[#6E6359] font-mono">{row.date}</td>
+                        <td className="py-3.5 px-5 font-bold text-[#262626] font-serif">{row.role}</td>
+                        <td className="py-3.5 px-5 font-bold text-[#262626] font-mono">{row.score}</td>
+                        <td className="py-3.5 px-5 select-none">
                           {row.trend === "up" && (
-                            <span className="inline-flex items-center gap-0.5 text-green-600 font-semibold">
-                              <TrendingUp className="h-3.5 w-3.5" />
+                            <span className="inline-flex items-center gap-1 text-[#2E5A44] font-bold bg-[#E8F2EC] px-2 py-0.5 rounded-full border border-[#B3D6C2] text-[10px]">
+                              <TrendingUp className="h-3 w-3" /> Up
                             </span>
                           )}
                           {row.trend === "down" && (
-                            <span className="inline-flex items-center gap-0.5 text-red-600 font-semibold">
-                              <TrendingDown className="h-3.5 w-3.5" />
+                            <span className="inline-flex items-center gap-1 text-[#C85A32] font-bold bg-[#FCEBE6] px-2 py-0.5 rounded-full border border-[#F2C2B8] text-[10px]">
+                              <TrendingDown className="h-3 w-3" /> Down
                             </span>
                           )}
                           {row.trend === "neutral" && (
-                            <span className="inline-flex items-center gap-0.5 text-gray-400 font-semibold">
-                              <Minus className="h-3.5 w-3.5" />
+                            <span className="inline-flex items-center gap-1 text-[#6E6359] font-bold bg-[#FAF6F0] px-2 py-0.5 rounded-full border border-[#DFD5C6] text-[10px]">
+                              <Minus className="h-3 w-3" /> Flat
                             </span>
                           )}
                         </td>
@@ -328,7 +454,7 @@ export default function PerformanceAnalytics({ user }) {
       </main>
 
       {/* Footer info */}
-      <footer className="py-6 text-center text-[10px] text-gray-400 border-t border-slate-50 select-none">
+      <footer className="py-6 text-center text-[10px] text-[#6E6359]/60 border-t border-[#DFD5C6]/40 select-none">
         © 2026 PrepAI Performance Engine. All data is processed using proprietary LLMs.
       </footer>
     </div>

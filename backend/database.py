@@ -102,9 +102,52 @@ def init_db():
         )
     """)
     
+    # Create voice_sessions table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS voice_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            github_url TEXT,
+            linkedin_url TEXT,
+            resume_name TEXT,
+            resume_text TEXT,
+            role TEXT DEFAULT 'Software Engineer',
+            interview_mode TEXT DEFAULT 'Mid-Level',
+            profile_summary TEXT, -- JSON Candidate Profile
+            technical_depth REAL,
+            communication REAL,
+            problem_solving REAL,
+            system_design REAL,
+            ownership REAL,
+            overall_rating REAL,
+            strengths TEXT, -- JSON array of strings
+            weaknesses TEXT, -- JSON array of strings
+            missed_concepts TEXT, -- JSON array of strings
+            learning_resources TEXT, -- JSON array of strings
+            hiring_recommendation TEXT,
+            duration_seconds INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Create voice_messages table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS voice_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            audio_path TEXT,
+            evaluation TEXT, -- JSON string for hidden evaluation
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES voice_sessions (id) ON DELETE CASCADE
+        )
+    """)
+    
     conn.commit()
     conn.close()
     print("SQLite Database successfully initialized at:", DB_FILE)
+
 
 # User authentication logic
 def create_user(email: str, password: str, name: str) -> dict:
@@ -336,24 +379,50 @@ def get_history_data() -> dict:
         WHERE s.score IS NOT NULL
     """)
     answers = [dict(ans) for ans in cursor.fetchall()]
+    
+    # Query voice sessions
+    try:
+        cursor.execute("SELECT * FROM voice_sessions WHERE overall_rating IS NOT NULL ORDER BY id DESC")
+        voice_sessions = [dict(vs) for vs in cursor.fetchall()]
+    except sqlite3.OperationalError:
+        voice_sessions = []
+        
     conn.close()
     
+    voice_history = []
+    for vs in voice_sessions:
+        try:
+            dt = datetime.strptime(vs["created_at"], "%Y-%m-%d %H:%M:%S")
+            formatted_date = dt.strftime("%b %d, %Y")
+        except Exception:
+            formatted_date = vs["created_at"]
+            
+        voice_history.append({
+            "id": vs["id"],
+            "session": vs["role"],
+            "date": formatted_date,
+            "status": f"{vs['overall_rating']} / 10",
+            "duration": f"{vs['duration_seconds'] // 60}m {vs['duration_seconds'] % 60}s" if vs.get("duration_seconds") else "0s"
+        })
+
+    # Combined Averages & Insights
     overall_readiness = 0
-    comm_score = 0
-    tech_score = 0
-    body_score = 0
-    conf_score = 0
+    comm_score = 75
+    tech_score = 70
+    body_score = 80
+    conf_score = 70
+    problem_solving_score = 70
+    system_design_score = 70
+    ownership_score = 70
     improvements = []
-    skills_report = "No interview sessions completed yet. Start a session to analyze your communication and technical patterns."
     
+    # 1. Process Coding Sessions
+    coding_count = len(sessions)
     if sessions:
         latest_score = sessions[0]["score"]
-        overall_readiness = int(latest_score * 10)
+        avg_coding_score = sum(s["score"] for s in sessions) / coding_count
         
-        avg_overall_score = sum(s["score"] for s in sessions) / len(sessions)
-        tech_score = int(avg_overall_score * 10)
-        
-        avg_body = sum((s["body_score"] or 0) for s in sessions) / len(sessions)
+        avg_body = sum((s["body_score"] or 0) for s in sessions) / coding_count
         body_score = int(avg_body)
         
         total_fillers = sum(a["fillers"] for a in answers)
@@ -364,9 +433,9 @@ def get_history_data() -> dict:
         avg_fillers = total_fillers / total_answers
         avg_wpm = total_wpm / total_answers
         
-        comm_score = int(max(40, min(100, 100 - (avg_fillers * 7) - abs(avg_wpm - 130) * 0.8)))
-        conf_score = int(max(40, min(100, 100 - (avg_fillers * 10))))
-        avg_score_10 = avg_overall_score
+        coding_comm_score = int(max(40, min(100, 100 - (avg_fillers * 7) - abs(avg_wpm - 130) * 0.8)))
+        coding_conf_score = int(max(40, min(100, 100 - (avg_fillers * 10))))
+        avg_score_10 = avg_coding_score
         
         if avg_fillers > 3:
             improvements.append({
@@ -386,41 +455,152 @@ def get_history_data() -> dict:
                 "title": "Pacing Adjustment",
                 "detail": f"Your talking speed averaged {int(avg_wpm)} WPM. Standard professional pacing is 120-140 WPM. Focus on clear, rhythmic delivery."
             })
-            
         if body_score < 70:
             improvements.append({
                 "type": "camera",
                 "title": "Eye Contact",
                 "detail": "Our OpenCV models detected that you frequently look away from the camera. Maintain consistent focus to build stronger presence."
             })
-        elif len(improvements) < 3:
-            improvements.append({
-                "type": "lightbulb",
-                "title": "STAR Response Model",
-                "detail": "When answering behavioral or conceptual questions, explicitly frame them using the Situation, Task, Action, and Result approach."
-            })
-            
-        role_name = sessions[0]["role"]
+    else:
+        coding_comm_score = None
+        coding_conf_score = None
+        avg_coding_score = None
+        correct_answers = 0
+        total_answers = 0
+        
+    # 2. Process Voice Sessions
+    voice_count = len(voice_sessions)
+    if voice_sessions:
+        avg_voice_overall = sum(vs["overall_rating"] for vs in voice_sessions) / voice_count
+        avg_technical_depth = sum(vs["technical_depth"] for vs in voice_sessions) / voice_count
+        avg_communication = sum(vs["communication"] for vs in voice_sessions) / voice_count
+        avg_problem_solving = sum(vs["problem_solving"] for vs in voice_sessions) / voice_count
+        avg_system_design = sum(vs["system_design"] for vs in voice_sessions) / voice_count
+        avg_ownership = sum(vs["ownership"] for vs in voice_sessions) / voice_count
+        
+        # Pull strengths/weaknesses/missed_concepts from the latest voice session
+        latest_voice = voice_sessions[0]
+        if latest_voice.get("weaknesses"):
+            try:
+                weaknesses_list = json.loads(latest_voice["weaknesses"])
+                if isinstance(weaknesses_list, list):
+                    for w in weaknesses_list[:2]:
+                        improvements.append({
+                            "type": "warning",
+                            "title": "Voice Copilot: Development Area",
+                            "detail": w
+                        })
+            except Exception:
+                pass
+                
+        if latest_voice.get("missed_concepts"):
+            try:
+                missed_list = json.loads(latest_voice["missed_concepts"])
+                if isinstance(missed_list, list):
+                    for mc in missed_list[:2]:
+                        improvements.append({
+                            "type": "lightbulb",
+                            "title": "Voice Copilot: Concept to Review",
+                            "detail": f"You missed or didn't detail: '{mc}'. Review this topic to boost your architectural depth."
+                        })
+            except Exception:
+                pass
+    else:
+        avg_voice_overall = None
+        avg_technical_depth = None
+        avg_communication = None
+        avg_problem_solving = None
+        avg_system_design = None
+        avg_ownership = None
+        
+    # 3. Calculations (No dummy defaults, purely based on database records)
+    latest_scores = []
+    if sessions:
+        latest_scores.append(sessions[0]["score"] * 10)
+    if voice_sessions:
+        latest_scores.append(voice_sessions[0]["overall_rating"] * 10)
+        
+    if latest_scores:
+        overall_readiness = int(sum(latest_scores) / len(latest_scores))
+        
+    # Problem Solving: based on DSA coding tests (average coding score * 10)
+    if avg_coding_score is not None:
+        problem_solving_score = int(avg_coding_score * 10)
+    elif avg_problem_solving is not None:
+        problem_solving_score = int(avg_problem_solving * 10)
+    else:
+        problem_solving_score = 0
+        
+    # Technical Depth: based on Voice Copilot technical depth
+    if avg_technical_depth is not None:
+        tech_score = int(avg_technical_depth * 10)
+    elif avg_coding_score is not None:
+        tech_score = int(avg_coding_score * 10)
+    else:
+        tech_score = 0
+        
+    # Communication Flow: based on Voice Copilot communication rating
+    if avg_communication is not None:
+        comm_score = int(avg_communication * 10)
+    elif coding_comm_score is not None:
+        comm_score = coding_comm_score
+    else:
+        comm_score = 0
+        
+    # System Architecture: based on Voice Copilot system design rating
+    if avg_system_design is not None:
+        system_design_score = int(avg_system_design * 10)
+    else:
+        system_design_score = 0
+        
+    # Behavioral & Leadership: based on Voice Copilot ownership rating
+    if avg_ownership is not None:
+        ownership_score = int(avg_ownership * 10)
+    else:
+        ownership_score = 0
+        
+    if coding_conf_score is not None:
+        conf_score = coding_conf_score
+        
+    if not improvements:
+        improvements.append({
+            "type": "lightbulb",
+            "title": "STAR Response Model",
+            "detail": "When answering behavioral or conceptual questions, explicitly frame them using the Situation, Task, Action, and Result approach."
+        })
+        
+    # Construct skills report
+    roles_tested = list(set([s["role"] for s in sessions] + [vs["role"] for vs in voice_sessions]))
+    if roles_tested:
+        role_str = roles_tested[0]
         skills_report = (
-            f"Your performance in '{role_name}' sessions indicates "
+            f"Your performance in '{role_str}' sessions indicates "
             f"{'excellent communication pacing' if comm_score >= 85 else 'a solid communication basis'} and "
             f"{'strong technical knowledge depth' if tech_score >= 80 else 'growing technical fundamentals'}. "
             f"Your confidence ratings averaged {conf_score}/100. "
             f"Focus on resolving the highlighted improvements to elevate your interview readiness."
         )
+    else:
+        skills_report = "No interview sessions completed yet. Start a session to analyze your communication and technical patterns."
         
     return {
         "dashboard_history": dashboard_history,
+        "voice_history": voice_history,
         "analytics_history": analytics_history,
         "overall_stats": {
             "overall_readiness": overall_readiness,
-            "communication": comm_score or 75,
-            "technical_knowledge": tech_score or 70,
-            "body_language": body_score or 80,
-            "confidence": conf_score or 70,
+            "communication": comm_score,
+            "technical_knowledge": tech_score,
+            "problem_solving": problem_solving_score,
+            "system_design": system_design_score,
+            "ownership": ownership_score,
+            "body_language": body_score,
+            "confidence": conf_score,
             "improvements": improvements,
-            "correct_answers": correct_answers if sessions else 0,
-            "total_answers": total_answers if answers else 0
+            "correct_answers": correct_answers,
+            "total_answers": total_answers,
+            "coding_sessions_count": coding_count,
+            "voice_sessions_count": voice_count
         },
         "skills_report": skills_report
     }

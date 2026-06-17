@@ -7,6 +7,7 @@ import DashboardHome from "@/components/dashboard/DashboardHome";
 import InterviewPrep from "@/components/interview/InterviewPrep";
 import PerformanceAnalytics from "@/components/analytics/PerformanceAnalytics";
 import ResumeAnalyzer from "@/components/resume/ResumeAnalyzer";
+import VoiceCopilot from "@/components/interview/VoiceCopilot";
 import { Award, BarChart3, RotateCcw, LogOut } from "lucide-react";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
 
@@ -104,10 +105,10 @@ export default function Home() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center font-sans text-black select-none">
+      <div className="min-h-screen bg-[#FAF6F0] flex flex-col items-center justify-center font-sans text-[#262626] select-none">
         <div className="flex flex-col items-center gap-3">
-          <div className="h-6 w-6 rounded-md bg-[#4F46E5] flex items-center justify-center text-white font-bold text-sm animate-pulse">P</div>
-          <span className="text-xs font-semibold tracking-wider text-gray-400 font-mono animate-pulse uppercase">
+          <div className="h-6 w-6 rounded-md bg-[#C85A32] flex items-center justify-center text-[#FCFAF7] font-bold text-sm animate-pulse">P</div>
+          <span className="text-xs font-semibold tracking-wider text-[#6E6359] font-mono animate-pulse uppercase">
             Loading Workspace...
           </span>
         </div>
@@ -121,7 +122,7 @@ export default function Home() {
 
   // Render Left Sidebar + Active Workspace View
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white text-black font-sans">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#FAF6F0] text-[#262626] font-sans">
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
@@ -132,25 +133,26 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-white">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#FAF6F0]">
         {activeTab === "dashboard" && (
-          <DashboardHome onStartPractice={handleStartPractice} user={user} />
+          <DashboardHome 
+            onStartPractice={handleStartPractice} 
+            onNavigate={(tab: string) => setActiveTab(tab)} 
+            user={user} 
+          />
         )}
         {activeTab === "interviews" && (
           <InterviewPrep user={user} onEndInterview={handleEndInterview} />
+        )}
+        {activeTab === "voice-copilot" && (
+          <VoiceCopilot user={user} />
         )}
         {activeTab === "analytics" && (
           <PerformanceAnalytics user={user} />
         )}
         {activeTab === "resume-analyzer" && (
-          <div className="flex-1 overflow-y-auto bg-slate-50/50 p-6">
+          <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-6">
             <ResumeAnalyzer />
-          </div>
-        )}
-        {activeTab === "settings" && (
-          <div className="flex-1 p-8 bg-white flex flex-col justify-center items-center select-none text-center">
-            <h2 className="text-lg font-bold text-gray-900">Workspace Settings</h2>
-            <p className="text-xs text-gray-500 mt-1">Configure your mock session configurations.</p>
           </div>
         )}
       </div>

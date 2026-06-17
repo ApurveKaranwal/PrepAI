@@ -1,22 +1,13 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: var(--font-sans), sans-serif;
+  --font-serif: var(--font-serif), serif;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #FAF6F0;
+  --foreground: #262626;
 }
 
 body {
@@ -27,18 +18,18 @@ body {
 
 /* Custom utility styles */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+  background: #FAF6F0;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #e5e7eb;
+  background: #DFD5C6;
   border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #d1d5db;
+  background: #C85A32/25;
 }
 
 @keyframes pulse-red {
@@ -54,7 +45,73 @@ body {
 }
 
 .ai-feedback-accent {
-  border-left: 3px solid #4f46e5;
-  background-color: #f9fafb;
+  border-left: 3px solid #C85A32;
+  background-color: #FCFAF7;
 }
+
+/* Premium Dashboard Additions */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.8; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.02); }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 3s ease-in-out infinite;
+}
+
+/* Premium Card hover glowing effect */
+.premium-glow-card {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+.premium-glow-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  box-shadow: 0 0 15px rgba(200, 90, 50, 0.15);
+  border: 1px solid rgba(200, 90, 50, 0.3);
+}
+.premium-glow-card:hover::after {
+  opacity: 1;
+}
+
+/* Glassmorphism helpers */
+.glass-panel {
+  background: rgba(252, 250, 247, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(223, 213, 198, 0.4);
+}
+
+.glass-panel-dark {
+  background: rgba(38, 38, 38, 0.03);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(38, 38, 38, 0.05);
+}
+
+/* Grid overlay background */
+.bg-grid-overlay {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(200, 90, 50, 0.015) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(200, 90, 50, 0.015) 1px, transparent 1px);
+}
+
+
 
