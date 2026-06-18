@@ -11,13 +11,10 @@ import {
   AlertCircle,
   RefreshCw,
   Clock,
-  Brain,
-  Mic,
-  Volume2,
-  VolumeX
+  Brain
 } from "lucide-react";
 
-export default function InterviewPrep({ user, onEndInterview }) {
+export default function InterviewPrep({ onEndInterview }) {
   // Ingestion states: 'idle', 'reading_resume', 'scraping_github', 'parsing_code', 'completed'
   const [ingestState, setIngestState] = useState("idle");
   const [resumeFile, setResumeFile] = useState(null);
@@ -47,146 +44,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
   const totalFramesRef = useRef(0);
   const awayFramesRef = useRef(0);
 
-  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
-  const [audioLoading, setAudioLoading] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState(false);
-  const [languageCode, setLanguageCode] = useState("en-IN");
-  const [recordDuration, setRecordDuration] = useState(0);
 
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const recordTimerRef = useRef(null);
-
-  // Audio Recording (STT) Logic
-  const startAudioRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      mediaRecorderRef.current = mediaRecorder;
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        stream.getTracks().forEach((track) => track.stop());
-        await uploadAudioForSTT(audioBlob);
-      };
-
-      mediaRecorder.start(250);
-      setIsRecordingAudio(true);
-      setRecordDuration(0);
-      recordTimerRef.current = setInterval(() => {
-        setRecordDuration((prev) => prev + 1);
-      }, 1000);
-    } catch (err) {
-      console.error("Microphone access denied or error:", err);
-      alert("Microphone access is required for speech-to-text.");
-    }
-  };
-
-  const stopAudioRecording = () => {
-    if (mediaRecorderRef.current && isRecordingAudio) {
-      mediaRecorderRef.current.stop();
-      setIsRecordingAudio(false);
-      if (recordTimerRef.current) {
-        clearInterval(recordTimerRef.current);
-      }
-    }
-  };
-
-  const uploadAudioForSTT = async (audioBlob) => {
-    setAudioLoading(true);
-    const formData = new FormData();
-    formData.append("file", audioBlob, "recording.webm");
-    formData.append("language_code", languageCode);
-
-    try {
-      const res = await fetch("http://localhost:8001/api/speech-to-text", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.transcript) {
-          setAnswerText((prev) => {
-            const separator = prev.trim() ? " " : "";
-            return prev + separator + data.transcript;
-          });
-        }
-      } else {
-        const errData = await res.json();
-        console.error("STT error:", errData.detail);
-        alert(`Transcription failed: ${errData.detail || "Unknown error"}`);
-      }
-    } catch (err) {
-      console.error("Error transcribing audio:", err);
-      alert("Failed to connect to transcription server.");
-    } finally {
-      setAudioLoading(false);
-    }
-  };
-
-  // Text-to-Speech (TTS) Logic
-  const playTTS = async (text, isFinal = false) => {
-    if (!ttsEnabled) return;
-    const textToSpeak = isFinal 
-      ? "The interview has concluded. Please review your final evaluation scorecard on the screen." 
-      : text;
-
-    try {
-      const res = await fetch("http://localhost:8001/api/text-to-speech", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: textToSpeak,
-          language_code: languageCode
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.audio_base64) {
-          const audioSrc = `data:audio/wav;base64,${data.audio_base64}`;
-          const audio = new Audio(audioSrc);
-          audio.play();
-          return;
-        }
-      }
-      nativeSpeechSynthesis(textToSpeak);
-    } catch (err) {
-      console.warn("TTS backend failed, falling back to native SpeechSynthesis:", err);
-      nativeSpeechSynthesis(textToSpeak);
-    }
-  };
-
-  const nativeSpeechSynthesis = (text) => {
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = languageCode;
-      window.speechSynthesis.speak(utterance);
-    }
-  };
-
-  // Trigger TTS on new question or TTS toggle
-  useEffect(() => {
-    if (ttsEnabled && currentQuestion && currentQuestion.question) {
-      playTTS(currentQuestion.question, currentQuestion.is_final);
-    }
-  }, [currentQuestion, ttsEnabled]);
-
-  // Clean up recording timer on unmount
-  useEffect(() => {
-    return () => {
-      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-    };
-  }, []);
 
   // Scroll transcript to bottom
   useEffect(() => {
@@ -254,7 +112,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
                 }
               }
             }
-          } catch (e) {
+          } catch {
              // Ignore silent failures from tracking
           }
         }, "image/jpeg", 0.7);
@@ -643,7 +501,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
                       type="url"
                       required
                       value={githubUrl}
-                      onChange={(e) => setGitHubUrl(e.target.value)}
+                      onChange={(e) => setGithubUrl(e.target.value)}
                       placeholder="https://github.com/username/project"
                       className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] pl-9 pr-3 py-2.5 text-xs text-[#262626] placeholder-[#6E6359]/40 focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-colors font-medium"
                     />
@@ -672,7 +530,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
         </div>
 
         <footer className="text-center text-[10px] text-[#6E6359]/60 border-t border-[#DFD5C6]/40 pt-6">
-          © 2026 PrepAI Performance Engine. All data is processed using proprietary LLMs.
+          © 2026 PrepFlow AI Performance Engine. All data is processed using proprietary LLMs.
         </footer>
       </div>
     );
@@ -684,7 +542,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
       {/* Top Header Row */}
       <header className="border-b border-[#DFD5C6] py-3.5 px-6 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]">
         <div className="flex items-center gap-3">
-          <span className="font-serif font-semibold text-lg tracking-tight text-[#262626]">PrepAI</span>
+          <span className="font-serif font-semibold text-lg tracking-tight text-[#262626]">PrepFlow <span className="text-[#C85A32]">AI</span></span>
           <div className="h-4 w-[1px] bg-[#DFD5C6]"></div>
           <div className="flex items-center gap-1.5 bg-[#FAF6F0] border border-[#DFD5C6] px-2.5 py-0.5 rounded-full">
             <span className="h-2 w-2 rounded-full bg-[#C85A32] recording-indicator"></span>
@@ -694,40 +552,7 @@ export default function InterviewPrep({ user, onEndInterview }) {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          {/* Language Selector */}
-          <select
-            value={languageCode}
-            onChange={(e) => setLanguageCode(e.target.value)}
-            className="bg-[#FCFAF7] border border-[#DFD5C6] text-xs px-2.5 py-1.5 rounded-lg text-[#6E6359] font-bold focus:outline-none focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] cursor-pointer"
-          >
-            <option value="en-IN">English (India)</option>
-            <option value="hi-IN">Hindi (हिन्दी)</option>
-            <option value="bn-IN">Bengali (বাংলা)</option>
-            <option value="ta-IN">Tamil (தமிழ்)</option>
-            <option value="te-IN">Telugu (తెలుగు)</option>
-            <option value="kn-IN">Kannada (ಕನ್ನಡ)</option>
-            <option value="mr-IN">Marathi (मराठी)</option>
-            <option value="gu-IN">Gujarati (ગુજરાતી)</option>
-            <option value="ml-IN">Malayalam (മലയാളം)</option>
-            <option value="pa-IN">Punjabi (ਪੰਜਾਬੀ)</option>
-          </select>
 
-          {/* TTS Toggle */}
-          <button
-            onClick={() => setTtsEnabled(!ttsEnabled)}
-            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-              ttsEnabled
-                ? "bg-[#C85A32]/10 border-[#C85A32]/30 text-[#C85A32]"
-                : "bg-[#FCFAF7] border-[#DFD5C6] text-[#6E6359]/60 hover:text-[#262626] hover:bg-[#FAF6F0]"
-            }`}
-            title={ttsEnabled ? "Disable Read Aloud" : "Enable Read Aloud"}
-          >
-            {ttsEnabled ? (
-              <Volume2 className="h-4 w-4" />
-            ) : (
-              <VolumeX className="h-4 w-4" />
-            )}
-          </button>
 
           <div className="h-4 w-[1px] bg-[#DFD5C6]"></div>
 
@@ -840,37 +665,10 @@ export default function InterviewPrep({ user, onEndInterview }) {
               <div className="flex justify-between items-center text-[10px] text-[#6E6359]">
                 <span className="font-medium">Protip: Press <kbd className="px-1.5 py-0.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded font-mono text-[9px] text-[#6E6359] font-bold">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded font-mono text-[9px] text-[#6E6359] font-bold">Enter</kbd> to submit</span>
                 <div className="flex items-center gap-2">
-                  {/* Record Button */}
-                  {isRecordingAudio ? (
-                    <button
-                      onClick={stopAudioRecording}
-                      className="flex items-center gap-1.5 rounded-lg bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] px-4 py-2 text-xs font-bold transition-all animate-pulse cursor-pointer shadow-xs"
-                    >
-                      <span className="h-2 w-2 rounded-full bg-white recording-indicator inline-block"></span>
-                      Stop ({formatTime(recordDuration)})
-                    </button>
-                  ) : audioLoading ? (
-                    <button
-                      disabled
-                      className="flex items-center gap-1.5 rounded-lg bg-[#FAF6F0] border border-[#DFD5C6] text-[#6E6359]/50 px-4 py-2 text-xs font-bold transition-all"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                      Transcribing...
-                    </button>
-                  ) : (
-                    <button
-                      onClick={startAudioRecording}
-                      className="flex items-center gap-1.5 rounded-lg bg-[#FCFAF7] border border-[#DFD5C6] text-[#6E6359] hover:bg-[#FAF6F0] hover:text-[#262626] px-4 py-2 text-xs font-bold transition-all cursor-pointer shadow-xs"
-                    >
-                      <Mic className="h-3.5 w-3.5 text-[#6E6359]/70" />
-                      Record Answer
-                    </button>
-                  )}
-
                   {/* Submit Button */}
                   <button
                     onClick={handleSubmitAnswer}
-                    disabled={!answerText.trim() || isRecordingAudio || audioLoading}
+                    disabled={!answerText.trim()}
                     className="flex items-center gap-1.5 rounded-lg bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] px-5 py-2 text-xs font-bold transition-all disabled:opacity-30 disabled:hover:bg-[#C85A32] shadow-xs cursor-pointer"
                   >
                     <Send className="h-3.5 w-3.5" />

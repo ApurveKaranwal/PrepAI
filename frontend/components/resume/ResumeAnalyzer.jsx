@@ -1,31 +1,42 @@
 import React, { useState } from 'react';
-import { UploadCloud, CheckCircle, XCircle, TrendingUp, AlertCircle, Loader2, Star, Target, FileText, Lightbulb, Wand2, Copy, ArrowRight } from 'lucide-react';
+import { UploadCloud, CheckCircle, XCircle, AlertCircle, Loader2, Star, Target, FileText, Lightbulb, Wand2, Copy, ArrowRight } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 
 const ResumeAnalyzer = () => {
-  const [jobRole, setJobRole] = useState('');
+  const [analysis, setAnalysis] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem('prepflow_latest_resume_analysis');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.analysis) return parsed.analysis;
+        }
+      } catch (e) {
+        console.error("Failed to load resume analysis from localStorage", e);
+      }
+    }
+    return null;
+  });
+  const [jobRole, setJobRole] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem('prepflow_latest_resume_analysis');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.jobRole) return parsed.jobRole;
+        }
+      } catch (e) {
+        console.error("Failed to load resume analysis from localStorage", e);
+      }
+    }
+    return '';
+  });
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [analysis, setAnalysis] = useState(null);
   const [rewrites, setRewrites] = useState(null);
   const [rewriting, setRewriting] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
-
-  React.useEffect(() => {
-    try {
-      const cached = localStorage.getItem('prepflow_latest_resume_analysis');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed && parsed.analysis) {
-          setAnalysis(parsed.analysis);
-          setJobRole(parsed.jobRole || '');
-        }
-      }
-    } catch (e) {
-      console.error("Failed to load resume analysis from localStorage", e);
-    }
-  }, []);
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -155,7 +166,7 @@ return (
           </div>
           
           <p className="text-[#6E6359] text-xs md:text-sm leading-relaxed font-medium">
-            Ensure your resume isn't filtered out by automated screeners. Upload your CV and target role to get straightforward, actionable feedback to align with modern hiring standards.
+            Ensure your resume isn&apos;t filtered out by automated screeners. Upload your CV and target role to get straightforward, actionable feedback to align with modern hiring standards.
           </p>
 
           <div className="space-y-4 pt-5 border-t border-[#DFD5C6]/60">

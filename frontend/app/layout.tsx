@@ -13,7 +13,7 @@ const lora = Lora({
 });
 
 export const metadata: Metadata = {
-  title: "PrepAI - Technical Interview Platform",
+  title: "PrepFlow AI - Technical Interview Platform",
   description: "AI-powered technical interview preparation, codebase sandbox, and resume optimizer.",
 };
 

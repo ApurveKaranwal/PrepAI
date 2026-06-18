@@ -7,11 +7,8 @@ import {
   AlertCircle,
   Camera,
   Lightbulb,
-  TrendingUp,
   Sparkles,
   ChevronRight,
-  Award,
-  Mic,
   Calendar,
   Zap,
   Activity,
@@ -27,6 +24,19 @@ import {
   Tooltip as RechartsTooltip
 } from "recharts";
 
+// Custom tooltips for Recharts
+const CustomRadarTooltip = ({ active, payload }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-[#FCFAF7] border border-[#DFD5C6] p-2 rounded-md shadow-lg text-[11px]">
+        <p className="font-serif font-bold text-[#262626]">{payload[0].name}</p>
+        <p className="font-mono text-[#C85A32] font-extrabold mt-0.5">{payload[0].value}%</p>
+      </div>
+    );
+  }
+  return null;
+};
+
 export default function DashboardHome({ onStartPractice, onNavigate, user }) {
   const [history, setHistory] = useState([]);
   const [voiceHistory, setVoiceHistory] = useState([]);
@@ -34,16 +44,24 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
   const [loading, setLoading] = useState(true);
   const [skillsReport, setSkillsReport] = useState("No interview sessions completed yet. Start a session to analyze your communication and technical patterns.");
   const [activeHistoryTab, setActiveHistoryTab] = useState("voice");
-  const [resumeAnalysis, setResumeAnalysis] = useState(null);
-  const [greeting, setGreeting] = useState("Welcome back");
-
-  useEffect(() => {
-    // Dynamic greeting based on time of day
+  const [resumeAnalysis] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem('prepflow_latest_resume_analysis');
+        return cached ? JSON.parse(cached) : null;
+      } catch (e) {
+        console.error("Failed to load resume analysis from localStorage", e);
+        return null;
+      }
+    }
+    return null;
+  });
+  const [greeting] = useState(() => {
     const hr = new Date().getHours();
-    if (hr < 12) setGreeting("Good morning");
-    else if (hr < 17) setGreeting("Good afternoon");
-    else setGreeting("Good evening");
-  }, []);
+    if (hr < 12) return "Good morning";
+    if (hr < 17) return "Good afternoon";
+    return "Good evening";
+  });
 
   useEffect(() => {
     async function fetchHistory() {
@@ -81,17 +99,6 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
     fetchHistory();
   }, []);
 
-  useEffect(() => {
-    try {
-      const cached = localStorage.getItem('prepflow_latest_resume_analysis');
-      if (cached) {
-        setResumeAnalysis(JSON.parse(cached));
-      }
-    } catch (e) {
-      console.error("Failed to load resume analysis from localStorage", e);
-    }
-  }, []);
-
   // Calculate dynamic stats averages
   const avgVoice = voiceHistory.length > 0
     ? (voiceHistory.reduce((sum, h) => sum + parseFloat(h.status), 0) / voiceHistory.length).toFixed(1)
@@ -116,18 +123,6 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
     { subject: "Behavioral", score: overallStats?.ownership || 70, fullMark: 100 },
   ];
 
-  // Custom tooltips for Recharts
-  const CustomRadarTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-[#FCFAF7] border border-[#DFD5C6] p-2 rounded-md shadow-lg text-[11px]">
-          <p className="font-serif font-bold text-[#262626]">{payload[0].name}</p>
-          <p className="font-mono text-[#C85A32] font-extrabold mt-0.5">{payload[0].value}%</p>
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="flex-1 bg-[#FAF6F0] bg-grid-overlay overflow-y-auto h-screen flex flex-col font-sans text-[#262626]">
@@ -491,6 +486,77 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Topic-wise Preparation Progress */}
+            <div className="border border-[#DFD5C6] rounded-2xl p-6 shadow-sm bg-[#FCFAF7] space-y-5">
+              <div className="flex items-center justify-between select-none">
+                <div>
+                  <h3 className="text-sm font-serif font-bold text-[#262626]">Preparation Progress by Topic</h3>
+                  <p className="text-[10px] text-[#6E6359]/70 mt-0.5">Track your readiness index across key evaluation dimensions</p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold font-mono bg-[#C85A32]/15 text-[#C85A32] border border-[#C85A32]/20">
+                  Updated Live
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-[#DFD5C6]/60 rounded-xl p-4 space-y-3 bg-[#FAF6F0]/30 hover:border-[#C85A32]/35 transition-colors">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-[#262626]">Algorithms & Coding Logic</span>
+                    <span className="font-mono text-[#C85A32] font-bold">80%</span>
+                  </div>
+                  <div className="w-full bg-[#DFD5C6]/40 h-2 rounded-full overflow-hidden">
+                    <div className="bg-[#C85A32] h-full rounded-full" style={{ width: "80%" }}></div>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-[9px] text-[#6E6359]">Focus: Time & space complexity analysis</span>
+                    <button onClick={onStartPractice} className="text-[9px] font-bold text-[#C85A32] hover:underline cursor-pointer">Practice</button>
+                  </div>
+                </div>
+
+                <div className="border border-[#DFD5C6]/60 rounded-xl p-4 space-y-3 bg-[#FAF6F0]/30 hover:border-[#C85A32]/35 transition-colors">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-[#262626]">System Design & Scalability</span>
+                    <span className="font-mono text-[#A6690B] font-bold">65%</span>
+                  </div>
+                  <div className="w-full bg-[#DFD5C6]/40 h-2 rounded-full overflow-hidden">
+                    <div className="bg-[#A6690B] h-full rounded-full" style={{ width: "65%" }}></div>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-[9px] text-[#6E6359]">Focus: Microservices & caching databases</span>
+                    <button onClick={onStartPractice} className="text-[9px] font-bold text-[#A6690B] hover:underline cursor-pointer">Practice</button>
+                  </div>
+                </div>
+
+                <div className="border border-[#DFD5C6]/60 rounded-xl p-4 space-y-3 bg-[#FAF6F0]/30 hover:border-[#C85A32]/35 transition-colors">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-[#262626]">Communication & Delivery</span>
+                    <span className="font-mono text-emerald-700 font-bold">90%</span>
+                  </div>
+                  <div className="w-full bg-[#DFD5C6]/40 h-2 rounded-full overflow-hidden">
+                    <div className="bg-emerald-600 h-full rounded-full" style={{ width: "90%" }}></div>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-[9px] text-[#6E6359]">Focus: Structured answering (STAR method)</span>
+                    <button onClick={() => onNavigate("voice-copilot")} className="text-[9px] font-bold text-emerald-700 hover:underline cursor-pointer">Practice</button>
+                  </div>
+                </div>
+
+                <div className="border border-[#DFD5C6]/60 rounded-xl p-4 space-y-3 bg-[#FAF6F0]/30 hover:border-[#C85A32]/35 transition-colors">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-[#262626]">Database & API Design</span>
+                    <span className="font-mono text-[#C85A32] font-bold">50%</span>
+                  </div>
+                  <div className="w-full bg-[#DFD5C6]/40 h-2 rounded-full overflow-hidden">
+                    <div className="bg-[#C85A32] h-full rounded-full" style={{ width: "50%" }}></div>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-[9px] text-[#6E6359]">Focus: SQL schemas & REST contracts</span>
+                    <button onClick={onStartPractice} className="text-[9px] font-bold text-[#C85A32] hover:underline cursor-pointer">Practice</button>
+                  </div>
+                </div>
+              </div>
             </div>
 
           </div>

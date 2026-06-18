@@ -18,8 +18,8 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onSta
       <div className="p-6 space-y-8">
         {/* Brand */}
         <div>
-          <h1 className="font-serif font-semibold text-xl tracking-tight text-[#262626] flex items-center gap-1.5">
-            PrepAI
+          <h1 className="font-serif font-semibold text-xl tracking-tight text-[#262626] flex items-center gap-1.5 select-none">
+            PrepFlow <span className="text-[#C85A32]">AI</span>
           </h1>
           <p className="text-[10px] font-mono text-[#6E6359]/70 uppercase tracking-widest mt-0.5">
             Interview Workspace

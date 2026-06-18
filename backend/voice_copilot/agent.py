@@ -110,9 +110,40 @@ Your persona: {mode_instruction}
     def generate_next_turn(self) -> str:
         """
         Loads the message history, calls the LLM, and retrieves the next question.
+        If the LLM client is offline, generates dynamic, highly contextual fallback questions.
         """
+        db_messages = db.get_voice_messages(self.session_id)
+        turn_index = len([m for m in db_messages if m["role"] == "assistant"])
+
         if not client:
-            return "Could you describe the system architecture of your main GitHub repository?"
+            # High-fidelity mock question generator based on candidate profile info
+            projects = self.github_info.get('projects') or []
+            skills = self.resume_info.get('skills') or []
+            languages = self.github_info.get('languages_summary') or []
+
+            # Clean list of projects safely
+            proj_names = [p.get('name') for p in projects if p.get('name')]
+            proj_1 = proj_names[0] if len(proj_names) > 0 else "your main project"
+            proj_2 = proj_names[1] if len(proj_names) > 1 else (proj_names[0] if len(proj_names) > 0 else "your primary system")
+            primary_lang = languages[0] if languages else (skills[0] if skills else "Python")
+            
+            # Formulate structured questions
+            fallback_questions = [
+                # Turn 0: Intro & Project Architecture
+                f"Welcome to your technical screening for the {self.role} position. To start, could you walk me through the architecture of your repository '{proj_1}' if you have one, or explain how you structured your main project? Why did you choose {primary_lang} as the primary language?",
+                # Turn 1: Specific Coding & Concurrency
+                f"In your repository '{proj_2}' (or your other key projects), how did you handle data mutations and resource concurrency? If you were to write automated test suites for your main files, what specific edge cases would you mock out?",
+                # Turn 2: Database and State management
+                f"Let's dive into data state. I noticed you list {', '.join(skills[:3])} in your profile. How would you design a caching layer for a high-throughput endpoint in this tech stack to avoid hitting database bottlenecks? What write-through or write-back policies would you choose?",
+                # Turn 3: Refactoring and Coding Scenario
+                f"Imagine a scenario where your main database schema needs to support a live migration from relational storage to document storage without bringing the system down. Walk me through the refactoring steps you'd implement in your codebase to handle both formats concurrently.",
+                # Turn 4: Final System Design / Bottlenecks
+                f"For the final technical question: how would you structure the system to handle a sudden 10x spike in API traffic? Explain how you would decouple your services using message queues or pub-sub architectures."
+            ]
+
+            # Return question based on current turn index
+            q_idx = min(turn_index, len(fallback_questions) - 1)
+            return fallback_questions[q_idx]
 
         # Retrieve messages
         db_messages = db.get_voice_messages(self.session_id)
@@ -137,14 +168,18 @@ Your persona: {mode_instruction}
             completion = client.chat.completions.create(
                 messages=messages,
                 model="llama-3.3-70b-versatile",
-                temperature=0.7,
+                temperature=0.8,
                 max_tokens=600
             )
             response = completion.choices[0].message.content.strip()
             return response
         except Exception as e:
             print(f"Error generating next turn: {e}")
-            return "Let's discuss the scaling bottlenecks in your systems. How would you handle a sudden 10x spike in web traffic?"
+            fallback_errs = [
+                f"Let's discuss coding logic. In your project '{self.github_info.get('projects', [{}])[0].get('name', 'main repo')}', how did you handle asynchronous state propagation? Walk me through the specific logic.",
+                "Let's discuss caching and system designs. How would you handle a sudden 10x traffic increase?"
+            ]
+            return fallback_errs[min(turn_index, len(fallback_errs) - 1)]
 
     def run_hidden_evaluation(self, question: str, candidate_answer: str) -> Dict[str, Any]:
         """

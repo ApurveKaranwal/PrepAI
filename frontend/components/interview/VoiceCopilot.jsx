@@ -11,18 +11,13 @@ import {
   CheckCircle,
   TrendingUp,
   AlertTriangle,
-  Lightbulb,
   Award,
   BookOpen,
-  AlertCircle,
   ArrowRight,
   Clock,
   Sparkles,
   RefreshCw,
   Volume2,
-  VolumeX,
-  Lock,
-  MessageSquare,
   Layers,
   ChevronRight,
   ChevronLeft,
@@ -45,7 +40,7 @@ import {
   Tooltip
 } from "recharts";
 
-export default function VoiceCopilot({ user }) {
+export default function VoiceCopilot({ user: _user }) {
   // Navigation & session state
   const [stage, setStage] = useState("onboarding"); // onboarding, scraping, ready, active, analysis
   const [sessionId, setSessionId] = useState(null);
@@ -1013,108 +1008,124 @@ export default function VoiceCopilot({ user }) {
 
       {/* 3. Active Interview Stage */}
       {stage === "active" && (
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden h-screen">
           
           {/* Main workspace */}
-          <div className="flex-1 flex flex-col justify-between p-6 overflow-hidden">
+          <div className="flex-1 flex flex-col justify-between p-8 overflow-hidden bg-[#FAF6F0] bg-grid-overlay">
             
-            {/* Top Bar */}
-            <div className="flex items-center justify-between pb-4 border-b border-[#DFD5C6] bg-[#FCFAF7] px-6 py-3.5 rounded-xl shadow-sm">
-              <div className="flex items-center gap-2.5">
-                <span className="text-[9px] font-bold uppercase tracking-widest bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/20 px-2.5 py-0.5 rounded-full font-mono">
+            {/* Top Bar - Minimal */}
+            <div className="flex items-center justify-between pb-4 border-b border-[#DFD5C6]/50 select-none">
+              <div className="flex items-center gap-3">
+                <span className="text-[9px] font-bold uppercase tracking-wider bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25 px-2.5 py-0.5 rounded-md font-mono">
                   {interviewMode} Mode
                 </span>
-                <span className="text-[#262626] text-xs font-bold">{roleTitle} Technical Screening</span>
+                <span className="text-[#262626] text-xs font-bold font-serif">{roleTitle} Technical Screening</span>
               </div>
-              <div className="flex items-center gap-2 text-xs font-mono font-bold text-[#6E6359] bg-[#FAF6F0] px-3 py-1 rounded-full border border-[#DFD5C6]">
+              <div className="flex items-center gap-2 text-xs font-mono font-bold text-[#6E6359] bg-[#FCFAF7] px-3.5 py-1.5 rounded-xl border border-[#DFD5C6]/50 shadow-2xs">
                 <Clock className="h-3.5 w-3.5 text-[#C85A32]" />
                 {formatTime(secondsElapsed)}
               </div>
             </div>
 
-            {/* Central visualizer: Organic Morphing Fluid Blob */}
+            {/* Central visualizer: Minimalistic Pulsing Wave rings (SarvamAI style) */}
             <div className="flex-1 flex flex-col items-center justify-center p-4">
-              <div className="relative flex items-center justify-center">
+              <div className="relative flex items-center justify-center h-64 w-64">
                 
-                {/* Organic fluid ripple waves */}
-                <div className={`absolute transition-all duration-1000 animate-morph-slow ${
-                  voiceStatus === "speaking" ? "w-[220px] h-[220px] bg-[#C85A32]/10 scale-110 opacity-100" :
-                  voiceStatus === "listening" ? "w-[200px] h-[200px] bg-[#2E5A44]/10 scale-100 opacity-90" :
-                  voiceStatus === "thinking" ? "w-[230px] h-[230px] bg-[#A6690B]/10 scale-95 opacity-100" :
-                  "w-[160px] h-[160px] bg-[#FCFAF7]/50 scale-90 opacity-0"
+                {/* Outermost pulsing ring */}
+                <div className={`absolute rounded-full border border-dashed transition-all duration-1000 ${
+                  voiceStatus === "speaking" ? "w-56 h-56 border-[#C85A32]/35 animate-spin duration-10000" :
+                  voiceStatus === "listening" ? "w-56 h-56 border-[#2E5A44]/35 animate-pulse" :
+                  voiceStatus === "thinking" ? "w-52 h-52 border-[#A6690B]/35 animate-spin duration-3000" :
+                  "w-48 h-48 border-[#DFD5C6]/40"
                 }`} />
 
-                {/* Core Organic Blob */}
-                <div className={`h-28 w-28 flex items-center justify-center shadow-lg transition-all duration-700 relative border z-10 ${
-                  voiceStatus === "speaking" ? "bg-[#C85A32] border-[#C85A32] shadow-[#C85A32]/25 scale-105 animate-morph-fast" :
-                  voiceStatus === "listening" ? "bg-[#2E5A44] border-[#2E5A44] shadow-[#2E5A44]/25 animate-morph" :
-                  voiceStatus === "thinking" ? "bg-[#A6690B] border-[#A6690B] shadow-[#A6690B]/25 animate-morph-slow" :
-                  "bg-[#DFD5C6] border-[#DFD5C6] animate-morph"
+                {/* Middle concentric pulsing ring */}
+                <div className={`absolute rounded-full border transition-all duration-700 ${
+                  voiceStatus === "speaking" ? "w-44 h-44 border-[#C85A32]/45 scale-105" :
+                  voiceStatus === "listening" ? "w-44 h-44 border-[#2E5A44]/45 scale-100 animate-ping duration-2000" :
+                  voiceStatus === "thinking" ? "w-40 h-40 border-[#A6690B]/45 scale-95" :
+                  "w-36 h-36 border-[#DFD5C6]/30"
+                }`} />
+
+                {/* Inner solid tracking ring */}
+                <div className={`absolute rounded-full border-2 transition-all duration-500 ${
+                  voiceStatus === "speaking" ? "w-32 h-32 border-[#C85A32]/60 bg-[#C85A32]/5" :
+                  voiceStatus === "listening" ? "w-32 h-32 border-[#2E5A44]/60 bg-[#2E5A44]/5" :
+                  voiceStatus === "thinking" ? "w-28 h-28 border-[#A6690B]/60 bg-[#A6690B]/5" :
+                  "w-24 h-24 border-[#DFD5C6]/50 bg-white/40"
+                }`} />
+
+                {/* Central Micro Indicator Core */}
+                <div className={`h-16 w-16 rounded-full flex items-center justify-center shadow-sm transition-all duration-500 relative z-10 border ${
+                  voiceStatus === "speaking" ? "bg-[#C85A32] border-[#C85A32] text-white" :
+                  voiceStatus === "listening" ? "bg-[#2E5A44] border-[#2E5A44] text-white" :
+                  voiceStatus === "thinking" ? "bg-[#A6690B] border-[#A6690B] text-white" :
+                  "bg-white border-[#DFD5C6] text-[#6E6359]"
                 }`}>
-                  {voiceStatus === "speaking" && <Volume2 className="h-7 w-7 text-[#FCFAF7] animate-bounce" />}
-                  {voiceStatus === "listening" && <Mic className="h-7 w-7 text-[#FCFAF7] animate-pulse" />}
-                  {voiceStatus === "thinking" && <Sparkles className="h-7 w-7 text-[#FCFAF7] animate-spin" />}
-                  {voiceStatus === "idle" && <MicOff className="h-7 w-7 text-[#6E6359]" />}
+                  {voiceStatus === "speaking" && <Volume2 className="h-5 w-5 animate-pulse" />}
+                  {voiceStatus === "listening" && <Mic className="h-5 w-5 animate-pulse" />}
+                  {voiceStatus === "thinking" && <RefreshCw className="h-5 w-5 animate-spin" />}
+                  {voiceStatus === "idle" && <MicOff className="h-5 w-5" />}
                 </div>
               </div>
 
-              {/* Status Text */}
-              <div className="mt-8 text-center space-y-1">
-                <span className="text-[9px] font-bold uppercase tracking-widest text-[#6E6359] font-mono">
-                  Interviewer State
+              {/* Status Indicator */}
+              <div className="mt-4 text-center space-y-1">
+                <span className="text-[8px] font-bold uppercase tracking-widest text-[#6E6359]/60 font-mono">
+                  State telemetry
                 </span>
-                <p className={`text-sm font-bold ${
+                <p className={`text-xs font-bold tracking-wide uppercase font-mono ${
                   voiceStatus === "speaking" ? "text-[#C85A32]" :
                   voiceStatus === "listening" ? "text-[#2E5A44]" :
                   voiceStatus === "thinking" ? "text-[#A6690B]" :
                   "text-[#6E6359]/60"
                 }`}>
-                  {voiceStatus === "speaking" ? "Interviewer Speaking..." :
-                   voiceStatus === "listening" ? "Listening (Talk Now)..." :
-                   voiceStatus === "thinking" ? "Analyzing response..." :
-                   "Muted"}
+                  {voiceStatus === "speaking" ? "Interviewer Speaking" :
+                   voiceStatus === "listening" ? "Listening to response" :
+                   voiceStatus === "thinking" ? "Analyzing transcript" :
+                   "Awaiting input"}
                 </p>
               </div>
             </div>
 
-            {/* Bottom Transcript box */}
-            <div className="h-36 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 overflow-y-auto shadow-sm flex flex-col gap-3 scrollbar-thin">
+            {/* Bottom Transcript box - Clean minimalist lines */}
+            <div className="h-40 bg-[#FCFAF7] border border-[#DFD5C6]/50 rounded-xl p-4 overflow-y-auto shadow-2xs flex flex-col gap-3.5 scrollbar-thin">
               {transcript.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center text-[#6E6359]/60 text-xs">
-                  Transcript will stream here in real time as you speak...
+                <div className="flex-1 flex items-center justify-center text-[#6E6359]/50 text-xs font-medium">
+                  Transcript stream will initialize once you begin speaking...
                 </div>
               ) : (
                 transcript.map((msg, index) => (
-                  <div key={index} className={`flex gap-3 text-xs leading-relaxed ${msg.role === "assistant" ? "text-[#262626]" : "text-[#C85A32] font-semibold"}`}>
-                    <span className={`font-bold font-mono shrink-0 uppercase tracking-wide text-[9px] py-0.5 px-2 rounded border max-h-[22px] ${
-                      msg.role === "assistant" ? "bg-[#FAF6F0] border-[#DFD5C6] text-[#6E6359]" : "bg-[#C85A32]/10 border-[#C85A32]/20 text-[#C85A32]"
+                  <div key={index} className={`flex gap-3 text-xs leading-relaxed ${msg.role === "assistant" ? "text-[#262626]" : "text-[#C85A32]"}`}>
+                    <span className={`font-bold font-mono shrink-0 uppercase tracking-wider text-[8px] py-0.5 px-2 rounded-md border h-5 flex items-center ${
+                      msg.role === "assistant" ? "bg-[#FAF6F0] border-[#DFD5C6]/60 text-[#6E6359]" : "bg-[#C85A32]/10 border-[#C85A32]/20 text-[#C85A32]"
                     }`}>
                       {msg.role === "assistant" ? "AI" : "YOU"}
                     </span>
-                    <p className="mt-0.5">{msg.text}</p>
+                    <p className="mt-0.5 font-medium leading-relaxed">{msg.text}</p>
                   </div>
                 ))
               )}
             </div>
 
-            {/* Control Panel */}
-            <div className="flex items-center justify-between mt-4 bg-[#FCFAF7] p-4 rounded-xl border border-[#DFD5C6] shadow-sm">
-              <div className="flex items-center gap-4">
+            {/* Control Panel - Sleek and clean */}
+            <div className="flex items-center justify-between mt-4 bg-[#FCFAF7] p-3 rounded-xl border border-[#DFD5C6]/50 shadow-2xs">
+              <div className="flex items-center gap-3">
                 
                 {/* Mic Status Indicator Group */}
-                <div className="flex items-center gap-2.5 border-r border-[#DFD5C6] pr-4">
-                  <div className={`p-2 rounded-full transition-all ${
-                    isMuted ? "bg-[#FCEBE6] text-[#C85A32]" : "bg-[#E8F2EC] text-[#2E5A44]"
+                <div className="flex items-center gap-3 border-r border-[#DFD5C6]/50 pr-4">
+                  <div className={`p-2 rounded-lg transition-all ${
+                    isMuted ? "bg-red-50 text-red-600 border border-red-100" : "bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]/60"
                   }`}>
                     {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                   </div>
                   
-                  {/* Real-time Decibel Audio Segment Meter */}
-                  <div className="flex flex-col text-left">
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-[#6E6359]/60 font-mono">
-                      Mic Signal
+                  {/* Decibel Meter */}
+                  <div className="flex flex-col text-left select-none">
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[#6E6359]/60 font-mono">
+                      Input Level
                     </span>
-                    <div className="flex items-center gap-0.5 h-3.5 mt-0.5">
+                    <div className="flex items-center gap-0.5 h-2.5 mt-1">
                       {[1, 2, 3, 4, 5, 6, 7, 8].map((bar) => {
                         const active = !isMuted && micLevel >= bar * 11;
                         return (
@@ -1123,11 +1134,11 @@ export default function VoiceCopilot({ user }) {
                             className={`w-0.75 rounded-full transition-all duration-75 ${
                               active
                                 ? bar > 6
-                                  ? "bg-[#C85A32] h-3"
+                                  ? "bg-[#C85A32] h-2.5"
                                   : bar > 4
-                                  ? "bg-[#A6690B] h-2.5"
-                                  : "bg-[#2E5A44] h-2"
-                                : "bg-[#DFD5C6] h-1"
+                                  ? "bg-[#A6690B] h-2"
+                                  : "bg-[#2E5A44] h-1.5"
+                                : "bg-[#DFD5C6]/40 h-1"
                             }`}
                           />
                         );
@@ -1139,37 +1150,36 @@ export default function VoiceCopilot({ user }) {
                 {/* Primary Mic Controls */}
                 <button
                   onClick={toggleMute}
-                  className={`px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all cursor-pointer ${
+                  className={`py-2 px-4 rounded-xl border text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer ${
                     isMuted
-                      ? "bg-[#FCEBE6] border-[#F2C2B8] text-[#C85A32] hover:bg-[#F7DDD7]"
+                      ? "bg-red-50 border-red-100 text-red-600 hover:bg-red-100"
                       : "bg-[#FCFAF7] border-[#DFD5C6] text-[#6E6359] hover:bg-[#FAF6F0]"
                   }`}
                 >
-                  {isMuted ? "Unmute Microphone" : "Mute Microphone"}
+                  {isMuted ? "Unmute Mic" : "Mute Mic"}
                 </button>
 
                 {/* Hear Your Own Voice Loopback Toggle */}
                 <button
                   onClick={toggleHearOwnVoice}
-                  className={`px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all cursor-pointer flex items-center gap-1.5 ${
+                  className={`py-2 px-4 rounded-xl border text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer flex items-center gap-1.5 ${
                     hearOwnVoice
-                      ? "bg-[#C85A32]/15 border-[#C85A32] text-[#C85A32] shadow-sm"
+                      ? "bg-[#C85A32]/10 border-[#C85A32] text-[#C85A32] shadow-2xs"
                       : "bg-[#FCFAF7] border-[#DFD5C6] text-[#6E6359] hover:bg-[#FAF6F0]"
                   }`}
                 >
                   <Volume1 className="h-3.5 w-3.5" />
-                  {hearOwnVoice ? "Audio Monitor: ON" : "Hear Your Own Voice"}
+                  {hearOwnVoice ? "Monitor: Active" : "Monitor Input"}
                 </button>
 
                 {/* Done Speaking (Instant Submit) Button */}
                 {voiceStatus === "listening" && (
                   <button
                     onClick={handleDoneSpeaking}
-                    className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md bg-[#C85A32] border border-[#C85A32] text-white hover:bg-[#B83A14] transition-all cursor-pointer flex items-center gap-1.5 shadow-sm animate-pulse"
-                    title="Instantly submits your answer to the interviewer, avoiding VAD silence delay"
+                    className="py-2 px-4 rounded-xl bg-[#C85A32] border border-[#C85A32] text-white hover:bg-[#B83A14] text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer flex items-center gap-1.5 shadow-sm"
                   >
-                    <Send className="h-3 w-3 fill-white" />
-                    Done Speaking
+                    <Send className="h-3.5 w-3.5 fill-white" />
+                    Submit Answer
                   </button>
                 )}
 
@@ -1178,41 +1188,44 @@ export default function VoiceCopilot({ user }) {
               {/* End Interview Action */}
               <button
                 onClick={handleEndInterview}
-                className="bg-[#B83A14] hover:bg-[#A1310F] text-[#FCFAF7] font-bold py-2 px-4 rounded-md text-xs uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                className="bg-slate-950 hover:bg-slate-800 text-white font-semibold py-2 px-4 rounded-xl text-xs flex items-center gap-1.5 active:scale-[0.98] transition-all shadow-sm cursor-pointer"
               >
-                <Square className="h-3 w-3" /> End Session
+                <Square className="h-3 w-3" /> End session
               </button>
             </div>
           </div>
 
-          {/* Profile Sidebar */}
+          {/* Profile Sidebar - SarvamAI-like minimal Metadata Inspector */}
           {isProfileOpen ? (
-            <div className="w-80 border-l border-[#DFD5C6] bg-[#FCFAF7] p-6 flex flex-col justify-between overflow-y-auto shrink-0 animate-slideLeft shadow-sm">
+            <div className="w-80 border-l border-[#DFD5C6]/50 bg-[#FCFAF7] p-6 flex flex-col justify-between overflow-y-auto shrink-0 shadow-2xs animate-in fade-in slide-in-from-right duration-300">
               
-              {/* Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-[#DFD5C6] mb-6">
-                <h4 className="text-sm font-bold text-[#262626] font-serif flex items-center gap-1.5">
-                  <Cpu className="h-4 w-4 text-[#C85A32]" /> Candidate Profile
-                </h4>
+              {/* Sidebar Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-[#DFD5C6]/50">
+                <div className="flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#C85A32]" />
+                  <h4 className="text-xs font-mono font-bold text-[#262626] uppercase tracking-wider">
+                    Candidate Profile
+                  </h4>
+                </div>
                 <button
                   onClick={() => setIsProfileOpen(false)}
-                  className="text-[#6E6359]/60 hover:text-[#262626] transition-colors cursor-pointer"
+                  className="text-[#6E6359]/65 hover:text-[#262626] transition-colors cursor-pointer"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
 
-              {/* Body */}
-              <div className="flex-1 space-y-6">
+              {/* Sidebar Body */}
+              <div className="flex-1 space-y-6 pt-5">
                 
                 {/* Languages list */}
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-[#262626] font-serif">
+                <div className="space-y-2.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#6E6359] font-mono">
                     Scraped Languages
                   </span>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1.5">
                     {profileSummary?.github?.languages_summary?.map((lang) => (
-                      <span key={lang} className="text-[9px] px-2.5 py-0.5 rounded bg-[#FAF6F0] border border-[#DFD5C6] font-bold text-[#6E6359]">
+                      <span key={lang} className="text-[10px] px-3 py-1 rounded-full bg-slate-100/80 border border-slate-200/50 font-bold text-slate-700">
                         {lang}
                       </span>
                     ))}
@@ -1221,24 +1234,24 @@ export default function VoiceCopilot({ user }) {
 
                 {/* Extracted Projects */}
                 <div className="space-y-3">
-                  <span className="text-xs font-bold text-[#262626] font-serif">
-                    Scraped Repos & Tech
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#6E6359] font-mono">
+                    Scraped Repositories
                   </span>
-                  <div className="space-y-2">
+                  <div className="space-y-3 divide-y divide-[#DFD5C6]/40">
                     {profileSummary?.github?.projects?.slice(0, 3).map((proj, idx) => (
-                      <div key={idx} className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg p-3 space-y-1">
+                      <div key={idx} className={`space-y-1.5 ${idx > 0 ? "pt-3" : ""}`}>
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-[#262626] truncate max-w-[120px]">{proj.name}</span>
-                          <span className="text-[8px] font-bold text-[#C85A32] tracking-wide uppercase px-1.5 py-0.5 rounded bg-[#C85A32]/10 border border-[#C85A32]/10">
+                          <span className="text-xs font-bold text-slate-800 font-serif tracking-tight truncate max-w-[120px]">{proj.name}</span>
+                          <span className="text-[8px] font-bold text-orange-700 tracking-wide uppercase px-1.5 py-0.5 rounded-md bg-orange-50 border border-orange-100/50">
                             {proj.architecture}
                           </span>
                         </div>
-                        <p className="text-[10px] text-[#6E6359] leading-normal line-clamp-2">
+                        <p className="text-[10px] text-stone-500 leading-relaxed font-medium line-clamp-2">
                           {proj.description || "No description provided."}
                         </p>
-                        <div className="flex flex-wrap gap-1 pt-1">
+                        <div className="flex flex-wrap gap-1">
                           {proj.technologies?.slice(0, 3).map((tech) => (
-                            <span key={tech} className="text-[8px] px-1 py-0.5 bg-[#FCFAF7] border border-[#DFD5C6] rounded text-[#6E6359]">
+                            <span key={tech} className="text-[8px] px-2 py-0.5 bg-slate-100 text-stone-600 rounded-md font-mono border border-slate-200/20">
                               {tech}
                             </span>
                           ))}
@@ -1248,47 +1261,66 @@ export default function VoiceCopilot({ user }) {
                   </div>
                 </div>
 
-                {/* Skills report */}
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-[#262626] font-serif">
-                    Resume Skills
+                {/* Resume Skills */}
+                <div className="space-y-2.5 pt-2 border-t border-[#DFD5C6]/40">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#6E6359] font-mono">
+                    Resume Keywords
                   </span>
-                  <div className="flex flex-wrap gap-1">
-                    {profileSummary?.resume?.skills?.slice(0, 8).map((sk) => (
-                      <span key={sk} className="text-[8px] px-2 py-0.5 bg-[#FAF6F0] border border-[#DFD5C6] text-[#6E6359] rounded font-medium">
+                  <div className="flex flex-wrap gap-1.5">
+                    {profileSummary?.resume?.skills?.slice(0, 10).map((sk) => (
+                      <span key={sk} className="text-[9px] px-2.5 py-1 bg-slate-100/80 text-slate-700 rounded-full font-medium border border-slate-200/50">
                         {sk}
                       </span>
                     ))}
                   </div>
                 </div>
 
-                {/* Hidden Metrics (glowing hints) */}
+                {/* Evaluation Telemetry block */}
                 {latestEvaluation && (
-                  <div className="border border-[#DFD5C6] bg-[#FAF6F0] rounded-xl p-4 space-y-3 animate-fadeIn">
-                    <span className="text-xs font-bold text-[#C85A32] font-serif flex items-center gap-1.5">
-                      <Lock className="h-3.5 w-3.5" /> Adaptive Evaluations
-                    </span>
-                    <div className="grid grid-cols-2 gap-2 text-[10px] font-sans">
-                      <div className="flex justify-between border-b border-[#DFD5C6] pb-1">
-                        <span className="text-[#6E6359]/70 font-medium">Depth:</span>
-                        <span className="text-[#262626] font-bold">{latestEvaluation.technical_depth}/10</span>
+                  <div className="border border-[#DFD5C6]/40 bg-[#FCFAF7] rounded-xl p-4 space-y-4 pt-4 border-t-2 border-t-[#C85A32]/80">
+                    <div className="flex items-center gap-2">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#C85A32]" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#C85A32] font-mono">
+                        Adaptive Evaluations
+                      </span>
+                    </div>
+                    <div className="space-y-3 text-[10px] font-sans font-medium text-[#6E6359]">
+                      <div className="space-y-1">
+                        <div className="flex justify-between font-mono">
+                          <span>Technical Depth</span>
+                          <span className="font-bold text-[#262626]">{latestEvaluation.technical_depth}/10</span>
+                        </div>
+                        <div className="w-full bg-[#DFD5C6]/30 h-1 rounded-full overflow-hidden">
+                          <div className="bg-[#C85A32] h-full" style={{ width: `${latestEvaluation.technical_depth * 10}%` }}></div>
+                        </div>
                       </div>
-                      <div className="flex justify-between border-b border-[#DFD5C6] pb-1">
-                        <span className="text-[#6E6359]/70 font-medium">Design:</span>
-                        <span className="text-[#262626] font-bold">{latestEvaluation.system_design}/10</span>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between font-mono">
+                          <span>System Design</span>
+                          <span className="font-bold text-[#262626]">{latestEvaluation.system_design}/10</span>
+                        </div>
+                        <div className="w-full bg-[#DFD5C6]/30 h-1 rounded-full overflow-hidden">
+                          <div className="bg-[#C85A32] h-full" style={{ width: `${latestEvaluation.system_design * 10}%` }}></div>
+                        </div>
                       </div>
-                      <div className="flex justify-between border-b border-[#DFD5C6] pb-1">
-                        <span className="text-[#6E6359]/70 font-medium">Comm:</span>
-                        <span className="text-[#262626] font-bold">{latestEvaluation.communication}/10</span>
-                      </div>
-                      <div className="flex justify-between border-b border-[#DFD5C6] pb-1">
-                        <span className="text-[#6E6359]/70 font-medium">Confidence:</span>
-                        <span className="text-[#262626] font-bold">{latestEvaluation.confidence}/10</span>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between font-mono">
+                          <span>Communication</span>
+                          <span className="font-bold text-[#262626]">{latestEvaluation.communication}/10</span>
+                        </div>
+                        <div className="w-full bg-[#DFD5C6]/30 h-1 rounded-full overflow-hidden">
+                          <div className="bg-[#C85A32] h-full" style={{ width: `${latestEvaluation.communication * 10}%` }}></div>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex justify-between text-[10px] font-sans">
-                      <span className="text-[#6E6359]/70 font-medium">Next Focus:</span>
-                      <span className="text-[#C85A32] font-bold uppercase">{latestEvaluation.followup_direction}</span>
+
+                    <div className="flex justify-between items-center text-[9px] font-mono pt-1.5 border-t border-[#DFD5C6]/40">
+                      <span className="text-[#6E6359]/70">Next Focus:</span>
+                      <span className="text-[#C85A32] font-bold uppercase tracking-wide bg-[#C85A32]/10 px-2 py-0.5 rounded-md">
+                        {latestEvaluation.followup_direction}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -1298,7 +1330,7 @@ export default function VoiceCopilot({ user }) {
           ) : (
             <button
               onClick={() => setIsProfileOpen(true)}
-              className="absolute right-4 top-20 bg-[#FCFAF7] border border-[#DFD5C6] p-2 rounded-full text-[#6E6359] hover:text-[#262626] shadow-sm transition-all z-20 hover:bg-[#FAF6F0] cursor-pointer"
+              className="absolute right-4 top-20 bg-[#FCFAF7] border border-[#DFD5C6]/50 p-2 rounded-full text-[#6E6359] hover:text-[#262626] shadow-2xs transition-all z-20 hover:bg-[#FAF6F0] cursor-pointer"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -1306,6 +1338,7 @@ export default function VoiceCopilot({ user }) {
 
         </div>
       )}
+
 
       {/* 4. Post-Interview Performance Analysis Stage */}
       {stage === "analysis" && scorecard && (

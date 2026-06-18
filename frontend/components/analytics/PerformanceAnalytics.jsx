@@ -11,11 +11,7 @@ import {
   Camera,
   RefreshCw,
   Search,
-  CheckCircle,
-  FileText,
   Activity,
-  ArrowRight,
-  TrendingUp as TrendUpIcon,
   MessageSquare,
   ShieldCheck,
   Brain,
@@ -30,6 +26,19 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer
 } from "recharts";
+
+const CustomAreaTooltip = ({ active, payload }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-[#FCFAF7] border border-[#DFD5C6] p-2.5 rounded-lg shadow-lg text-[11px]">
+        <p className="font-bold text-[#6E6359]">{payload[0].payload.date}</p>
+        <p className="font-serif font-extrabold text-[#262626] mt-0.5 truncate max-w-[150px]">{payload[0].payload.role}</p>
+        <p className="font-mono text-[#C85A32] font-bold mt-1">Score: {payload[0].value}%</p>
+      </div>
+    );
+  }
+  return null;
+};
 
 export default function PerformanceAnalytics({ user }) {
   const [history, setHistory] = useState([]);
@@ -95,19 +104,6 @@ export default function PerformanceAnalytics({ user }) {
       scoreValue: parseFloat(h.score.replace("%", "")),
       role: h.role
     }));
-
-  const CustomAreaTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-[#FCFAF7] border border-[#DFD5C6] p-2.5 rounded-lg shadow-lg text-[11px]">
-          <p className="font-bold text-[#6E6359]">{payload[0].payload.date}</p>
-          <p className="font-serif font-extrabold text-[#262626] mt-0.5 truncate max-w-[150px]">{payload[0].payload.role}</p>
-          <p className="font-mono text-[#C85A32] font-bold mt-1">Score: {payload[0].value}%</p>
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="flex-1 bg-[#FAF6F0] bg-grid-overlay overflow-y-auto h-screen flex flex-col font-sans text-[#262626]">
@@ -455,7 +451,7 @@ export default function PerformanceAnalytics({ user }) {
 
       {/* Footer info */}
       <footer className="py-6 text-center text-[10px] text-[#6E6359]/60 border-t border-[#DFD5C6]/40 select-none">
-        © 2026 PrepAI Performance Engine. All data is processed using proprietary LLMs.
+        © 2026 PrepFlow AI Performance Engine. All data is processed using proprietary LLMs.
       </footer>
     </div>
   );

@@ -8,13 +8,19 @@ import InterviewPrep from "@/components/interview/InterviewPrep";
 import PerformanceAnalytics from "@/components/analytics/PerformanceAnalytics";
 import ResumeAnalyzer from "@/components/resume/ResumeAnalyzer";
 import VoiceCopilot from "@/components/interview/VoiceCopilot";
-import { Award, BarChart3, RotateCcw, LogOut } from "lucide-react";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
 
+interface UserProfile {
+  uid?: string;
+  email?: string | null;
+  displayName?: string | null;
+  photoURL?: string | null;
+  name?: string | null;
+}
+
 export default function Home() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<string>("dashboard");
-  const [interviewEnded, setInterviewEnded] = useState<boolean>(false);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
 
   // Check redirects and listen to auth state changes for session persistence
@@ -42,7 +48,6 @@ export default function Home() {
         if (loggedInUser) {
           localStorage.setItem("prepflow_user", JSON.stringify(loggedInUser));
           setUser(loggedInUser);
-          setInterviewEnded(false);
           setActiveTab("dashboard");
           setAuthLoading(false);
           return;
@@ -52,7 +57,7 @@ export default function Home() {
       }
 
       // 3. Listen to active persisted session changes
-      unsubscribe = authOnAuthStateChanged((currentUser: any) => {
+      unsubscribe = authOnAuthStateChanged((currentUser: UserProfile | null) => {
         if (currentUser) {
           localStorage.setItem("prepflow_user", JSON.stringify(currentUser));
           setUser(currentUser);
@@ -69,21 +74,14 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  const handleLoginSuccess = (userData: any) => {
+  const handleLoginSuccess = (userData: UserProfile) => {
     localStorage.setItem("prepflow_user", JSON.stringify(userData));
     setUser(userData);
-    setInterviewEnded(false);
     setActiveTab("dashboard");
   };
 
   const handleEndInterview = () => {
-    setInterviewEnded(true);
     setActiveTab("analytics"); // Redirect to analytics upon ending mock interview!
-  };
-
-  const handleRestart = () => {
-    setInterviewEnded(false);
-    setActiveTab("interviews");
   };
 
   const handleLogout = async () => {
@@ -91,7 +89,6 @@ export default function Home() {
       await authSignOut();
       localStorage.removeItem("prepflow_user");
       setUser(null);
-      setInterviewEnded(false);
       setActiveTab("dashboard");
     } catch (err) {
       console.error("Sign out error:", err);
