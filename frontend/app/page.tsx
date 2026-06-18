@@ -8,6 +8,7 @@ import InterviewPrep from "@/components/interview/InterviewPrep";
 import PerformanceAnalytics from "@/components/analytics/PerformanceAnalytics";
 import ResumeAnalyzer from "@/components/resume/ResumeAnalyzer";
 import VoiceCopilot from "@/components/interview/VoiceCopilot";
+import CareerAgent from "@/components/career/CareerAgent";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
 
 interface UserProfile {
@@ -143,6 +144,11 @@ export default function Home() {
         )}
         {activeTab === "voice-copilot" && (
           <VoiceCopilot user={user} />
+        )}
+        {activeTab === "career-agent" && (
+          <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-6">
+            <CareerAgent user={user} />
+          </div>
         )}
         {activeTab === "analytics" && (
           <PerformanceAnalytics user={user} />

@@ -27,9 +27,12 @@ database.init_db()
 
 app = FastAPI(title="PrepAI Real Backend")
 
-# Import and include Voice Copilot router
+# Import and include routers
 from voice_copilot.router import router as voice_copilot_router
 app.include_router(voice_copilot_router, prefix="/api/voice-copilot")
+
+from career_agent import router as career_agent_router
+app.include_router(career_agent_router, prefix="/api/career")
 
 # Enable CORS
 app.add_middleware(

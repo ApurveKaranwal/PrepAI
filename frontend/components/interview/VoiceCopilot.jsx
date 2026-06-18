@@ -40,7 +40,7 @@ import {
   Tooltip
 } from "recharts";
 
-export default function VoiceCopilot({ user: _user }) {
+export default function VoiceCopilot() {
   // Navigation & session state
   const [stage, setStage] = useState("onboarding"); // onboarding, scraping, ready, active, analysis
   const [sessionId, setSessionId] = useState(null);

@@ -144,9 +144,70 @@ def init_db():
         )
     """)
     
+    # Create candidate_profiles table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS candidate_profiles (
+            user_id TEXT PRIMARY KEY,
+            job_type TEXT,
+            work_mode TEXT,
+            countries TEXT,
+            cities TEXT,
+            salary_expectations TEXT,
+            notice_period TEXT,
+            tech_stack_preferences TEXT,
+            company_size_preference TEXT,
+            startup_vs_enterprise TEXT,
+            visa_sponsorship TEXT,
+            resume_name TEXT,
+            resume_text TEXT,
+            github_url TEXT,
+            linkedin_url TEXT,
+            github_stats TEXT,
+            linkedin_data TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Create jobs table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            company TEXT NOT NULL,
+            location TEXT,
+            work_mode TEXT,
+            salary TEXT,
+            experience_required TEXT,
+            skills_required TEXT,
+            description TEXT,
+            source TEXT,
+            url TEXT,
+            ats_type TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Create applications table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            job_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'Applied',
+            custom_responses TEXT,
+            submission_logs TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
+        )
+    """)
+    
     conn.commit()
     conn.close()
     print("SQLite Database successfully initialized at:", DB_FILE)
+    
+    # Seed default developer jobs if the table is empty
+    seed_jobs_if_empty()
 
 
 # User authentication logic
@@ -218,6 +279,24 @@ def get_or_create_google_user(email: str, name: str, uid: str) -> dict:
         "name": name.strip(),
         "provider": "google"
     }
+
+def get_user_by_id(user_id: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM users WHERE id = ?", (int(user_id),))
+        row = cursor.fetchone()
+        if row:
+            return {
+                "id": str(row["id"]),
+                "email": row["email"],
+                "name": row["name"]
+            }
+    except Exception:
+        pass
+    finally:
+        conn.close()
+    return None
 
 # Session logic
 def create_session(github_url: str, resume_name: str = None, resume_text: str = None, role: str = "Software Engineer") -> int:
@@ -624,3 +703,323 @@ def get_questions_for_session(session_id: int) -> list:
             "streamTranscript": json.loads(r["stream_transcript"]) if r["stream_transcript"] else []
         })
     return questions
+
+
+# ----------------------------------------------------
+# AI Career Agent Database Helper Functions
+# ----------------------------------------------------
+
+def save_candidate_profile(user_id: str, p: dict):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if profile already exists
+    cursor.execute("SELECT 1 FROM candidate_profiles WHERE user_id = ?", (user_id,))
+    exists = cursor.fetchone()
+    
+    if exists:
+        cursor.execute("""
+            UPDATE candidate_profiles SET
+                job_type = ?, work_mode = ?, countries = ?, cities = ?,
+                salary_expectations = ?, notice_period = ?, tech_stack_preferences = ?,
+                company_size_preference = ?, startup_vs_enterprise = ?, visa_sponsorship = ?,
+                resume_name = ?, resume_text = ?, github_url = ?, linkedin_url = ?,
+                github_stats = ?, linkedin_data = ?
+            WHERE user_id = ?
+        """, (
+            p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
+            p.get("salary_expectations"), p.get("notice_period"), json.dumps(p.get("tech_stack_preferences", [])),
+            p.get("company_size_preference"), p.get("startup_vs_enterprise"), p.get("visa_sponsorship"),
+            p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
+            json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
+            user_id
+        ))
+    else:
+        cursor.execute("""
+            INSERT INTO candidate_profiles (
+                user_id, job_type, work_mode, countries, cities,
+                salary_expectations, notice_period, tech_stack_preferences,
+                company_size_preference, startup_vs_enterprise, visa_sponsorship,
+                resume_name, resume_text, github_url, linkedin_url,
+                github_stats, linkedin_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id, p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
+            p.get("salary_expectations"), p.get("notice_period"), json.dumps(p.get("tech_stack_preferences", [])),
+            p.get("company_size_preference"), p.get("startup_vs_enterprise"), p.get("visa_sponsorship"),
+            p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
+            json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
+        ))
+    
+    conn.commit()
+    conn.close()
+
+def get_candidate_profile(user_id: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM candidate_profiles WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+        
+    return {
+        "user_id": row["user_id"],
+        "job_type": row["job_type"],
+        "work_mode": row["work_mode"],
+        "countries": json.loads(row["countries"]) if row["countries"] else [],
+        "cities": json.loads(row["cities"]) if row["cities"] else [],
+        "salary_expectations": row["salary_expectations"],
+        "notice_period": row["notice_period"],
+        "tech_stack_preferences": json.loads(row["tech_stack_preferences"]) if row["tech_stack_preferences"] else [],
+        "company_size_preference": row["company_size_preference"],
+        "startup_vs_enterprise": row["startup_vs_enterprise"],
+        "visa_sponsorship": row["visa_sponsorship"],
+        "resume_name": row["resume_name"],
+        "resume_text": row["resume_text"],
+        "github_url": row["github_url"],
+        "linkedin_url": row["linkedin_url"],
+        "github_stats": json.loads(row["github_stats"]) if row["github_stats"] else {},
+        "linkedin_data": json.loads(row["linkedin_data"]) if row["linkedin_data"] else {},
+        "created_at": row["created_at"]
+    }
+
+def get_jobs() -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM jobs ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    jobs_list = []
+    for r in rows:
+        jobs_list.append({
+            "id": r["id"],
+            "title": r["title"],
+            "company": r["company"],
+            "location": r["location"],
+            "work_mode": r["work_mode"],
+            "salary": r["salary"],
+            "experience_required": r["experience_required"],
+            "skills_required": json.loads(r["skills_required"]) if r["skills_required"] else [],
+            "description": r["description"],
+            "source": r["source"],
+            "url": r["url"],
+            "ats_type": r["ats_type"],
+            "created_at": r["created_at"]
+        })
+    return jobs_list
+
+def get_job_by_id(job_id: int) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    r = cursor.fetchone()
+    conn.close()
+    
+    if not r:
+        return None
+        
+    return {
+        "id": r["id"],
+        "title": r["title"],
+        "company": r["company"],
+        "location": r["location"],
+        "work_mode": r["work_mode"],
+        "salary": r["salary"],
+        "experience_required": r["experience_required"],
+        "skills_required": json.loads(r["skills_required"]) if r["skills_required"] else [],
+        "description": r["description"],
+        "source": r["source"],
+        "url": r["url"],
+        "ats_type": r["ats_type"],
+        "created_at": r["created_at"]
+    }
+
+def create_application(user_id: str, job_id: int, status: str = "Applied", custom_responses: dict = None, submission_logs: str = "") -> int:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO applications (user_id, job_id, status, custom_responses, submission_logs)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        job_id,
+        status,
+        json.dumps(custom_responses) if custom_responses else "{}",
+        submission_logs
+    ))
+    conn.commit()
+    app_id = cursor.lastrowid
+    conn.close()
+    return app_id
+
+def get_applications(user_id: str) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT a.*, j.title, j.company, j.location, j.work_mode, j.ats_type, j.source
+        FROM applications a
+        JOIN jobs j ON a.job_id = j.id
+        WHERE a.user_id = ?
+        ORDER BY a.updated_at DESC
+    """, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    apps = []
+    for r in rows:
+        apps.append({
+            "id": r["id"],
+            "user_id": r["user_id"],
+            "job_id": r["job_id"],
+            "status": r["status"],
+            "custom_responses": json.loads(r["custom_responses"]) if r["custom_responses"] else {},
+            "submission_logs": r["submission_logs"],
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+            "title": r["title"],
+            "company": r["company"],
+            "location": r["location"],
+            "work_mode": r["work_mode"],
+            "ats_type": r["ats_type"],
+            "source": r["source"]
+        })
+    return apps
+
+def update_application_status(app_id: int, status: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE applications
+        SET status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (status, app_id))
+    conn.commit()
+    conn.close()
+
+def update_application_logs(app_id: int, logs: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE applications
+        SET submission_logs = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (logs, app_id))
+    conn.commit()
+    conn.close()
+
+def seed_jobs_if_empty():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if jobs already seeded
+    cursor.execute("SELECT count(*) FROM jobs")
+    count = cursor.fetchone()[0]
+    if count > 0:
+        conn.close()
+        return
+        
+    jobs_to_seed = [
+        {
+            "title": "Design Engineer",
+            "company": "Vercel",
+            "location": "Remote, US",
+            "work_mode": "Remote",
+            "salary": "$160,000 - $210,000",
+            "experience_required": "3+ years",
+            "skills_required": ["TypeScript", "React", "Next.js", "CSS", "Tailwind", "Git"],
+            "description": "Vercel is looking for a Design Engineer to help build beautiful, highly interactive frontend applications and frameworks. In this role, you will bridge the gap between design and engineering, constructing reusable components and polished web animations. Experience with React, Next.js, and CSS layout engines is essential.",
+            "source": "Vercel Careers",
+            "url": "https://job-boards.greenhouse.io/vercel/jobs/5709080004",
+            "ats_type": "Greenhouse"
+        },
+        {
+            "title": "AI Applied Scientist",
+            "company": "Figma",
+            "location": "San Francisco, CA",
+            "work_mode": "Onsite",
+            "salary": "$200,000 - $260,000",
+            "experience_required": "5+ years",
+            "skills_required": ["Python", "FastAPI", "TypeScript", "Machine Learning", "AI", "LLM", "Docker"],
+            "description": "Join the AI group at Figma to build intelligent design assistants, generative UI copilots, and advanced model integrations. You will train, fine-tune, and deploy models that understand vector design structures. Strong background in Python, PyTorch, LLMs, and API engineering is required.",
+            "source": "Figma Careers",
+            "url": "https://boards.greenhouse.io/figma/jobs/6014642004?gh_jid=6014642004",
+            "ats_type": "Greenhouse"
+        },
+        {
+            "title": "Fullstack Software Engineer",
+            "company": "Reddit",
+            "location": "Remote, USA",
+            "work_mode": "Remote",
+            "salary": "$140,000 - $190,000",
+            "experience_required": "3+ years",
+            "skills_required": ["Python", "Go", "TypeScript", "React", "Node.js", "PostgreSQL", "Redis"],
+            "description": "Reddit is seeking a Fullstack Engineer for the Notifications Lifecycle team. You will build high-throughput messaging channels, configure real-time notification dispatchers in Python and Go, and build notification management tools in React and TypeScript. Experience scaling distributed databases like PostgreSQL and Redis is highly preferred.",
+            "source": "Reddit Careers",
+            "url": "https://job-boards.greenhouse.io/reddit/jobs/7792848",
+            "ats_type": "Greenhouse"
+        },
+        {
+            "title": "AI Engineer",
+            "company": "Samsara",
+            "location": "San Francisco, CA (Hybrid)",
+            "work_mode": "Hybrid",
+            "salary": "$150,000 - $200,000",
+            "experience_required": "3+ years",
+            "skills_required": ["Python", "Go", "Docker", "AWS", "Machine Learning", "AI", "LLM"],
+            "description": "As an AI Engineer at Samsara, you will design and implement intelligent computer vision and NLP models to improve physical operations. You will develop backend APIs in Go/Python, dockerize ML model pipelines, and run large-scale inference tasks on AWS. Experience with real-world sensor data or video analytics is a plus.",
+            "source": "Samsara Careers",
+            "url": "https://www.samsara.com/company/careers/roles/7589442?gh_jid=7589442",
+            "ats_type": "Greenhouse"
+        },
+        {
+            "title": "Software Engineer, Frontend",
+            "company": "Ramp",
+            "location": "New York, NY",
+            "work_mode": "Hybrid",
+            "salary": "$140,000 - $180,000",
+            "experience_required": "3+ years",
+            "skills_required": ["TypeScript", "JavaScript", "React", "Next.js", "CSS", "Git"],
+            "description": "Ramp is looking for a Frontend Engineer to construct premium credit card management products and corporate payment interfaces. You will develop highly responsive React frontends, optimize client-side bundle performance, and design secure dashboard states. Proficiency in TypeScript and CSS is required.",
+            "source": "Ramp Careers",
+            "url": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+            "ats_type": "Ashby"
+        },
+        {
+            "title": "Site Reliability Engineer",
+            "company": "WorkOS",
+            "location": "Remote, US & Canada",
+            "work_mode": "Remote",
+            "salary": "$150,000 - $200,000",
+            "experience_required": "5+ years",
+            "skills_required": ["Go", "Docker", "Kubernetes", "AWS", "Terraform", "PostgreSQL", "Redis"],
+            "description": "WorkOS is searching for a Site Reliability Engineer to manage global infrastructure for developer APIs. You will manage multi-region Kubernetes clusters, optimize PostgreSQL and Redis datastores, write infrastructure-as-code using Terraform, and implement containerized deployment pipelines. Deep Go, AWS, and networking knowledge is required.",
+            "source": "Workos Careers",
+            "url": "https://jobs.ashbyhq.com/workos/cff5a16f-fd1c-4b64-9b66-8a8321122375",
+            "ats_type": "Ashby"
+        }
+    ]
+    
+    for job in jobs_to_seed:
+        cursor.execute("""
+            INSERT INTO jobs (title, company, location, work_mode, salary, experience_required, skills_required, description, source, url, ats_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            job["title"],
+            job["company"],
+            job["location"],
+            job["work_mode"],
+            job["salary"],
+            job["experience_required"],
+            json.dumps(job["skills_required"]),
+            job["description"],
+            job["source"],
+            job["url"],
+            job["ats_type"]
+        ))
+        
+    conn.commit()
+    conn.close()
+    print("Jobs successfully seeded in database.")
