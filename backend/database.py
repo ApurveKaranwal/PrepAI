@@ -2,14 +2,174 @@ import sqlite3
 import json
 import os
 import hashlib
-from datetime import datetime
+import re
+import datetime
+from datetime import datetime as dt_class
 
 DB_FILE = os.path.join(os.path.dirname(__file__), "interviews.db")
 
+# Wrapper classes for PostgreSQL compatibility
+class DictRowWrapper:
+    def __init__(self, d, keys):
+        if isinstance(d, dict):
+            self._dict = d
+        elif isinstance(d, (list, tuple)):
+            self._dict = {keys[i]: d[i] for i in range(len(keys))}
+        else:
+            self._dict = {keys[i]: d[i] for i in range(len(keys))}
+        self._keys = keys
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            val = self._dict[self._keys[key]]
+        else:
+            val = self._dict[key]
+        if isinstance(val, datetime.datetime):
+            return val.strftime("%Y-%m-%d %H:%M:%S")
+        return val
+
+    def keys(self):
+        return self._dict.keys()
+
+    def get(self, key, default=None):
+        val = self._dict.get(key, default)
+        if isinstance(val, datetime.datetime):
+            return val.strftime("%Y-%m-%d %H:%M:%S")
+        return val
+
+    def __iter__(self):
+        return iter(self._dict)
+
+    def __repr__(self):
+        return repr(self._dict)
+        
+    def __len__(self):
+        return len(self._dict)
+
+class PgCursorWrapper:
+    def __init__(self, pg_cursor):
+        self._cursor = pg_cursor
+        self._lastrowid = None
+
+    def execute(self, query, params=None):
+        converted_query = self._convert_query(query)
+        is_insert = converted_query.strip().upper().startswith("INSERT")
+        
+        if is_insert and "RETURNING" not in converted_query.upper():
+            tbl_match = re.search(r'(?i)\bINTO\s+(\w+)', converted_query)
+            if tbl_match:
+                table_name = tbl_match.group(1).lower()
+                if table_name != "candidate_profiles":
+                    converted_query += " RETURNING id"
+        
+        if params is not None and not isinstance(params, (tuple, list, dict)):
+            params = tuple(params)
+            
+        self._cursor.execute(converted_query, params)
+        
+        if is_insert:
+            try:
+                if "RETURNING id" in converted_query:
+                    row = self._cursor.fetchone()
+                    if row:
+                        if isinstance(row, dict):
+                            self._lastrowid = row.get("id")
+                        elif hasattr(row, "get"):
+                            self._lastrowid = row.get("id")
+                        else:
+                            self._lastrowid = row[0]
+            except Exception:
+                self._lastrowid = None
+        else:
+            self._lastrowid = None
+            
+        return self
+
+    def executemany(self, query, params_list):
+        converted_query = self._convert_query(query)
+        self._cursor.executemany(converted_query, params_list)
+        return self
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        return DictRowWrapper(row, [desc[0] for desc in self._cursor.description])
+
+    def fetchall(self):
+        rows = self._cursor.fetchall()
+        if not rows:
+            return []
+        keys = [desc[0] for desc in self._cursor.description]
+        return [DictRowWrapper(row, keys) for row in rows]
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+    def _convert_query(self, query):
+        if not query:
+            return query
+            
+        # Replace ? placeholder with %s
+        in_quotes = False
+        quote_char = None
+        chars = []
+        for char in query:
+            if char in ('"', "'"):
+                if not in_quotes:
+                    in_quotes = True
+                    quote_char = char
+                elif quote_char == char:
+                    in_quotes = False
+                    quote_char = None
+            if char == '?' and not in_quotes:
+                chars.append('%s')
+            else:
+                chars.append(char)
+        converted = "".join(chars)
+        
+        # Replace AUTOINCREMENT with serial
+        converted = re.sub(r'(?i)\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b', 'SERIAL PRIMARY KEY', converted)
+        converted = re.sub(r'(?i)\bINTEGER\s+PRIMARY\s+KEY\b', 'SERIAL PRIMARY KEY', converted)
+        
+        # Convert TEXT DEFAULT CURRENT_TIMESTAMP to TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        converted = converted.replace("TEXT DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        
+        return converted
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+class PgConnectionWrapper:
+    def __init__(self, pg_conn):
+        self._conn = pg_conn
+
+    def cursor(self):
+        return PgCursorWrapper(self._conn.cursor())
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        import psycopg2
+        conn = psycopg2.connect(database_url)
+        return PgConnectionWrapper(conn)
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        return conn
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
@@ -229,9 +389,12 @@ def create_user(email: str, password: str, name: str) -> dict:
             "name": name.strip(),
             "provider": "password"
         }
-    except sqlite3.IntegrityError:
+    except Exception as e:
         conn.close()
-        raise ValueError("Email already registered")
+        err_str = str(e).lower()
+        if "integrity" in err_str or "unique" in err_str or "duplicate" in err_str:
+            raise ValueError("Email already registered")
+        raise e
 
 def verify_user(email: str, password: str) -> dict:
     conn = get_db_connection()
@@ -463,7 +626,7 @@ def get_history_data() -> dict:
     try:
         cursor.execute("SELECT * FROM voice_sessions WHERE overall_rating IS NOT NULL ORDER BY id DESC")
         voice_sessions = [dict(vs) for vs in cursor.fetchall()]
-    except sqlite3.OperationalError:
+    except Exception:
         voice_sessions = []
         
     conn.close()

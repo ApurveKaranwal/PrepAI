@@ -225,7 +225,8 @@ def main():
         return
         
     # 3. Store into interviews.db
-    conn = sqlite3.connect(db_path)
+    import database
+    conn = database.get_db_connection()
     cursor = conn.cursor()
     
     # Check current jobs count
