@@ -30,7 +30,8 @@ async def onboard_candidate(
     linkedin_url: Optional[str] = Form(None),
     linkedin_text: Optional[str] = Form(None),
     linkedin_pdf: Optional[UploadFile] = File(None),
-    interview_mode: str = Form("Mid-Level")
+    interview_mode: str = Form("Mid-Level"),
+    language: str = Form("en-IN")
 ):
     """
     Onboard candidate: Scrape Resume PDF, LinkedIn, and GitHub.
@@ -120,7 +121,8 @@ async def onboard_candidate(
         resume_name=resume_name,
         resume_text=resume_text,
         role=role,
-        interview_mode=interview_mode
+        interview_mode=interview_mode,
+        language=language
     )
     
     db.update_voice_profile(session_id, profile_summary)
@@ -154,7 +156,8 @@ async def start_voice_session(req: StartSessionRequest):
         
         # Synthesize audio
         tts = TextToSpeechService()
-        audio_b64 = tts.text_to_speech_base64(first_question)
+        lang = session.get("language", "en-IN") if session else "en-IN"
+        audio_b64 = tts.text_to_speech_base64(first_question, language_code=lang)
         
         return {
             "status": "success",
@@ -283,8 +286,10 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                     audio_bytes = bytes(audio_buffer)
                     audio_buffer.clear() # Reset buffer for next round
                     
-                    # 1. Transcribe speech
-                    user_transcript = stt_service.transcribe(audio_bytes)
+                    # 1. Transcribe speech in a separate thread to prevent blocking the async loop
+                    session = db.get_voice_session(session_id)
+                    lang = session.get("language", "en-IN") if session else "en-IN"
+                    user_transcript = await asyncio.to_thread(stt_service.transcribe, audio_bytes, language=lang)
                     print(f"STT Transcript: {user_transcript}")
                     
                     if not user_transcript.strip() or "[Transcription failed]" in user_transcript:
@@ -302,18 +307,23 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                             last_question = msg["content"]
                             break
                             
-                    # 2. Run hidden evaluation on answer
-                    evaluation = agent.run_hidden_evaluation(last_question, user_transcript)
+                    # Save user response immediately (WITHOUT evaluation first) to database so it shows in history
+                    msg_id = db.save_voice_message(session_id, "user", user_transcript)
+
+                    # 2. Run hidden evaluation in the background concurrently!
+                    async def run_evaluation_in_background(m_id, last_q, transcript):
+                        try:
+                            evaluation = await asyncio.to_thread(agent.run_hidden_evaluation, last_q, transcript)
+                            db.update_voice_message_evaluation(m_id, evaluation)
+                            await websocket.send_json({"type": "evaluation", "metrics": evaluation})
+                        except Exception as e_bg:
+                            print(f"Error in background voice message evaluation: {e_bg}")
+
+                    asyncio.create_task(run_evaluation_in_background(msg_id, last_question, user_transcript))
                     
-                    # Save user response with evaluation to database
-                    db.save_voice_message(session_id, "user", user_transcript, evaluation=evaluation)
-                    
-                    # Send feedback notification (silent evaluation triggers)
-                    await websocket.send_json({"type": "evaluation", "metrics": evaluation})
-                    
-                    # 3. Generate Next Question
+                    # 3. Generate Next Question in a thread
                     await websocket.send_json({"type": "status", "status": "thinking"})
-                    next_question = agent.generate_next_turn()
+                    next_question = await asyncio.to_thread(agent.generate_next_turn)
                     print(f"Next Agent Question: {next_question}")
                     
                     # Send transcript of the question
@@ -322,17 +332,25 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                     # Save agent question to DB
                     db.save_voice_message(session_id, "assistant", next_question)
                     
-                    # 4. Generate TTS and stream it back
+                    # 4. Generate TTS in a thread and stream it back
                     await websocket.send_json({"type": "status", "status": "speaking"})
                     is_agent_speaking = True
                     
-                    audio_b64 = tts_service.text_to_speech_base64(next_question)
+                    audio_b64 = await asyncio.to_thread(tts_service.text_to_speech_base64, next_question, lang)
                     if audio_b64 and is_agent_speaking:
                         # Stream the audio response back in a single chunk or let client play it
                         await websocket.send_json({"type": "audio", "audio": audio_b64})
                     
-                    await websocket.send_json({"type": "status", "status": "listening"})
-                    is_agent_speaking = False
+                    # If this was the concluding turn, wait for the audio to finish and send the completed signal!
+                    history = db.get_voice_messages(session_id)
+                    assistant_turns = len([m for m in history if m["role"] == "assistant"])
+                    if assistant_turns >= 6:
+                        # Wait 6 seconds for the conclusion audio to finish playing on the frontend
+                        await asyncio.sleep(6)
+                        await websocket.send_json({"type": "completed"})
+                    else:
+                        await websocket.send_json({"type": "status", "status": "listening"})
+                        is_agent_speaking = False
                     
                 elif msg_type == "ping":
                     await websocket.send_json({"type": "pong"})

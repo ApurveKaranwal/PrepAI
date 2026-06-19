@@ -6,11 +6,12 @@ from groq import Groq
 # Initialize Groq client
 groq_api_key = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
+sarvam_api_key = os.environ.get("SARVAM_API_KEY")
 
 class SpeechToTextService:
     """
-    Unified STT interface using Groq Whisper-large-v3 with extension point
-    for local Faster-Whisper.
+    Unified STT interface using Groq Whisper-large-v3 and Sarvam AI STT
+    with extension point for local Faster-Whisper.
     """
     def __init__(self, use_local: bool = False):
         self.use_local = use_local
@@ -28,9 +29,9 @@ class SpeechToTextService:
                 print("faster-whisper not installed. Falling back to Groq API.")
                 self.use_local = False
 
-    def transcribe(self, audio_bytes: bytes, file_format: str = "webm") -> str:
+    def transcribe(self, audio_bytes: bytes, file_format: str = "webm", language: Optional[str] = None) -> str:
         """
-        Transcribe audio bytes using either the local model or Groq API.
+        Transcribe audio bytes using local model, Sarvam AI STT, or Groq API.
         """
         if not audio_bytes:
             return ""
@@ -43,9 +44,37 @@ class SpeechToTextService:
                 transcript = " ".join([segment.text for segment in segments])
                 return transcript.strip()
             except Exception as e:
-                print(f"Local STT failed, falling back to Groq API: {e}")
+                print(f"Local STT failed, falling back to API: {e}")
                 
-        # API-based STT via Groq
+        # 1. API-based STT via Sarvam AI (preferred for Indian accents & code-mixing)
+        if sarvam_api_key:
+            try:
+                import requests
+                url = "https://api.sarvam.ai/speech-to-text"
+                headers = {
+                    "api-subscription-key": sarvam_api_key
+                }
+                file_name = f"recording.{file_format}"
+                files = {
+                    "file": (file_name, audio_bytes, f"audio/{file_format}")
+                }
+                data = {
+                    "model": "saaras:v3"
+                }
+                # Sarvam accepts full BCP-47 language code (e.g. hi-IN)
+                if language:
+                    data["language_code"] = language
+                
+                response = requests.post(url, headers=headers, files=files, data=data, timeout=10)
+                if response.status_code == 200:
+                    resp_json = response.json()
+                    transcript = resp_json.get("transcript", "").strip()
+                    if transcript:
+                        return transcript
+            except Exception as e:
+                print(f"Sarvam AI STT transcription failed: {e}. Falling back to Groq Whisper.")
+
+        # 2. Fallback API-based STT via Groq Whisper
         if not client:
             print("Groq client not initialized for STT.")
             return "[Error: STT credentials missing]"
@@ -55,11 +84,18 @@ class SpeechToTextService:
             file_name = f"recording.{file_format}"
             audio_file = (file_name, audio_bytes, f"audio/{file_format}")
             
-            transcription = client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-large-v3",
-                response_format="json"
-            )
+            # Map BCP-47 code (e.g. "hi-IN" to "hi")
+            iso_lang = language[:2] if language else None
+            
+            kwargs = {
+                "file": audio_file,
+                "model": "whisper-large-v3",
+                "response_format": "json"
+            }
+            if iso_lang:
+                kwargs["language"] = iso_lang
+                
+            transcription = client.audio.transcriptions.create(**kwargs)
             return transcription.text.strip()
         except Exception as e:
             print(f"Groq Whisper transcription failed: {e}")

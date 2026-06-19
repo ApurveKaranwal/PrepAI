@@ -97,7 +97,6 @@ export default function Home() {
   };
 
   const handleStartPractice = () => {
-    setInterviewEnded(false);
     setActiveTab("interviews");
   };
 
@@ -140,10 +139,10 @@ export default function Home() {
           />
         )}
         {activeTab === "interviews" && (
-          <InterviewPrep user={user} onEndInterview={handleEndInterview} />
+          <InterviewPrep onEndInterview={handleEndInterview} />
         )}
         {activeTab === "voice-copilot" && (
-          <VoiceCopilot user={user} />
+          <VoiceCopilot />
         )}
         {activeTab === "career-agent" && (
           <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-6">

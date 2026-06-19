@@ -72,6 +72,7 @@ async def onboard_candidate(
     visa_sponsorship: str = Form(...),
     linkedin_url: str = Form(""),
     github_url: str = Form(""),
+    company_type_preference: str = Form("Any"),
     resume: Optional[UploadFile] = File(None)
 ):
     # Parse JSON list fields
@@ -143,6 +144,7 @@ async def onboard_candidate(
         "company_size_preference": company_size_preference,
         "startup_vs_enterprise": startup_vs_enterprise,
         "visa_sponsorship": visa_sponsorship,
+        "company_type_preference": company_type_preference,
         "resume_name": resume_name,
         "resume_text": resume_text,
         "github_url": github_url,

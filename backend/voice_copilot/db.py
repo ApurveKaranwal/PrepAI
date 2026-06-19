@@ -67,11 +67,12 @@ def create_voice_session(
     resume_name: Optional[str],
     resume_text: Optional[str],
     role: str,
-    interview_mode: str
+    interview_mode: str,
+    language: str = "en-IN"
 ) -> int:
     query = """
-        INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """
     conn, is_pg = get_db_conn()
     try:
@@ -79,13 +80,13 @@ def create_voice_session(
         if is_pg:
             # PostgreSQL syntax
             pg_query = """
-                INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode)
-                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language)
+                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
             """
-            cursor.execute(pg_query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode))
+            cursor.execute(pg_query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
             session_id = cursor.fetchone()[0]
         else:
-            cursor.execute(query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode))
+            cursor.execute(query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
             conn.commit()
             session_id = cursor.lastrowid
         return session_id
@@ -142,6 +143,25 @@ def save_voice_message(
             conn.commit()
             msg_id = cursor.lastrowid
         return msg_id
+    finally:
+        conn.close()
+
+def update_voice_message_evaluation(msg_id: int, evaluation: Dict[str, Any]):
+    eval_json = json.dumps(evaluation) if evaluation else None
+    conn, is_pg = get_db_conn()
+    try:
+        cursor = conn.cursor()
+        if is_pg:
+            cursor.execute(
+                "UPDATE voice_messages SET evaluation = %s WHERE id = %s",
+                (eval_json, msg_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE voice_messages SET evaluation = ? WHERE id = ?",
+                (eval_json, msg_id)
+            )
+            conn.commit()
     finally:
         conn.close()
 

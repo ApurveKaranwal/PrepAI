@@ -22,6 +22,22 @@ class InterviewAgent:
             
         self.role = self.session.get("role", "Software Engineer")
         self.mode = self.session.get("interview_mode", "Mid-Level")
+        self.language = self.session.get("language", "en-IN")
+        
+        lang_names = {
+            "en-IN": "English (Indian Accent)",
+            "hi-IN": "Hindi (हिन्दी)",
+            "ta-IN": "Tamil (தமிழ்)",
+            "te-IN": "Telugu (తెలుగు)",
+            "kn-IN": "Kannada (ಕನ್ನಡ)",
+            "ml-IN": "Malayalam (മലയാളം)",
+            "mr-IN": "Marathi (मराठी)",
+            "gu-IN": "Gujarati (ગુજરાતી)",
+            "bn-IN": "Bengali (বাংলা)",
+            "pa-IN": "Punjabi (ਪੰਜਾਬੀ)",
+            "od-IN": "Odia (ଓଡ଼ିଆ)"
+        }
+        self.language_name = lang_names.get(self.language, "English")
         
         # Load candidate profile details
         profile = self.session.get("profile_summary") or {}
@@ -104,6 +120,8 @@ Your persona: {mode_instruction}
 4. **Adaptive Interviewing**: Guide the interview based on previous answers. Check the history and follow up on weak points.{followup_instruction}
 5. **Interview Flow**: Start directly with a brief welcome and your first technical question. Do not outline the whole interview.
 6. **No scorecard in chat**: Do not output any final ratings or scorecards in this conversation. The evaluation is handled silently behind the scenes.
+7. **Language constraint**: You MUST conduct the entire interview (welcome, questions, follow-ups, and side remarks) in **{self.language_name}**. Ask your questions, respond to user answers, and speak ONLY in **{self.language_name}**.
+8. **Professional Tone**: Always maintain a highly professional, respectful corporate tone. Do NOT use paternalistic, patronizing, or overly casual colloquial terms (such as "beta" or "bacche" in Hindi, or equivalent informal expressions in other languages). Address the candidate as a professional peer/colleague at all times.
 """
         return system_prompt
 
@@ -114,6 +132,41 @@ Your persona: {mode_instruction}
         """
         db_messages = db.get_voice_messages(self.session_id)
         turn_index = len([m for m in db_messages if m["role"] == "assistant"])
+
+        # If 5 questions have already been asked, wrap up with a polite conclusion
+        if turn_index >= 5:
+            if not client:
+                conclusions = {
+                    "en-IN": "Thank you! That concludes our technical screening. I will now analyze your performance and prepare your scorecard.",
+                    "hi-IN": "धन्यवाद! यह हमारी तकनीकी स्क्रीनिंग को पूरा करता है। अब मैं आपके प्रदर्शन का विश्लेषण करूँगा और आपका स्कोरकार्ड तैयार करूँगा।",
+                    "ta-IN": "நன்றி! இது எங்கள் தொழில்நுட்ப திரையிடலை நிறைவு செய்கிறது. நான் இப்போது உங்கள் செயல்திறனை பகுப்பாய்வு செய்து உங்கள் மதிப்பெண் அட்டையை தயார் செய்வேன்.",
+                    "te-IN": "ధన్యవాదాలు! ఇది మా సాంకేతిక స్క్రీనింగ్‌ను పూర్తి చేస్తుంది. నేను ఇప్పుడు మీ పనితీరును విశ్లేషించి, మీ స్కోర్‌కార్డ్‌ను సిద్ధం చేస్తాను.",
+                    "kn-IN": "ಧನ್ಯವಾದಗಳು! ಇದು ನಮ್ಮ ತಾಂತ್ರಿಕ ಸ್ಕ್ರೀನಿಂಗ್ ಅನ್ನು ಪೂರ್ಣಗೊಳಿಸುತ್ತದೆ. ನಾನು ಈಗ ನಿಮ್ಮ ಕಾರ್ಯಕ್ಷಮತೆಯನ್ನು ವಿಶ್ಲೇಷಿಸುತ್ತೇನೆ ಮತ್ತು ನಿಮ್ಮ ಸ್ಕೋರ್ಕಾರ್ಡ್ ಅನ್ನು ಸಿದ್ಧಪಡಿಸುತ್ತೇನೆ.",
+                    "ml-IN": "നന്ദി! ഇതോടെ നമ്മുടെ സാങ്കേതിക അഭിമുഖം അവസാനിച്ചിരിക്കുന്നു. ഞാൻ ഇപ്പോൾ നിങ്ങളുടെ പ്രകടനം വിലയിരുത്തി സ്കോർകാർഡ് തയ്യാറാക്കുന്നതാണ്.",
+                    "mr-IN": "धन्यवाद! हे आमचे तांत्रिक स्क्रीनिंग पूर्ण करते. मी आता तुमच्या कामगिरीचे विश्लेषण करेन आणि तुमचे स्कोरकार्ड तयार करेन.",
+                    "gu-IN": "આભાર! આ સાથે આપણું ટેકનિકલ સ્ક્રીનિંગ પૂર્ણ થાય છે. હું હવે તમારા પ્રદર્શનનું વિશ્લેષણ કરીશ અને તમારું સ્કોરકાર્ડ તૈયાર કરીશ.",
+                    "bn-IN": "ধন্যবাদ! এর সাথেই আমাদের টেকনিক্যাল স্ক্রিনিং সমাপ্ত হলো। আমি এখন আপনার পারফরম্যান্স বিশ্লেষণ করব এবং আপনার স্কোরকার্ড প্রস্তুত করব।",
+                    "pa-IN": "ਧੰਨਵਾਦ! ਇਹ ਸਾਡੀ ਤਕਨੀਕੀ ਸਕ੍ਰੀਨਿੰਗ ਨੂੰ ਪੂਰਾ ਕਰਦਾ ਹੈ। ਮੈਂ ਹੁਣ ਤੁਹਾਡੇ ਪ੍ਰਦਰਸ਼ਨ ਦਾ ਵਿਸ਼ਲੇਸ਼ਣ ਕਰਾਂਗਾ ਅਤੇ ਤੁਹਾਡਾ ਸਕੋਰਕਾਰਡ ਤਿਆਰ ਕਰਾਂਗਾ।",
+                    "od-IN": "ଧନ୍ୟବାଦ! ଏହା ଆମର ବୈଷୟିକ ସ୍କ୍ରିନିଂକୁ ସମାପ୍ତ କରେ। ମୁଁ ଏବେ ଆପଣଙ୍କ ପ୍ରଦର୍ଶନର ବିଶ୍ଳେଷଣ କରି ଆପଣଙ୍କ ସ୍କୋରକାର୍ଡ ପ୍ରସ୍ତୁତ କରିବି।"
+                }
+                return conclusions.get(self.language, conclusions["en-IN"])
+
+            try:
+                conclusion_prompt = [
+                    {"role": "system", "content": f"You are a professional technical interviewer. The interview is now completed. Write a natural, polite 1-2 sentence statement thanking the candidate for their time, declaring that the interview has concluded, and telling them that the system is preparing their scorecard. You MUST write this statement in the language: **{self.language_name}**."},
+                    {"role": "user", "content": "Generate the conclusion statement."}
+                ]
+                completion = client.chat.completions.create(
+                    messages=conclusion_prompt,
+                    model="llama-3.3-70b-versatile",
+                    temperature=0.7,
+                    max_tokens=150
+                )
+                return completion.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"Error generating LLM conclusion: {e}")
+                conclusions = { "en-IN": "Thank you! That concludes our technical screening. I will now analyze your performance and prepare your scorecard." }
+                return conclusions.get(self.language, conclusions["en-IN"])
 
         if not client:
             # High-fidelity mock question generator based on candidate profile info

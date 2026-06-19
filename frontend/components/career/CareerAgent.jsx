@@ -37,13 +37,15 @@ export default function CareerAgent({ user }) {
   // Onboarding Form States
   const [jobType, setJobType] = useState("Full-Time");
   const [workMode, setWorkMode] = useState("Remote");
-  const [countries, setCountries] = useState("United States, India");
-  const [cities, setCities] = useState("San Francisco, Bengaluru");
-  const [salaryExpectations, setSalaryExpectations] = useState("$130,000");
+  const [countries, setCountries] = useState("India");
+  const [cities, setCities] = useState("Bengaluru, Hyderabad, Pune, Gurgaon");
+  const [salaryValue, setSalaryValue] = useState("15");
+  const [salaryCurrency, setSalaryCurrency] = useState("INR");
   const [noticePeriod, setNoticePeriod] = useState("Immediate");
   const [techStack, setTechStack] = useState("Python, FastAPI, React, PostgreSQL, Redis, Docker");
   const [companySize, setCompanySize] = useState("Any");
   const [startupPreference, setStartupPreference] = useState("Startup");
+  const [companyType, setCompanyType] = useState("Any");
   const [visaRequire, setVisaRequire] = useState("No");
   const [githubUrl, setGithubUrl] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
@@ -94,11 +96,24 @@ export default function CareerAgent({ user }) {
         setWorkMode(profileData.work_mode);
         setCountries(profileData.countries.join(", "));
         setCities(profileData.cities.join(", "));
-        setSalaryExpectations(profileData.salary_expectations);
-        setNoticePeriod(profileData.notice_period);
+        
+        const salStr = profileData.salary_expectations || "";
+        if (salStr.includes("₹") || salStr.toLowerCase().includes("inr") || salStr.toLowerCase().includes("lpa")) {
+          setSalaryCurrency("INR");
+          setSalaryValue(salStr.replace(/[₹\s,]|LPA/gi, ""));
+        } else if (salStr.includes("$") || salStr.toLowerCase().includes("usd")) {
+          setSalaryCurrency("USD");
+          setSalaryValue(salStr.replace(/[\$\s,]/g, ""));
+        } else {
+          setSalaryCurrency("INR");
+          setSalaryValue(salStr);
+        }
+        
+        setNoticePeriod(profileData.notice_period || "Immediate");
         setTechStack(profileData.tech_stack_preferences.join(", "));
         setCompanySize(profileData.company_size_preference);
         setStartupPreference(profileData.startup_vs_enterprise);
+        setCompanyType(profileData.company_type_preference || "Any");
         setVisaRequire(profileData.visa_sponsorship);
         setGithubUrl(profileData.github_url);
         setLinkedinUrl(profileData.linkedin_url);
@@ -158,7 +173,8 @@ export default function CareerAgent({ user }) {
     
     formData.append("countries", JSON.stringify(countriesArr));
     formData.append("cities", JSON.stringify(citiesArr));
-    formData.append("salary_expectations", salaryExpectations);
+    const salaryFormatted = salaryCurrency === "INR" ? `₹${salaryValue} LPA` : `$${parseInt(salaryValue.replace(/,/g, "") || "0").toLocaleString()}`;
+    formData.append("salary_expectations", salaryFormatted);
     formData.append("notice_period", noticePeriod);
     formData.append("tech_stack_preferences", JSON.stringify(techArr));
     formData.append("company_size_preference", companySize);
@@ -166,6 +182,7 @@ export default function CareerAgent({ user }) {
     formData.append("visa_sponsorship", visaRequire);
     formData.append("linkedin_url", linkedinUrl);
     formData.append("github_url", githubUrl);
+    formData.append("company_type_preference", companyType);
     
     if (resumeFile) {
       formData.append("resume", resumeFile);
@@ -457,29 +474,51 @@ export default function CareerAgent({ user }) {
               </div>
 
               {/* Salary Expectation */}
+              {/* Salary Expectation */}
               <div className="space-y-2">
                 <label className="text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono">Target Annual Salary</label>
-                <input
-                  type="text"
-                  value={salaryExpectations}
-                  onChange={(e) => setSalaryExpectations(e.target.value)}
-                  placeholder="e.g. $130,000 or ₹24,00,000"
-                  className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3.5 py-2.5 text-xs text-[#262626] focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium"
-                  required
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={salaryCurrency}
+                    onChange={(e) => setSalaryCurrency(e.target.value)}
+                    className="block rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3 py-2 text-xs text-[#262626] focus:border-[#C85A32] focus:outline-none font-medium cursor-pointer"
+                  >
+                    <option value="INR">INR (₹)</option>
+                    <option value="USD">USD ($)</option>
+                  </select>
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      value={salaryValue}
+                      onChange={(e) => setSalaryValue(e.target.value)}
+                      placeholder={salaryCurrency === "INR" ? "e.g. 15 (Lakhs Per Annum)" : "e.g. 130000"}
+                      className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3.5 py-2.5 text-xs text-[#262626] focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium"
+                      required
+                    />
+                    {salaryCurrency === "INR" && (
+                      <span className="absolute inset-y-0 right-3 flex items-center text-[10px] font-bold text-[#6E6359]/75 pointer-events-none font-mono">
+                        LPA
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Notice Period */}
               <div className="space-y-2">
                 <label className="text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono">Notice Period</label>
-                <input
-                  type="text"
+                <select
                   value={noticePeriod}
                   onChange={(e) => setNoticePeriod(e.target.value)}
-                  placeholder="e.g. Immediate, 30 days"
-                  className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3.5 py-2.5 text-xs text-[#262626] focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium"
-                  required
-                />
+                  className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3.5 py-2.5 text-xs text-[#262626] focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium cursor-pointer"
+                >
+                  <option value="Immediate">Immediate / Serving Notice / LWD</option>
+                  <option value="15 Days">15 Days</option>
+                  <option value="30 Days">30 Days</option>
+                  <option value="45 Days">45 Days</option>
+                  <option value="60 Days">60 Days</option>
+                  <option value="90 Days">90 Days (3 Months)</option>
+                </select>
               </div>
 
               {/* Tech Stack Preferences */}
@@ -531,10 +570,26 @@ export default function CareerAgent({ user }) {
                 <select
                   value={visaRequire}
                   onChange={(e) => setVisaRequire(e.target.value)}
-                  className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3.5 py-2.5 text-xs text-[#262626] focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium"
+                  className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3.5 py-2.5 text-xs text-[#262626] focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium cursor-pointer"
                 >
                   <option value="Yes">Yes, require sponsorship</option>
                   <option value="No">No, authorized to work locally</option>
+                </select>
+              </div>
+
+              {/* Company Type Preference */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono">Company Type Preference</label>
+                <select
+                  value={companyType}
+                  onChange={(e) => setCompanyType(e.target.value)}
+                  className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] px-3.5 py-2.5 text-xs text-[#262626] focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium cursor-pointer"
+                >
+                  <option value="Any">Any (Product, Service, GCCs, Startups)</option>
+                  <option value="Product">Product-based Companies</option>
+                  <option value="Service">Service-based Companies</option>
+                  <option value="GCC">Global Capability Centers (GCCs) / Captives</option>
+                  <option value="Startup">Startups (Early & Growth)</option>
                 </select>
               </div>
 

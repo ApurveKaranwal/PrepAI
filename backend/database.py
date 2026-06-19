@@ -273,6 +273,7 @@ def init_db():
             resume_text TEXT,
             role TEXT DEFAULT 'Software Engineer',
             interview_mode TEXT DEFAULT 'Mid-Level',
+            language TEXT DEFAULT 'en-IN',
             profile_summary TEXT, -- JSON Candidate Profile
             technical_depth REAL,
             communication REAL,
@@ -324,6 +325,7 @@ def init_db():
             linkedin_url TEXT,
             github_stats TEXT,
             linkedin_data TEXT,
+            company_type_preference TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -362,6 +364,24 @@ def init_db():
         )
     """)
     
+    # Alter voice_sessions to add language column if migrating from an older DB
+    try:
+        cursor.execute("ALTER TABLE voice_sessions ADD COLUMN language TEXT DEFAULT 'en-IN'")
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    # Alter candidate_profiles to add company_type_preference column if migrating from an older DB
+    try:
+        cursor.execute("ALTER TABLE candidate_profiles ADD COLUMN company_type_preference TEXT DEFAULT 'Any'")
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     conn.commit()
     conn.close()
     print("SQLite Database successfully initialized at:", DB_FILE)
@@ -887,7 +907,7 @@ def save_candidate_profile(user_id: str, p: dict):
                 salary_expectations = ?, notice_period = ?, tech_stack_preferences = ?,
                 company_size_preference = ?, startup_vs_enterprise = ?, visa_sponsorship = ?,
                 resume_name = ?, resume_text = ?, github_url = ?, linkedin_url = ?,
-                github_stats = ?, linkedin_data = ?
+                github_stats = ?, linkedin_data = ?, company_type_preference = ?
             WHERE user_id = ?
         """, (
             p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
@@ -895,6 +915,7 @@ def save_candidate_profile(user_id: str, p: dict):
             p.get("company_size_preference"), p.get("startup_vs_enterprise"), p.get("visa_sponsorship"),
             p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
             json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
+            p.get("company_type_preference", "Any"),
             user_id
         ))
     else:
@@ -904,14 +925,15 @@ def save_candidate_profile(user_id: str, p: dict):
                 salary_expectations, notice_period, tech_stack_preferences,
                 company_size_preference, startup_vs_enterprise, visa_sponsorship,
                 resume_name, resume_text, github_url, linkedin_url,
-                github_stats, linkedin_data
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                github_stats, linkedin_data, company_type_preference
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id, p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
             p.get("salary_expectations"), p.get("notice_period"), json.dumps(p.get("tech_stack_preferences", [])),
             p.get("company_size_preference"), p.get("startup_vs_enterprise"), p.get("visa_sponsorship"),
             p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
             json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
+            p.get("company_type_preference", "Any")
         ))
     
     conn.commit()
@@ -945,6 +967,7 @@ def get_candidate_profile(user_id: str) -> dict:
         "linkedin_url": row["linkedin_url"],
         "github_stats": json.loads(row["github_stats"]) if row["github_stats"] else {},
         "linkedin_data": json.loads(row["linkedin_data"]) if row["linkedin_data"] else {},
+        "company_type_preference": row["company_type_preference"] if "company_type_preference" in row.keys() else "Any",
         "created_at": row["created_at"]
     }
 

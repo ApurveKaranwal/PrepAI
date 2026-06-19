@@ -40,6 +40,20 @@ import {
   Tooltip
 } from "recharts";
 
+const SUPPORTED_LANGUAGES = [
+  { code: "en-IN", name: "English (India)" },
+  { code: "hi-IN", name: "Hindi (हिन्दी)" },
+  { code: "ta-IN", name: "Tamil (தமிழ்)" },
+  { code: "te-IN", name: "Telugu (తెలుగు)" },
+  { code: "kn-IN", name: "Kannada (ಕನ್ನಡ)" },
+  { code: "ml-IN", name: "Malayalam (മലയാളം)" },
+  { code: "mr-IN", name: "Marathi (मराठी)" },
+  { code: "gu-IN", name: "Gujarati (ગુજરાતી)" },
+  { code: "bn-IN", name: "Bengali (বাংলা)" },
+  { code: "pa-IN", name: "Punjabi (ਪੰਜਾਬੀ)" },
+  { code: "od-IN", name: "Odia (ଓଡ଼ିଆ)" }
+];
+
 export default function VoiceCopilot() {
   // Navigation & session state
   const [stage, setStage] = useState("onboarding"); // onboarding, scraping, ready, active, analysis
@@ -51,6 +65,7 @@ export default function VoiceCopilot() {
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [linkedinText, setLinkedinText] = useState("");
   const [interviewMode, setInterviewMode] = useState("Mid-Level");
+  const [language, setLanguage] = useState("en-IN");
   const [isDragOver, setIsDragOver] = useState(false);
 
   // LinkedIn ingestion mode & PDF uploader states
@@ -160,6 +175,7 @@ export default function VoiceCopilot() {
     }
     
     formData.append("interview_mode", interviewMode);
+    formData.append("language", language);
 
     try {
       const res = await fetch("http://localhost:8001/api/voice-copilot/onboard", {
@@ -301,6 +317,9 @@ export default function VoiceCopilot() {
         if (audioPlaybackRef.current) {
           audioPlaybackRef.current.pause();
         }
+      } else if (data.type === "completed") {
+        console.log("WebSocket completed signal received. Transitioning to scorecard.");
+        handleEndInterview();
       }
     };
     
@@ -881,6 +900,24 @@ export default function VoiceCopilot() {
                     </div>
                   </div>
 
+                  {/* Language Selector */}
+                  <div className="text-left">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono mb-2">
+                      Interview Language
+                    </label>
+                    <select
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value)}
+                      className="block w-full rounded-xl border border-[#DFD5C6] p-3 text-xs bg-[#FCFAF7] text-[#262626] focus:border-[#C85A32] focus:outline-none transition-colors font-medium font-sans cursor-pointer shadow-2xs"
+                    >
+                      {SUPPORTED_LANGUAGES.map((lang) => (
+                        <option key={lang.code} value={lang.code}>
+                          {lang.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Submit button */}
                   <button
                     type="submit"
@@ -965,6 +1002,12 @@ export default function VoiceCopilot() {
                 <span className="bg-[#C85A32]/10 border border-[#C85A32]/25 text-[#C85A32] font-bold uppercase text-[9px] px-2.5 py-0.5 rounded-full font-mono">{interviewMode}</span>
               </div>
               <div className="flex items-center justify-between border-b border-[#DFD5C6] pb-2">
+                <span className="font-bold text-[#6E6359]">Interview Language</span>
+                <span className="bg-[#C85A32]/10 border border-[#C85A32]/25 text-[#C85A32] font-bold uppercase text-[9px] px-2.5 py-0.5 rounded-full font-mono">
+                  {SUPPORTED_LANGUAGES.find((lang) => lang.code === language)?.name || language}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b border-[#DFD5C6] pb-2">
                 <span className="font-bold text-[#6E6359]">Target Role</span>
                 <span className="text-[#262626] font-bold">{roleTitle}</span>
               </div>
@@ -1018,6 +1061,9 @@ export default function VoiceCopilot() {
               <div className="flex items-center gap-3">
                 <span className="text-[9px] font-bold uppercase tracking-wider bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25 px-2.5 py-0.5 rounded-md font-mono">
                   {interviewMode} Mode
+                </span>
+                <span className="text-[9px] font-bold uppercase tracking-wider bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25 px-2.5 py-0.5 rounded-md font-mono">
+                  {SUPPORTED_LANGUAGES.find((lang) => lang.code === language)?.name || language}
                 </span>
                 <span className="text-[#262626] text-xs font-bold font-serif">{roleTitle} Technical Screening</span>
               </div>
