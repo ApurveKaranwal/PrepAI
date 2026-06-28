@@ -17,7 +17,7 @@ from groq import Groq
 
 # Import our database layer and custom ML model
 import database
-from ml_model import InterviewMLModel
+from ml.evaluation.evaluation import InterviewMLModel
 
 # Load environment variables
 load_dotenv()

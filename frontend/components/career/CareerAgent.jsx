@@ -49,6 +49,7 @@ export default function CareerAgent({ user }) {
   const [visaRequire, setVisaRequire] = useState("No");
   const [githubUrl, setGithubUrl] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [portfolioUrl, setPortfolioUrl] = useState("");
   const [resumeFile, setResumeFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [onboardError, setOnboardError] = useState("");
@@ -59,6 +60,11 @@ export default function CareerAgent({ user }) {
   const [roadmap, setRoadmap] = useState(null);
   const [loadingRoadmap, setLoadingRoadmap] = useState(false);
   const [showRoadmapDrawer, setShowRoadmapDrawer] = useState(false);
+  const [drawerTab, setDrawerTab] = useState("roadmap"); // roadmap, outreach
+  const [outreachRole, setOutreachRole] = useState("Hiring Manager");
+  const [outreachData, setOutreachData] = useState(null);
+  const [outreachLoading, setOutreachLoading] = useState(false);
+  const [copiedField, setCopiedField] = useState(null);
 
   const [aiAnswers, setAiAnswers] = useState({});
   const [candidateDetails, setCandidateDetails] = useState({
@@ -115,8 +121,9 @@ export default function CareerAgent({ user }) {
         setStartupPreference(profileData.startup_vs_enterprise);
         setCompanyType(profileData.company_type_preference || "Any");
         setVisaRequire(profileData.visa_sponsorship);
-        setGithubUrl(profileData.github_url);
-        setLinkedinUrl(profileData.linkedin_url);
+        setGithubUrl(profileData.github_url || "");
+        setLinkedinUrl(profileData.linkedin_url || "");
+        setPortfolioUrl(profileData.portfolio_url || "");
 
         // 2. Fetch matched jobs
         const jobsRes = await fetch(`http://localhost:8001/api/career/jobs?user_id=${user.uid}`);
@@ -182,6 +189,7 @@ export default function CareerAgent({ user }) {
     formData.append("visa_sponsorship", visaRequire);
     formData.append("linkedin_url", linkedinUrl);
     formData.append("github_url", githubUrl);
+    formData.append("portfolio_url", portfolioUrl);
     formData.append("company_type_preference", companyType);
     
     if (resumeFile) {
@@ -224,6 +232,9 @@ export default function CareerAgent({ user }) {
   // Open roadmap preparation drawer
   const openRoadmap = async (job) => {
     setSelectedJob(job);
+    setDrawerTab("roadmap");
+    setOutreachData(null);
+    setOutreachRole("Hiring Manager");
     setLoadingRoadmap(true);
     setShowRoadmapDrawer(true);
     setShowApplyDrawer(false);
@@ -237,6 +248,30 @@ export default function CareerAgent({ user }) {
       console.error("Failed to load roadmap:", err);
     }
     setLoadingRoadmap(false);
+  };
+
+  const fetchOutreach = async () => {
+    if (!selectedJob) return;
+    setOutreachLoading(true);
+    try {
+      const res = await fetch(`http://localhost:8001/api/career/outreach?job_id=${selectedJob.id}&user_id=${user.uid}&target_role=${encodeURIComponent(outreachRole)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setOutreachData(data);
+      } else {
+        console.error("Failed to generate outreach");
+      }
+    } catch (err) {
+      console.error("Error generating outreach:", err);
+    }
+    setOutreachLoading(false);
+  };
+
+  const handleCopy = (text, field) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
   };
 
   // Open apply custom answers drawer
@@ -622,6 +657,23 @@ export default function CareerAgent({ user }) {
                     value={githubUrl}
                     onChange={(e) => setGithubUrl(e.target.value)}
                     placeholder="https://github.com/username"
+                    className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] pl-9 pr-3 py-2.5 text-xs text-[#262626] placeholder-[#6E6359]/40 focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Personal Portfolio URL */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono">Personal Portfolio URL</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Link2 className="h-3.5 w-3.5 text-[#6E6359]/60" />
+                  </div>
+                  <input
+                    type="url"
+                    value={portfolioUrl}
+                    onChange={(e) => setPortfolioUrl(e.target.value)}
+                    placeholder="https://yourportfolio.com"
                     className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FCFAF7] pl-9 pr-3 py-2.5 text-xs text-[#262626] placeholder-[#6E6359]/40 focus:border-[#C85A32] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all font-medium"
                   />
                 </div>
@@ -1020,15 +1072,15 @@ export default function CareerAgent({ user }) {
 
       {/* DRAWER 1: PREPARATION ROADMAP */}
       {showRoadmapDrawer && selectedJob && (
-        <div className="fixed inset-y-0 right-0 w-[550px] bg-[#FCFAF7] border-l border-[#DFD5C6] shadow-2xl z-50 p-6 overflow-y-auto flex flex-col justify-between select-none">
+        <div className="fixed inset-y-0 right-0 w-[550px] bg-[#FCFAF7] border-l border-[#DFD5C6] shadow-2xl z-50 p-6 overflow-y-auto flex flex-col justify-between select-none animate-in slide-in-from-right duration-250">
           <div className="space-y-6">
             
             {/* Header */}
             <div className="flex justify-between items-center border-b border-[#DFD5C6]/40 pb-4">
               <div className="text-left">
-                <span className="text-[9px] font-bold font-mono text-[#C85A32] uppercase tracking-widest">ROADMAP CREATION</span>
+                <span className="text-[9px] font-bold font-mono text-[#C85A32] uppercase tracking-widest">REAL-TIME JOB PILOT</span>
                 <h4 className="text-base font-serif font-bold text-[#262626] mt-1">
-                  Prep Roadmap for {selectedJob.company}
+                  {selectedJob.company} Job Co-pilot
                 </h4>
                 <div className="flex items-center gap-2 mt-1.5">
                   <span className="text-[11px] text-[#6E6359] font-medium">Role: {selectedJob.title}</span>
@@ -1052,76 +1104,279 @@ export default function CareerAgent({ user }) {
               </button>
             </div>
 
-            {loadingRoadmap ? (
-              <div className="flex flex-col items-center justify-center py-24">
-                <RefreshCw className="h-7 w-7 text-[#C85A32] animate-spin mb-3" />
-                <span className="text-xs text-[#6E6359] font-medium">Assembling prep roadmap timelines...</span>
-              </div>
-            ) : (
-              roadmap && (
-                <div className="space-y-6 text-left">
-                  
-                  {/* Timeline Days Header */}
-                  <div className="flex items-center gap-2 bg-[#FAF6F0] border border-[#DFD5C6] p-3.5 rounded-xl">
-                    <Clock className="h-4 w-4 text-[#C85A32]" />
-                    <div className="text-xs">
-                      <span className="font-bold block text-[#262626]">{roadmap.roadmap_days}-Day Target Plan</span>
-                      <span className="text-[10px] text-[#6E6359] mt-0.5">Optimized schedule based on identified skill coverage gaps.</span>
-                    </div>
-                  </div>
+            {/* Split Tab Selector */}
+            <div className="flex border-b border-[#DFD5C6] gap-1">
+              <button
+                onClick={() => setDrawerTab("roadmap")}
+                className={`flex-1 py-2 text-xs font-bold border-b-2 transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  drawerTab === "roadmap"
+                    ? "border-[#C85A32] text-[#C85A32]"
+                    : "border-transparent text-[#6E6359] hover:text-[#262626]"
+                }`}
+              >
+                <Brain className="h-3.5 w-3.5" />
+                Prep Roadmap
+              </button>
+              <button
+                onClick={() => setDrawerTab("outreach")}
+                className={`flex-1 py-2 text-xs font-bold border-b-2 transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  drawerTab === "outreach"
+                    ? "border-[#C85A32] text-[#C85A32]"
+                    : "border-transparent text-[#6E6359] hover:text-[#262626]"
+                }`}
+              >
+                <Send className="h-3.5 w-3.5" />
+                AI Outreach Sequence
+              </button>
+            </div>
 
-                  {/* Day-by-Day Timeline List */}
-                  <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-[1px] before:bg-[#DFD5C6]">
-                    {roadmap.timeline.map((item, idx) => (
-                      <div key={idx} className="flex gap-4 relative pl-8">
-                        {/* Dot indicator */}
-                        <div className="absolute left-1.5 top-1.5 h-3 w-3 rounded-full border border-[#C85A32] bg-[#FAF6F0] flex items-center justify-center">
-                          <div className="h-1 w-1 rounded-full bg-[#C85A32]"></div>
-                        </div>
-                        <div className="text-xs space-y-1">
-                          <span className="font-bold text-[#C85A32] font-mono uppercase text-[10px]">{item.day}</span>
-                          <h5 className="font-bold text-[#262626]">{item.topic}</h5>
-                          <p className="text-[#6E6359] leading-relaxed">{item.details}</p>
-                        </div>
+            {/* ROADMAP TAB */}
+            {drawerTab === "roadmap" && (
+              loadingRoadmap ? (
+                <div className="flex flex-col items-center justify-center py-24">
+                  <RefreshCw className="h-7 w-7 text-[#C85A32] animate-spin mb-3" />
+                  <span className="text-xs text-[#6E6359] font-medium">Assembling prep roadmap timelines...</span>
+                </div>
+              ) : (
+                roadmap && (
+                  <div className="space-y-6 text-left animate-in fade-in duration-200">
+                    
+                    {/* Timeline Days Header */}
+                    <div className="flex items-center gap-2 bg-[#FAF6F0] border border-[#DFD5C6] p-3.5 rounded-xl">
+                      <Clock className="h-4 w-4 text-[#C85A32]" />
+                      <div className="text-xs">
+                        <span className="font-bold block text-[#262626]">{roadmap.roadmap_days}-Day Target Plan</span>
+                        <span className="text-[10px] text-[#6E6359] mt-0.5">Optimized schedule based on identified skill coverage gaps.</span>
                       </div>
-                    ))}
-                  </div>
+                    </div>
 
-                  {/* Interview Drill Questions */}
-                  <div className="space-y-4 pt-4 border-t border-[#DFD5C6]/40">
-                    <h5 className="text-xs font-bold font-serif text-[#262626] flex items-center gap-1.5">
-                      <Brain className="h-4 w-4 text-[#C85A32]" />
-                      Company-Specific Interview Drills
-                    </h5>
-
-                    {/* Drill Accordion */}
-                    <div className="space-y-3">
-                      {[
-                        { label: "Coding Round Focus", list: roadmap.questions.coding },
-                        { label: "System Design Focus", list: roadmap.questions.system_design },
-                        { label: "Behavioral / Values Focus", list: roadmap.questions.behavioral }
-                      ].map((sec, idx) => (
-                        <div key={idx} className="bg-[#FAF6F0] border border-[#DFD5C6]/60 rounded-xl p-3.5 space-y-2 text-xs">
-                          <span className="font-bold text-[#262626] text-[11px] block">{sec.label}</span>
-                          <ul className="list-disc pl-4 space-y-1.5 text-[#6E6359] leading-relaxed font-semibold">
-                            {sec.list.map((q, qidx) => (
-                              <li key={qidx}>{q}</li>
-                            ))}
-                          </ul>
+                    {/* Day-by-Day Timeline List */}
+                    <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-[1px] before:bg-[#DFD5C6]">
+                      {roadmap.timeline.map((item, idx) => (
+                        <div key={idx} className="flex gap-4 relative pl-8">
+                          {/* Dot indicator */}
+                          <div className="absolute left-1.5 top-1.5 h-3 w-3 rounded-full border border-[#C85A32] bg-[#FAF6F0] flex items-center justify-center">
+                            <div className="h-1 w-1 rounded-full bg-[#C85A32]"></div>
+                          </div>
+                          <div className="text-xs space-y-1">
+                            <span className="font-bold text-[#C85A32] font-mono uppercase text-[10px]">{item.day}</span>
+                            <h5 className="font-bold text-[#262626]">{item.topic}</h5>
+                            <p className="text-[#6E6359] leading-relaxed">{item.details}</p>
+                          </div>
                         </div>
                       ))}
                     </div>
-                  </div>
 
-                </div>
+                    {/* Interview Drill Questions */}
+                    <div className="space-y-4 pt-4 border-t border-[#DFD5C6]/40">
+                      <h5 className="text-xs font-bold font-serif text-[#262626] flex items-center gap-1.5">
+                        <Brain className="h-4 w-4 text-[#C85A32]" />
+                        Company-Specific Interview Drills
+                      </h5>
+
+                      {/* Drill Accordion */}
+                      <div className="space-y-3">
+                        {[
+                          { label: "Coding Round Focus", list: roadmap.questions.coding },
+                          { label: "System Design Focus", list: roadmap.questions.system_design },
+                          { label: "Behavioral / Values Focus", list: roadmap.questions.behavioral }
+                        ].map((sec, idx) => (
+                          <div key={idx} className="bg-[#FAF6F0] border border-[#DFD5C6]/60 rounded-xl p-3.5 space-y-2 text-xs">
+                            <span className="font-bold text-[#262626] text-[11px] block">{sec.label}</span>
+                            <ul className="list-disc pl-4 space-y-1.5 text-[#6E6359] leading-relaxed font-semibold">
+                              {sec.list.map((q, qidx) => (
+                                <li key={qidx}>{q}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                  </div>
+                )
               )
+            )}
+
+            {/* COLD OUTREACH TAB */}
+            {drawerTab === "outreach" && (
+              <div className="space-y-5 text-left animate-in fade-in duration-200">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">
+                    Target Persona / Role
+                  </label>
+                  <div className="flex gap-2">
+                    {["Hiring Manager", "Recruiter", "Team Peer"].map((role) => (
+                      <button
+                        key={role}
+                        onClick={() => setOutreachRole(role)}
+                        className={`flex-1 py-2 px-3 border rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          outreachRole === role
+                            ? "bg-[#C85A32]/10 border-[#C85A32] text-[#C85A32]"
+                            : "bg-white border-[#DFD5C6] text-[#6E6359] hover:text-[#262626] hover:bg-[#FAF6F0]"
+                        }`}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                <button
+                  onClick={fetchOutreach}
+                  disabled={outreachLoading}
+                  className="w-full bg-[#C85A32] hover:bg-[#B83A14] disabled:bg-[#C85A32]/50 text-[#FCFAF7] py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {outreachLoading ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      Generating sequences...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Generate Outreach Sequences
+                    </>
+                  )}
+                </button>
+
+                {outreachLoading && (
+                  <div className="py-16 flex flex-col items-center justify-center text-center">
+                    <RefreshCw className="h-7 w-7 text-[#C85A32] animate-spin mb-3" />
+                    <span className="text-xs text-[#6E6359] font-medium">
+                      Writing cold pitch and LinkedIn request note via Groq AI...
+                    </span>
+                  </div>
+                )}
+
+                {!outreachLoading && outreachData && (
+                  <div className="space-y-5 pt-2">
+                    {/* LinkedIn Connection Note */}
+                    <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl p-4 space-y-2.5 relative">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold font-mono text-[#C85A32] uppercase tracking-wider">
+                          LinkedIn Connection Request (&lt;300 chars)
+                        </span>
+                        <button
+                          onClick={() => handleCopy(outreachData.linkedin_connection, "linkedin")}
+                          className="text-[10px] font-bold text-[#6E6359] hover:text-[#262626] border border-[#DFD5C6] bg-white px-2 py-0.5 rounded-md hover:bg-[#FAF6F0] flex items-center gap-1 cursor-pointer transition-all"
+                        >
+                          {copiedField === "linkedin" ? (
+                            <>
+                              <Check className="h-3 w-3 text-[#2E5A44]" />
+                              Copied!
+                            </>
+                          ) : (
+                            "Copy Note"
+                          )}
+                        </button>
+                      </div>
+                      <p className="text-xs font-semibold text-[#262626] leading-relaxed italic bg-white border border-[#DFD5C6]/40 p-3 rounded-lg">
+                        "{outreachData.linkedin_connection}"
+                      </p>
+                      <span className="text-[10px] text-[#6E6359]/75 block text-right font-mono">
+                        {outreachData.linkedin_connection?.length || 0} / 300 characters
+                      </span>
+                    </div>
+
+                    {/* Contact Email */}
+                    {outreachData.contact_email && (
+                      <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl p-4 space-y-2.5 relative">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-bold font-mono text-[#C85A32] uppercase tracking-wider">
+                            Contact Email Address
+                          </span>
+                          <button
+                            onClick={() => handleCopy(outreachData.contact_email, "contact_email")}
+                            className="text-[10px] font-bold text-[#6E6359] hover:text-[#262626] border border-[#DFD5C6] bg-white px-2 py-0.5 rounded-md hover:bg-[#FAF6F0] flex items-center gap-1 cursor-pointer transition-all"
+                          >
+                            {copiedField === "contact_email" ? (
+                              <>
+                                <Check className="h-3 w-3 text-[#2E5A44]" />
+                                Copied!
+                              </>
+                            ) : (
+                              "Copy Email"
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-xs font-bold text-[#262626] bg-white border border-[#DFD5C6]/40 p-3 rounded-lg flex items-center gap-2">
+                          <span className="text-[#C85A32]">✉</span> {outreachData.contact_email}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Cold Email Pitch */}
+                    <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl p-4 space-y-3 relative">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold font-mono text-[#C85A32] uppercase tracking-wider">
+                          Cold Email Pitch
+                        </span>
+                        <button
+                          onClick={() => handleCopy(`Subject: ${outreachData.subject}\n\n${outreachData.email_body}`, "email")}
+                          className="text-[10px] font-bold text-[#6E6359] hover:text-[#262626] border border-[#DFD5C6] bg-white px-2 py-0.5 rounded-md hover:bg-[#FAF6F0] flex items-center gap-1 cursor-pointer transition-all"
+                        >
+                          {copiedField === "email" ? (
+                            <>
+                              <Check className="h-3 w-3 text-[#2E5A44]" />
+                              Copied!
+                            </>
+                          ) : (
+                            "Copy Email"
+                          )}
+                        </button>
+                      </div>
+                      <div className="space-y-2 bg-white border border-[#DFD5C6]/40 p-3.5 rounded-lg text-xs leading-relaxed text-[#262626]">
+                        <div>
+                          <span className="font-bold text-[#6E6359]">Subject:</span> {outreachData.subject}
+                        </div>
+                        <hr className="border-[#DFD5C6]/40 my-2" />
+                        <div className="whitespace-pre-wrap font-semibold">{outreachData.email_body}</div>
+                      </div>
+                    </div>
+
+                    {/* Follow-up Note */}
+                    <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl p-4 space-y-2.5 relative">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold font-mono text-[#C85A32] uppercase tracking-wider">
+                          Follow-up (3 days later)
+                        </span>
+                        <button
+                          onClick={() => handleCopy(outreachData.follow_up, "followup")}
+                          className="text-[10px] font-bold text-[#6E6359] hover:text-[#262626] border border-[#DFD5C6] bg-white px-2 py-0.5 rounded-md hover:bg-[#FAF6F0] flex items-center gap-1 cursor-pointer transition-all"
+                        >
+                          {copiedField === "followup" ? (
+                            <>
+                              <Check className="h-3 w-3 text-[#2E5A44]" />
+                              Copied!
+                            </>
+                          ) : (
+                            "Copy Follow-up"
+                          )}
+                        </button>
+                      </div>
+                      <p className="text-xs font-semibold text-[#262626] leading-relaxed italic bg-white border border-[#DFD5C6]/40 p-3 rounded-lg whitespace-pre-wrap">
+                        "{outreachData.follow_up}"
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
           </div>
 
-          <div className="border-t border-[#DFD5C6]/40 pt-4 flex justify-end">
+          <div className="border-t border-[#DFD5C6]/40 pt-4 flex justify-between gap-3">
             <button
               onClick={() => setShowRoadmapDrawer(false)}
+              className="bg-transparent hover:bg-[#FAF6F0] text-[#6E6359] border border-[#DFD5C6] py-2 px-6 rounded-lg text-xs font-bold transition-all cursor-pointer"
+            >
+              Close
+            </button>
+            <button
+              onClick={() => {
+                setShowRoadmapDrawer(false);
+              }}
               className="bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] py-2 px-6 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
             >
               Start Practice Session

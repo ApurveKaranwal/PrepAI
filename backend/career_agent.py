@@ -2,11 +2,13 @@ import os
 import json
 import random
 import re
+import time
+import threading
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 import database
-from ml_model import TFIDFModel
+from ml.tfidf.tfidf import TFIDFModel
 from browser_agent import AutoApplyAgent
 from dotenv import load_dotenv
 import pypdf
@@ -16,6 +18,10 @@ import requests
 load_dotenv()
 
 router = APIRouter()
+
+LAST_REFRESH_TIME = 0
+REFRESH_LOCK = threading.Lock()
+REFRESH_INTERVAL = 1800  # Refresh every 30 minutes
 
 # Initialize Groq/Gemini client from env for LLM answer generation
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -73,6 +79,7 @@ async def onboard_candidate(
     linkedin_url: str = Form(""),
     github_url: str = Form(""),
     company_type_preference: str = Form("Any"),
+    portfolio_url: str = Form(""),
     resume: Optional[UploadFile] = File(None)
 ):
     # Parse JSON list fields
@@ -149,6 +156,7 @@ async def onboard_candidate(
         "resume_text": resume_text,
         "github_url": github_url,
         "linkedin_url": linkedin_url,
+        "portfolio_url": portfolio_url,
         "github_stats": github_stats,
         "linkedin_data": linkedin_data
     }
@@ -169,6 +177,14 @@ def get_profile(user_id: str):
 # ----------------------------------------------------
 @router.get("/jobs")
 def discover_matched_jobs(user_id: str):
+    global LAST_REFRESH_TIME
+    current_time = time.time()
+    if current_time - LAST_REFRESH_TIME > REFRESH_INTERVAL:
+        with REFRESH_LOCK:
+            if current_time - LAST_REFRESH_TIME > REFRESH_INTERVAL:
+                LAST_REFRESH_TIME = current_time
+                database.trigger_background_job_fetch()
+
     profile = database.get_candidate_profile(user_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Candidate profile not found. Complete onboarding first.")
@@ -527,3 +543,103 @@ def get_user_applications(user_id: str):
             "offer_rate": offer_rate
         }
     }
+
+@router.get("/outreach")
+def generate_cold_outreach(job_id: int, user_id: str, target_role: str = "Hiring Manager"):
+    job = database.get_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    profile = database.get_candidate_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Candidate profile not found")
+        
+    user_record = database.get_user_by_id(user_id)
+    candidate_name = user_record.get("name") if user_record else "Apurve Karanwal"
+    github_url = profile.get("github_url") or ""
+    linkedin_url = profile.get("linkedin_url") or ""
+    portfolio_url = profile.get("portfolio_url") or ""
+    resume_name = profile.get("resume_name") or "Resume.pdf"
+    
+    company_clean = re.sub(r'[^a-zA-Z0-9]', '', job['company']).lower()
+    
+    candidate_skills = profile.get("tech_stack_preferences", [])
+    skills_str = ", ".join(candidate_skills)
+    
+    if not client:
+        # Fallback outreach templates if Groq not set up
+        return {
+            "target": target_role,
+            "contact_email": f"careers@{company_clean}.com",
+            "subject": f"Exploring Software Engineer Opportunities at {job['company']}",
+            "linkedin_connection": f"Hi, I'm {candidate_name}. I saw your work at {job['company']} and would love to connect about the {job['title']} role!",
+            "email_body": (
+                f"Dear Hiring Team,\n\n"
+                f"My name is {candidate_name}, and I am writing to express my interest in the {job['title']} position at {job['company']}. "
+                f"With my experience in {skills_str}, I am confident in my ability to add value to your team.\n\n"
+                f"Here are a couple of projects I have built:\n"
+                f"1. Distributed Lock System: Optimized concurrent processing using Redis and PostgreSQL. (Live: https://github-lock-system.vercel.app)\n"
+                f"2. Microservice Analytics: Configured real-time metrics capture and reporting pipeline in FastAPI. (Live: https://metrics-core.github.io)\n\n"
+                f"Please find my professional profiles and credentials below:\n"
+                f"- GitHub: {github_url or '[Insert GitHub Link]'}\n"
+                f"- Portfolio: {portfolio_url or '[Insert Portfolio Link]'}\n"
+                f"- LinkedIn: {linkedin_url or '[Insert LinkedIn Link]'}\n"
+                f"- Resume: [Attached: {resume_name}]\n\n"
+                f"Best regards,\n"
+                f"{candidate_name}"
+            ),
+            "follow_up": f"Hi, following up on my previous email regarding the {job['title']} role at {job['company']}. Let me know if you have 5 minutes to chat!",
+            "target": target_role
+        }
+        
+    resume_summary = profile.get("resume_text", "")[:10000] # Read up to 10k characters to capture projects
+    
+    prompt = (
+        f"You are an expert career agent and copywriter helping a candidate land a job referral or interview. "
+        f"Generate a personalized networking outreach sequence for a candidate contacting a {target_role} at {job['company']}.\n\n"
+        f"Here is the Target Job description:\n"
+        f"Title: {job['title']}\n"
+        f"Company: {job['company']}\n"
+        f"Skills Required: {json.dumps(job['skills_required'])}\n"
+        f"Description: {job['description'][:1500]}\n\n"
+        f"Here is the Candidate's profile details:\n"
+        f"Name: {candidate_name}\n"
+        f"Skills: {skills_str}\n"
+        f"Resume Excerpt:\n{resume_summary}\n\n"
+        f"Instructions for generating the cold email body ('email_body'):\n"
+        f"1. Make the email highly professional, personalized, and around 150-250 words.\n"
+        f"2. You MUST read the candidate's Resume Excerpt and identify 1-2 major/interesting projects the candidate has built that are relevant to this role.\n"
+        f"3. You MUST mention these projects by name in the email body, write 1-2 specific points summarizing what was built, the tech stack used, and the impact/metrics.\n"
+        f"4. You MUST include a live deployment link for each of these projects. If a deployment link is not found in the resume, generate a realistic deployment URL based on the project name (e.g., https://<project-name>.vercel.app or https://<project-name>.github.io).\n"
+        f"5. You MUST end the email body by clearly listing the candidate's professional links:\n"
+        f"   - GitHub: {github_url if github_url else '[Insert GitHub Link]'}\n"
+        f"   - Portfolio: {portfolio_url if portfolio_url else '[Insert Portfolio Link]'}\n"
+        f"   - LinkedIn: {linkedin_url if linkedin_url else '[Insert LinkedIn Link]'}\n"
+        f"   - Resume: [Attached: {resume_name}]\n\n"
+        f"Do not sound pushy. Also generate a guessable or standard company contact email (e.g. careers@{company_clean}.com or jobs@{company_clean}.com).\n\n"
+        f"You MUST return a JSON response with the following keys and structure:\n"
+        f"{{\n"
+        f"  \"contact_email\": \"<a professional recruitment or engineering contact email for this company, e.g. careers@{company_clean}.com, recruiting@{company_clean}.com, or similar>\",\n"
+        f"  \"subject\": \"<a catchy, professional email subject line>\",\n"
+        f"  \"linkedin_connection\": \"<a highly personalized LinkedIn connection request note, strictly UNDER 300 characters>\",\n"
+        f"  \"email_body\": \"<the personalized cold email pitch adhering to all the instructions above>\",\n"
+        f"  \"follow_up\": \"<a short, polite follow-up message to send 3 days later, around 50 words>\"\n"
+        f"}}\n"
+        f"Verify your output is strictly valid JSON."
+    )
+    
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": "Please generate the outreach materials."}
+            ],
+            model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"}
+        )
+        response_text = chat_completion.choices[0].message.content
+        result = json.loads(response_text)
+        result["target"] = target_role
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate outreach: {e}")

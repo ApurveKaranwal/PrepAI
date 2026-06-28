@@ -1,12 +1,17 @@
-import sqlite3
 import json
 import os
 import hashlib
 import re
 import datetime
+import threading
+import html
+import urllib.request
+import random
 from datetime import datetime as dt_class
+from dotenv import load_dotenv
 
-DB_FILE = os.path.join(os.path.dirname(__file__), "interviews.db")
+# Load environment
+load_dotenv()
 
 # Wrapper classes for PostgreSQL compatibility
 class DictRowWrapper:
@@ -162,14 +167,11 @@ class PgConnectionWrapper:
 
 def get_db_connection():
     database_url = os.environ.get("DATABASE_URL")
-    if database_url:
-        import psycopg2
-        conn = psycopg2.connect(database_url)
-        return PgConnectionWrapper(conn)
-    else:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        return conn
+    if not database_url:
+        raise ValueError("DATABASE_URL environment variable is missing. Neon PostgreSQL is required.")
+    import psycopg2
+    conn = psycopg2.connect(database_url)
+    return PgConnectionWrapper(conn)
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
@@ -193,18 +195,18 @@ def init_db():
     # Create users table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             name TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
     # Create sessions table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             github_url TEXT NOT NULL,
             resume_name TEXT,
             resume_text TEXT,
@@ -212,14 +214,14 @@ def init_db():
             score REAL,
             duration TEXT,
             body_score REAL DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
     # Create questions table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS questions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             session_id INTEGER NOT NULL,
             question_id_in_session INTEGER NOT NULL,
             type TEXT NOT NULL,
@@ -235,7 +237,7 @@ def init_db():
     # Create answers table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS answers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             session_id INTEGER NOT NULL,
             question_id_in_session INTEGER NOT NULL,
             answer_text TEXT NOT NULL,
@@ -245,7 +247,7 @@ def init_db():
             live_tip TEXT,
             matched_keywords TEXT, -- JSON array of strings
             missing_keywords TEXT, -- JSON array of strings
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
         )
     """)
@@ -253,11 +255,11 @@ def init_db():
     # Create messages table for conversational interview
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             session_id INTEGER NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
         )
     """)
@@ -265,7 +267,7 @@ def init_db():
     # Create voice_sessions table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS voice_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER,
             github_url TEXT,
             linkedin_url TEXT,
@@ -287,20 +289,20 @@ def init_db():
             learning_resources TEXT, -- JSON array of strings
             hiring_recommendation TEXT,
             duration_seconds INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
     # Create voice_messages table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS voice_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             session_id INTEGER NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             audio_path TEXT,
             evaluation TEXT, -- JSON string for hidden evaluation
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES voice_sessions (id) ON DELETE CASCADE
         )
     """)
@@ -326,14 +328,15 @@ def init_db():
             github_stats TEXT,
             linkedin_data TEXT,
             company_type_preference TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            portfolio_url TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
     # Create jobs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             title TEXT NOT NULL,
             company TEXT NOT NULL,
             location TEXT,
@@ -343,31 +346,67 @@ def init_db():
             skills_required TEXT,
             description TEXT,
             source TEXT,
-            url TEXT,
+            url TEXT UNIQUE,
             ats_type TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
     # Create applications table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id TEXT NOT NULL,
             job_id INTEGER NOT NULL,
             status TEXT DEFAULT 'Applied',
             custom_responses TEXT,
             submission_logs TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
         )
     """)
     
+    # Commit all table creations
+    conn.commit()
+
+    def column_exists(table_name: str, column_name: str) -> bool:
+        cursor.execute("""
+            SELECT 1 
+            FROM information_schema.columns 
+            WHERE table_name = %s AND column_name = %s
+        """, (table_name, column_name))
+        return cursor.fetchone() is not None
+
+    def constraint_exists(table_name: str, name: str) -> bool:
+        cursor.execute("""
+            SELECT 1 
+            FROM information_schema.table_constraints 
+            WHERE table_name = %s AND constraint_name = %s
+        """, (table_name, name))
+        return cursor.fetchone() is not None
+
+    # Ensure jobs table has UNIQUE constraint on url
+    try:
+        if not constraint_exists('jobs', 'unique_job_url'):
+            print("Clearing duplicate jobs to establish unique constraint...")
+            cursor.execute("DELETE FROM jobs")
+            cursor.execute("ALTER TABLE jobs ADD CONSTRAINT unique_job_url UNIQUE (url)")
+            conn.commit()
+    except Exception as e:
+        print("Error establishing unique constraint on jobs table:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    
     # Alter voice_sessions to add language column if migrating from an older DB
     try:
-        cursor.execute("ALTER TABLE voice_sessions ADD COLUMN language TEXT DEFAULT 'en-IN'")
-    except Exception:
+        if not column_exists('voice_sessions', 'language'):
+            cursor.execute("ALTER TABLE voice_sessions ADD COLUMN language TEXT DEFAULT 'en-IN'")
+            conn.commit()
+    except Exception as e:
+        print("Error adding language to voice_sessions:", e)
         try:
             conn.rollback()
         except Exception:
@@ -375,16 +414,30 @@ def init_db():
 
     # Alter candidate_profiles to add company_type_preference column if migrating from an older DB
     try:
-        cursor.execute("ALTER TABLE candidate_profiles ADD COLUMN company_type_preference TEXT DEFAULT 'Any'")
-    except Exception:
+        if not column_exists('candidate_profiles', 'company_type_preference'):
+            cursor.execute("ALTER TABLE candidate_profiles ADD COLUMN company_type_preference TEXT DEFAULT 'Any'")
+            conn.commit()
+    except Exception as e:
+        print("Error adding company_type_preference to candidate_profiles:", e)
         try:
             conn.rollback()
         except Exception:
             pass
 
-    conn.commit()
+    # Alter candidate_profiles to add portfolio_url column if migrating from an older DB
+    try:
+        if not column_exists('candidate_profiles', 'portfolio_url'):
+            cursor.execute("ALTER TABLE candidate_profiles ADD COLUMN portfolio_url TEXT DEFAULT ''")
+            conn.commit()
+    except Exception as e:
+        print("Error adding portfolio_url to candidate_profiles:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     conn.close()
-    print("SQLite Database successfully initialized at:", DB_FILE)
+    print("PostgreSQL Database successfully initialized.")
     
     # Seed default developer jobs if the table is empty
     seed_jobs_if_empty()
@@ -907,7 +960,7 @@ def save_candidate_profile(user_id: str, p: dict):
                 salary_expectations = ?, notice_period = ?, tech_stack_preferences = ?,
                 company_size_preference = ?, startup_vs_enterprise = ?, visa_sponsorship = ?,
                 resume_name = ?, resume_text = ?, github_url = ?, linkedin_url = ?,
-                github_stats = ?, linkedin_data = ?, company_type_preference = ?
+                github_stats = ?, linkedin_data = ?, company_type_preference = ?, portfolio_url = ?
             WHERE user_id = ?
         """, (
             p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
@@ -915,7 +968,7 @@ def save_candidate_profile(user_id: str, p: dict):
             p.get("company_size_preference"), p.get("startup_vs_enterprise"), p.get("visa_sponsorship"),
             p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
             json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
-            p.get("company_type_preference", "Any"),
+            p.get("company_type_preference", "Any"), p.get("portfolio_url", ""),
             user_id
         ))
     else:
@@ -925,15 +978,15 @@ def save_candidate_profile(user_id: str, p: dict):
                 salary_expectations, notice_period, tech_stack_preferences,
                 company_size_preference, startup_vs_enterprise, visa_sponsorship,
                 resume_name, resume_text, github_url, linkedin_url,
-                github_stats, linkedin_data, company_type_preference
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                github_stats, linkedin_data, company_type_preference, portfolio_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id, p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
             p.get("salary_expectations"), p.get("notice_period"), json.dumps(p.get("tech_stack_preferences", [])),
             p.get("company_size_preference"), p.get("startup_vs_enterprise"), p.get("visa_sponsorship"),
             p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
             json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
-            p.get("company_type_preference", "Any")
+            p.get("company_type_preference", "Any"), p.get("portfolio_url", "")
         ))
     
     conn.commit()
@@ -965,6 +1018,7 @@ def get_candidate_profile(user_id: str) -> dict:
         "resume_text": row["resume_text"],
         "github_url": row["github_url"],
         "linkedin_url": row["linkedin_url"],
+        "portfolio_url": row["portfolio_url"] if "portfolio_url" in row.keys() else "",
         "github_stats": json.loads(row["github_stats"]) if row["github_stats"] else {},
         "linkedin_data": json.loads(row["linkedin_data"]) if row["linkedin_data"] else {},
         "company_type_preference": row["company_type_preference"] if "company_type_preference" in row.keys() else "Any",
@@ -1208,4 +1262,242 @@ def seed_jobs_if_empty():
         
     conn.commit()
     conn.close()
-    print("Jobs successfully seeded in database.")
+    print("Jobs successfully seeded in database. Launching background fetch for additional real jobs...")
+    trigger_background_job_fetch()
+
+
+# ----------------------------------------------------
+# Real Job Scraper & Background Fetch Engine
+# ----------------------------------------------------
+
+GREENHOUSE_COMPANIES = [
+    'stripe', 'mongodb', 'vercel', 'figma', 'reddit', 'samsara', 
+    'cloudflare', 'databricks', 'doordash', 'hubspot', 'pinterest', 'lyft'
+]
+
+ASHBY_COMPANIES = [
+    'ramp', 'workos', 'supabase', 'replicate', 'pinecone', 
+    'clerk', 'resend', 'dub', 'linear', 'tldraw'
+]
+
+TECH_SKILLS = [
+    "Python", "Go", "Golang", "Rust", "Ruby", "Java", "Kotlin", "Swift", "TypeScript", 
+    "JavaScript", "C++", "C#", "PHP", "React", "Next.js", "Vue", "Angular", "Svelte", 
+    "HTML", "CSS", "Tailwind", "Node.js", "FastAPI", "Django", "Flask", "Express", 
+    "GraphQL", "gRPC", "PostgreSQL", "MySQL", "MongoDB", "Redis", "Cassandra", 
+    "Elasticsearch", "SQLite", "Qdrant", "Docker", "Kubernetes", "AWS", "GCP", 
+    "Azure", "Terraform", "Git", "CI/CD", "System Design", "Distributed Systems", 
+    "Machine Learning", "AI", "LLM", "Deep Learning", "NLP"
+]
+
+def clean_html(raw_html):
+    if not raw_html:
+        return ""
+    # Strip HTML tags
+    clean_text = re.sub(r'<[^<]+?>', ' ', raw_html)
+    return html.unescape(clean_text).strip()
+
+def parse_work_mode(title, location, desc, workplace_type=None):
+    text = f"{title} {location} {desc}".lower()
+    if workplace_type:
+        wp_type = str(workplace_type).lower()
+        if "remote" in wp_type:
+            return "Remote"
+        elif "hybrid" in wp_type:
+            return "Hybrid"
+        elif "onsite" in wp_type or "on-site" in wp_type or "office" in wp_type:
+            return "Onsite"
+            
+    if "remote" in text or "telecommute" in text or "work from home" in text:
+        return "Remote"
+    elif "hybrid" in text:
+        return "Hybrid"
+    return "Onsite"
+
+def parse_salary(desc, title):
+    # Match patterns like $120,000 - $180,000 or $150k
+    pattern = r'\$\d{2,3}(?:,\d{3})*(?:\s*k)?(?:\s*-\s*\$\d{2,3}(?:,\d{3})*(?:\s*k)?)?'
+    matches = re.findall(pattern, desc, re.IGNORECASE)
+    if matches:
+        return matches[0]
+    
+    t_lower = title.lower()
+    if "senior" in t_lower or "lead" in t_lower or "staff" in t_lower:
+        return "$140,000 - $190,000"
+    elif "junior" in t_lower or "intern" in t_lower:
+        return "$70,000 - $100,000"
+    return "$100,000 - $150,000"
+
+def parse_experience(title, desc):
+    pattern = r'(\b\d+\+?\s*(?:-\s*\d+)?\s*(?:years?|yrs?)\b)'
+    matches = re.findall(pattern, desc, re.IGNORECASE)
+    if matches:
+        return matches[0]
+    
+    t_lower = title.lower()
+    if "senior" in t_lower or "staff" in t_lower or "principal" in t_lower:
+        return "5+ years"
+    elif "lead" in t_lower or "manager" in t_lower:
+        return "6+ years"
+    elif "junior" in t_lower or "associate" in t_lower or "intern" in t_lower:
+        return "0-2 years"
+    return "3+ years"
+
+def extract_skills(title, desc):
+    text = f"{title} {desc}".lower()
+    matched = []
+    for skill in TECH_SKILLS:
+        # Match word boundaries for short terms like Go, C++
+        pattern = r'\b' + re.escape(skill.lower()) + r'\b'
+        if skill.lower() in ["c++", "c#", "next.js", "node.js"]:
+            pattern = re.escape(skill.lower())
+        if re.search(pattern, text):
+            matched.append(skill)
+    return matched if matched else ["Software Engineering"]
+
+def fetch_greenhouse_jobs(company):
+    print(f"Fetching Greenhouse jobs for: {company}...")
+    jobs_list = []
+    try:
+        url = f'https://boards-api.greenhouse.io/v1/boards/{company}/jobs'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+            jobs = data.get("jobs", [])
+            
+        dev_jobs = [j for j in jobs if any(kw in j.get('title', '').lower() for kw in ['engineer', 'developer', 'programmer', 'architect', 'tech lead', 'scientist'])]
+        
+        # Limit to 5 dev jobs to keep background fetches fast
+        for j in dev_jobs[:5]:
+            job_id = j['id']
+            try:
+                detail_url = f'https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}?questions=true'
+                req_det = urllib.request.Request(detail_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req_det, timeout=5) as resp_det:
+                    job_detail = json.loads(resp_det.read())
+                    
+                title = job_detail.get("title", "")
+                raw_desc = job_detail.get("content", "")
+                desc = clean_html(raw_desc)
+                
+                location = job_detail.get("location", {}).get("name", "Remote")
+                work_mode = parse_work_mode(title, location, desc)
+                salary = parse_salary(desc, title)
+                exp = parse_experience(title, desc)
+                skills = extract_skills(title, desc)
+                
+                jobs_list.append({
+                    "title": title,
+                    "company": company.capitalize() if company != "vercel" else "Vercel",
+                    "location": location,
+                    "work_mode": work_mode,
+                    "salary": salary,
+                    "experience_required": exp,
+                    "skills_required": skills,
+                    "description": desc[:3000],
+                    "source": f"{company.capitalize()} Careers",
+                    "url": job_detail.get("absolute_url"),
+                    "ats_type": "Greenhouse"
+                })
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Error fetching Greenhouse board for {company}: {e}")
+    return jobs_list
+
+def fetch_ashby_jobs(company):
+    print(f"Fetching Ashby jobs for: {company}...")
+    jobs_list = []
+    try:
+        url = f'https://api.ashbyhq.com/posting-api/job-board/{company}'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+            jobs = data.get("jobs", [])
+            
+        dev_jobs = [j for j in jobs if any(kw in j.get('title', '').lower() for kw in ['engineer', 'developer', 'programmer', 'architect', 'tech lead', 'scientist'])]
+        
+        # Limit to 5 jobs
+        for j in dev_jobs[:5]:
+            title = j.get("title", "")
+            raw_desc = j.get("descriptionHtml", "")
+            desc = clean_html(raw_desc) or j.get("descriptionPlain", "")
+            
+            location = j.get("location", "Remote")
+            workplace_type = j.get("workplaceType", "Remote")
+            work_mode = parse_work_mode(title, location, desc, workplace_type)
+            
+            salary = parse_salary(desc, title)
+            exp = parse_experience(title, desc)
+            skills = extract_skills(title, desc)
+            
+            jobs_list.append({
+                "title": title,
+                "company": company.capitalize() if company != "workos" else "WorkOS",
+                "location": location,
+                "work_mode": work_mode,
+                "salary": salary,
+                "experience_required": exp,
+                "skills_required": skills,
+                "description": desc[:3000],
+                "source": f"{company.capitalize()} Careers",
+                "url": j.get("jobUrl"),
+                "ats_type": "Ashby"
+            })
+    except Exception as e:
+        print(f"Error fetching Ashby board for {company}: {e}")
+    return jobs_list
+
+def run_jobs_fetch(companies_limit=4):
+    print(f"Starting job fetch (limit={companies_limit})...")
+    # Choose random companies to fetch from
+    gh_selected = random.sample(GREENHOUSE_COMPANIES, min(companies_limit // 2, len(GREENHOUSE_COMPANIES)))
+    ashby_selected = random.sample(ASHBY_COMPANIES, min(companies_limit // 2, len(ASHBY_COMPANIES)))
+    
+    all_jobs = []
+    for company in gh_selected:
+        all_jobs.extend(fetch_greenhouse_jobs(company))
+    for company in ashby_selected:
+        all_jobs.extend(fetch_ashby_jobs(company))
+        
+    if not all_jobs:
+        print("No jobs fetched.")
+        return
+        
+    print(f"Fetched total of {len(all_jobs)} jobs. Storing to PostgreSQL...")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    inserted_count = 0
+    for job in all_jobs:
+        try:
+            cursor.execute("""
+                INSERT INTO jobs (title, company, location, work_mode, salary, experience_required, skills_required, description, source, url, ats_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (url) DO NOTHING
+            """, (
+                job["title"],
+                job["company"],
+                job["location"],
+                job["work_mode"],
+                job["salary"],
+                job["experience_required"],
+                json.dumps(job["skills_required"]),
+                job["description"],
+                job["source"],
+                job["url"],
+                job["ats_type"]
+            ))
+            inserted_count += 1
+        except Exception as e:
+            print(f"Failed to insert job: {e}")
+            
+    conn.commit()
+    conn.close()
+    print(f"Completed job fetch. Stored/updated {inserted_count} jobs.")
+
+def trigger_background_job_fetch():
+    print("Triggering background job fetch...")
+    thread = threading.Thread(target=run_jobs_fetch, args=(4,), daemon=True)
+    thread.start()
+
