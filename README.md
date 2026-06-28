@@ -33,6 +33,53 @@ The AI Voice Copilot conducts stateful, real-time audio mock interviews. The spe
 
 ---
 
+## Detailed Feature Workflows and Modes
+
+PrepAI utilizes specific logic paths and integration modes depending on the desired feature context.
+
+### 1. Adaptive Preparation Roadmap Engine
+The Preparation Roadmap Engine analyzes candidate skill coverages and constructs audit calendars to bridge identified technical gaps.
+
+![Preparation Roadmap Engine Workflow](docs/images/prep_roadmap_workflow.png)
+
+* **Gap Analysis Processing**: The backend extracts candidate skills from their resume and compares them with the required skills fetched from the job description.
+* **Duration Selection Rule**:
+  * **2-Day Plan (0 gaps)**: Focuses on quick syntax refreshers, mock reviews, and system concept overviews.
+  * **5-Day Plan (1-2 gaps)**: Focuses on target skill deep-dives, small prototype builds, coding algorithm practice, and final checklists.
+  * **7-Day Plan (3-4 gaps)**: Dedicates time to theoretical bridging, algorithmic drills (sliding windows, double pointers), target company profiling (engineering blogs), and mock reviews.
+  * **14-Day Plan (>4 gaps)**: Standard roadmap focusing on prototype development, distributed system components (load balancers, message queues), advanced DSA (graphs, dynamic programming), and final polish simulations.
+* **Mock Drill Generation**: Questions are categorized into Coding, System Design, and Behavioral challenges, tailored specifically to target company profiles.
+
+### 2. Human-in-the-Loop Auto-Apply Engine
+The browser automation pipeline handles job application submissions using Playwright.
+
+![Playwright Auto-Apply Browser Flow](docs/images/auto_apply_playwright_flow.png)
+
+* **Form Analysis Mode**: Playwright loads job boards in a headful Chromium session. It parses standard application layouts to detect fields (Name, Email, Resume Upload, GitHub/LinkedIn URLs).
+* **LLM Cover Question Formulation**: When custom questions are detected (e.g. "Why do you want to join?"), the system forwards the candidate resume text, project metrics, and job details to Groq LLM running `llama-3.1-8b-instant`. The model writes a professional, context-aware 2-3 sentence answer.
+* **Interactive Verification Hook**: The candidate can review, modify, and confirm all filled credentials and generated answers on the Next.js frontend drawer before launching the submission action.
+
+### 3. Voice Copilot Stateful Interactions and Seniority Modes
+The AI Voice Copilot maintains a real-time conversational workflow using standard WebSocket streaming.
+
+![AI Voice Copilot State Transition Chart](docs/images/voice_copilot_state_machine.png)
+
+* **Real-time State Transitions**:
+  * **Idle/Waiting**: System stands by for the session to initialize or user to begin speaking.
+  * **Thinking**: Triggered when the user finishes speaking. The system transcribes user speech (STT) and runs the LLM Interview Agent to build the next response context.
+  * **Speaking**: Synthesized audio is streamed back (TTS) and played to the candidate.
+  * **Listening**: The frontend turns on the microphone, capturing candidate speech in audio chunks.
+  * **Interrupted**: If the candidate speaks while the AI is talking, the frontend registers the sound wave threshold and fires an interrupt payload over WebSocket, halting the TTS audio playback instantly.
+  * **Evaluating**: Concurrently, the candidate's answers are evaluated in a background thread to grade technical content, filler counts, and WPM rates.
+* **Seniority Persona Profiles**:
+  * **Junior**: Converses in a friendly, supportive tone. Focuses on coding syntax, fundamental programming logic, and provides detailed explanations when the candidate gets stuck.
+  * **Mid-Level**: Focuses on API design patterns, testing libraries, databases, and standard modular software architectures.
+  * **Senior**: Probes deeply into system design, indexing, caching policies, tradeoffs, performance profiling, and load balancing.
+  * **Staff Engineer**: Asks about multi-region failovers, disaster recovery, long-term technical migrations, legacy refactoring, and multi-team engineering consensus.
+  * **Bar Raiser (FAANG Mock)**: Implements a high-pressure technical screening. Directly challenges candidate design assumptions, probes edge cases (e.g. partition failures, consensus problems), and calls out vague or incomplete answers.
+
+---
+
 ## Machine Learning Infrastructure and Data Processing
 
 PrepAI implements custom, from-scratch Machine Learning models to govern text processing, similarity matching, and candidate response scoring, avoiding dependency on heavy external frameworks.
