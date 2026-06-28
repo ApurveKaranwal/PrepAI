@@ -284,3 +284,13 @@ The root `.gitignore` file is pre-configured to ensure API keys, local databases
 * `frontend/.env.local` (Local frontend configurations)
 * Build artifacts (`.next/`, `__pycache__/`, `.open-next/`)
 * Scraped database transaction logs
+
+---
+
+## Creators
+
+PrepAI was designed and developed by:
+* Apurve Karanwal
+* Akshita Tomar
+* Akash Tiwari
+
