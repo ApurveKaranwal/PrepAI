@@ -427,45 +427,23 @@ export default function VoiceCopilot({ user }) {
       };
       
       mediaRecorder.onstop = async () => {
-        const chunks = [...chunksRef.current];
-        chunksRef.current = [];
-        
-        // Tear down the stream and audio context NOW, after recorder has stopped
-        // and we have captured the chunks. This prevents the race condition where
-        // the stream was killed before onstop could fire.
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-        }
-        if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-          audioContextRef.current.close();
-        }
-        sourceNodeRef.current = null;
-        feedbackGainRef.current = null;
-        
-        if (chunks.length === 0) {
-          console.warn("MediaRecorder stopped with 0 chunks. Skipping send.");
-          return;
-        }
+        if (chunksRef.current.length === 0) return;
         
         // Package user speech chunks into a valid, single WebM file
-        const audioBlob = new Blob(chunks, { type: "audio/webm" });
-        console.log(`Audio blob created: ${audioBlob.size} bytes from ${chunks.length} chunks`);
+        const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
+        chunksRef.current = [];
         
-        // Skip very short clips (< 1KB) that are just WebM headers with no real audio
-        if (audioBlob.size < 1000) {
-          console.warn("Audio blob too small, likely no speech captured. Skipping.");
-          setVoiceStatus("listening");
-          startMicrophoneCapture();
-          return;
-        }
-        
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          // Send entire binary audio payload
-          wsRef.current.send(arrayBuffer);
-          // Trigger server-side transcription and answer generation
-          wsRef.current.send(JSON.stringify({ type: "silence" }));
-        }
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const arrayBuffer = reader.result;
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            // Send entire binary audio payload
+            wsRef.current.send(arrayBuffer);
+            // Trigger server-side transcription and answer generation
+            wsRef.current.send(JSON.stringify({ type: "silence" }));
+          }
+        };
+        reader.readAsArrayBuffer(audioBlob);
       };
 
       // Start VAD Loop
@@ -477,22 +455,22 @@ export default function VoiceCopilot({ user }) {
   };
 
   const stopMicrophoneRecording = () => {
-    // Only stop the VAD interval and mic level display.
-    // Stream/AudioContext teardown is handled inside mediaRecorder.onstop
-    // to avoid the race condition where the stream dies before audio is packaged.
-    if (vadIntervalRef.current) {
-      clearInterval(vadIntervalRef.current);
-      vadIntervalRef.current = null;
-    }
+    if (vadIntervalRef.current) clearInterval(vadIntervalRef.current);
     setMicLevel(0);
     
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
       recordingActiveRef.current = false;
     }
-    // NOTE: Do NOT stop stream tracks or close AudioContext here.
-    // The mediaRecorder.onstop handler needs them alive to finalize
-    // the last audio chunk. Teardown happens inside onstop.
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current.close();
+    }
+    
+    sourceNodeRef.current = null;
+    feedbackGainRef.current = null;
   };
 
   const runVADLoop = () => {

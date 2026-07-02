@@ -316,20 +316,10 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                 elif msg_type == "silence":
                     # VAD detected silence. Transcribe the buffered audio and generate answer!
                     if not audio_buffer:
-                        print("Silence received but audio buffer is empty. Resuming listening.")
-                        await websocket.send_json({"type": "status", "status": "listening"})
-                        continue
-                    
-                    buffer_size = len(audio_buffer)
-                    print(f"VAD silence detected. Transcribing {buffer_size} bytes...")
-                    
-                    # Skip very small payloads (< 500 bytes) — likely just WebM headers
-                    if buffer_size < 500:
-                        print(f"Audio buffer too small ({buffer_size} bytes). Skipping STT.")
-                        audio_buffer.clear()
-                        await websocket.send_json({"type": "status", "status": "listening"})
                         continue
                         
+                    print(f"VAD silence detected. Transcribing {len(audio_buffer)} bytes...")
+                    
                     # Convert accumulated audio buffer to bytes
                     audio_bytes = bytes(audio_buffer)
                     audio_buffer.clear() # Reset buffer for next round
