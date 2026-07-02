@@ -388,7 +388,10 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                         await asyncio.sleep(6)
                         await websocket.send_json({"type": "completed"})
                     else:
-                        await websocket.send_json({"type": "status", "status": "listening"})
+                        # Don't send "listening" here — the frontend will transition
+                        # to listening mode in audio.onended after TTS finishes playing.
+                        # Sending it prematurely causes the mic to start while TTS is
+                        # still playing, creating a feedback loop that interrupts speech.
                         is_agent_speaking = False
                     
                 elif msg_type == "ping":

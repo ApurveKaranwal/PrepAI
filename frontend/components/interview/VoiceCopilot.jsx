@@ -139,6 +139,7 @@ export default function VoiceCopilot({ user }) {
   const recordingActiveRef = useRef(false);
   const vadIntervalRef = useRef(null);
   const timerIntervalRef = useRef(null);
+  const agentSpeakingRef = useRef(false); // true while TTS audio is playing — blocks mic/VAD
 
   // VAD Speech Threshold Settings
   const speechThreshold = 18; // RMS energy threshold
@@ -312,6 +313,7 @@ export default function VoiceCopilot({ user }) {
     
     // Stop recording while playing speech to avoid echo feedback
     stopMicrophoneRecording();
+    agentSpeakingRef.current = true;
     
     const binaryString = window.atob(base64Audio);
     const len = binaryString.length;
@@ -326,12 +328,16 @@ export default function VoiceCopilot({ user }) {
     audioPlaybackRef.current = audio;
     
     audio.onended = () => {
+      agentSpeakingRef.current = false;
+      audioPlaybackRef.current = null;
       setVoiceStatus("listening");
       startMicrophoneCapture();
     };
     
     audio.onerror = () => {
       console.error("TTS audio playback error");
+      agentSpeakingRef.current = false;
+      audioPlaybackRef.current = null;
       setVoiceStatus("listening");
       startMicrophoneCapture();
     };
@@ -339,6 +345,8 @@ export default function VoiceCopilot({ user }) {
     setVoiceStatus("speaking");
     audio.play().catch((err) => {
       console.error("Playback block:", err);
+      agentSpeakingRef.current = false;
+      audioPlaybackRef.current = null;
       setVoiceStatus("listening");
       startMicrophoneCapture();
     });
@@ -390,6 +398,8 @@ export default function VoiceCopilot({ user }) {
   // Web Audio decibel-level VAD (Voice Activity Detection)
   const startMicrophoneCapture = async () => {
     if (isMuted) return;
+    // Never start the mic while TTS audio is still playing
+    if (agentSpeakingRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -498,6 +508,9 @@ export default function VoiceCopilot({ user }) {
       setMicLevel(energyLevel);
       
       if (rms > speechThreshold) {
+        // Ignore all mic input while agent TTS is playing
+        if (agentSpeakingRef.current) return;
+        
         speakFrames++;
         if (speakFrames >= speechBufferCount && !isSpeaking) {
           isSpeaking = true;
@@ -506,6 +519,8 @@ export default function VoiceCopilot({ user }) {
           // Interrupt active TTS speaking if any
           if (audioPlaybackRef.current) {
             audioPlaybackRef.current.pause();
+            audioPlaybackRef.current = null;
+            agentSpeakingRef.current = false;
           }
           
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
