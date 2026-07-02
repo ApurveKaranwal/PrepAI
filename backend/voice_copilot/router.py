@@ -332,6 +332,7 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                     
                     if not user_transcript.strip() or "[Transcription failed]" in user_transcript:
                         await websocket.send_json({"type": "transcript", "role": "user", "text": "..."})
+                        await websocket.send_json({"type": "status", "status": "listening"})
                         continue
                         
                     # Send STT transcript to frontend

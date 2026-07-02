@@ -367,6 +367,9 @@ export default function VoiceCopilot({ user }) {
         playTTSAudio(data.audio);
       } else if (data.type === "status") {
         setVoiceStatus(data.status);
+        if (data.status === "listening") {
+          startMicrophoneCapture();
+        }
       } else if (data.type === "evaluation") {
         setLatestEvaluation(data.metrics);
       } else if (data.type === "interrupt") {
