@@ -243,12 +243,30 @@ def read_root():
 @app.post("/api/ingest")
 async def ingest_details(
     resume: Optional[UploadFile] = File(None),
-    github_url: str = Form(...)
+    github_url: Optional[str] = Form(None),
+    user_id: Optional[str] = Form(None)
 ):
-    print(f"Ingesting Details. GitHub: {github_url}")
+    print(f"Ingesting Details. GitHub: {github_url}, User ID: {user_id}")
     resume_text = ""
     resume_name = None
     
+    # Check if we should load from stored profile
+    if user_id and not resume:
+        try:
+            profile = database.get_candidate_profile(user_id)
+            if profile:
+                resume_text = profile.get("resume_text", "")
+                resume_name = profile.get("resume_name", "Saved_Resume.pdf")
+                if not github_url:
+                    github_url = profile.get("github_url", "")
+                print(f"Loaded saved profile for user {user_id}. Resume Length: {len(resume_text)}, GitHub: {github_url}")
+        except Exception as profile_err:
+            print(f"Failed to load candidate profile for user {user_id}: {profile_err}")
+            
+    # Fallback to github_url empty string if none provided
+    if not github_url:
+        github_url = ""
+
     # 1. Parse Resume PDF
     if resume:
         try:

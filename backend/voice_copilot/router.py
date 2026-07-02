@@ -26,23 +26,45 @@ class EndSessionRequest(BaseModel):
 @router.post("/onboard")
 async def onboard_candidate(
     resume: Optional[UploadFile] = File(None),
-    github_url: str = Form(...),
+    github_url: Optional[str] = Form(None),
     linkedin_url: Optional[str] = Form(None),
     linkedin_text: Optional[str] = Form(None),
     linkedin_pdf: Optional[UploadFile] = File(None),
     interview_mode: str = Form("Mid-Level"),
-    language: str = Form("en-IN")
+    language: str = Form("en-IN"),
+    user_id: Optional[str] = Form(None)
 ):
     """
     Onboard candidate: Scrape Resume PDF, LinkedIn, and GitHub.
     Construct Candidate Profile and initialize database session.
     """
-    print(f"Onboarding Voice Copilot. GitHub: {github_url}, LinkedIn URL: {linkedin_url}, Mode: {interview_mode}")
+    print(f"Onboarding Voice Copilot. GitHub: {github_url}, LinkedIn URL: {linkedin_url}, Mode: {interview_mode}, User ID: {user_id}")
     
     # 1. Parse Resume PDF
     resume_text = ""
     resume_name = None
     resume_profile = {}
+    
+    if user_id and not resume:
+        try:
+            import database
+            profile = database.get_candidate_profile(user_id)
+            if profile:
+                resume_text = profile.get("resume_text", "")
+                resume_name = profile.get("resume_name", "Saved_Resume.pdf")
+                if not github_url:
+                    github_url = profile.get("github_url", "")
+                if not linkedin_url:
+                    linkedin_url = profile.get("linkedin_url", "")
+                print(f"Loaded stored profile for user {user_id} in Voice Copilot. Resume Length: {len(resume_text)}")
+                if resume_text:
+                    resume_profile = parse_resume_content(resume_text)
+        except Exception as profile_err:
+            print(f"Failed to load candidate profile for user {user_id} in Voice Copilot: {profile_err}")
+
+    if not github_url:
+        github_url = ""
+
     if resume:
         try:
             resume_name = resume.filename

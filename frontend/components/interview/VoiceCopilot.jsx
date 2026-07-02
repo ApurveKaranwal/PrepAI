@@ -56,7 +56,7 @@ const SUPPORTED_LANGUAGES = [
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
 
-export default function VoiceCopilot() {
+export default function VoiceCopilot({ user }) {
   // Navigation & session state
   const [stage, setStage] = useState("onboarding"); // onboarding, scraping, ready, active, analysis
   const [sessionId, setSessionId] = useState(null);
@@ -65,6 +65,29 @@ export default function VoiceCopilot() {
   const [resumeFile, setResumeFile] = useState(null);
   const [githubUrl, setGithubUrl] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
+  
+  const [savedProfile, setSavedProfile] = useState(null);
+  const [useSavedProfile, setUseSavedProfile] = useState(false);
+
+  useEffect(() => {
+    async function loadSavedProfile() {
+      if (user?.uid) {
+        try {
+          const res = await fetch(`${BACKEND_URL}/api/career/profile?user_id=${user.uid}`);
+          if (res.ok) {
+            const data = await res.json();
+            setSavedProfile(data);
+            setUseSavedProfile(true); // default to using saved profile
+            if (data.github_url) setGithubUrl(data.github_url);
+            if (data.linkedin_url) setLinkedinUrl(data.linkedin_url);
+          }
+        } catch (e) {
+          console.error("Failed to load saved profile in Voice Copilot:", e);
+        }
+      }
+    }
+    loadSavedProfile();
+  }, [user]);
   const [linkedinText, setLinkedinText] = useState("");
   const [interviewMode, setInterviewMode] = useState("Mid-Level");
   const [language, setLanguage] = useState("en-IN");
@@ -146,6 +169,14 @@ export default function VoiceCopilot() {
   // Onboarding Submission
   const handleOnboard = async (e) => {
     e.preventDefault();
+    
+    let targetGithubUrl = githubUrl;
+    let targetLinkedinUrl = linkedinUrl;
+    if (useSavedProfile && savedProfile) {
+      targetGithubUrl = githubUrl || savedProfile.github_url;
+      targetLinkedinUrl = linkedinUrl || savedProfile.linkedin_url;
+    }
+
     setStage("scraping");
     
     // Simulate progression of scraping messages
@@ -157,10 +188,15 @@ export default function VoiceCopilot() {
     }, 2500);
 
     const formData = new FormData();
-    if (resumeFile) formData.append("resume", resumeFile);
-    formData.append("github_url", githubUrl);
+    if (!useSavedProfile && resumeFile) formData.append("resume", resumeFile);
+    formData.append("github_url", targetGithubUrl);
     
-    if (linkedinIngestMode === "url") {
+    if (useSavedProfile) {
+      formData.append("linkedin_url", targetLinkedinUrl || "");
+      if (user?.uid) {
+        formData.append("user_id", user.uid);
+      }
+    } else {
       formData.append("linkedin_url", linkedinUrl);
     } else if (linkedinIngestMode === "pdf") {
       if (linkedinFile) {
@@ -692,9 +728,36 @@ export default function VoiceCopilot() {
                 </div>
 
                 <form onSubmit={handleOnboard} className="space-y-6">
-                  
+                  {/* Saved Profile Toggle */}
+                  {savedProfile && (
+                    <div className="flex items-start gap-3 p-3 bg-[#E8F2EC]/30 border border-[#B3D6C2] rounded-xl text-left select-none">
+                      <input
+                        type="checkbox"
+                        id="use-saved-profile-voice"
+                        checked={useSavedProfile}
+                        onChange={(e) => {
+                          setUseSavedProfile(e.target.checked);
+                          if (e.target.checked && savedProfile.github_url) {
+                            setGithubUrl(savedProfile.github_url);
+                          }
+                          if (e.target.checked && savedProfile.linkedin_url) {
+                            setLinkedinUrl(savedProfile.linkedin_url);
+                          }
+                        }}
+                        className="rounded text-[#C85A32] focus:ring-[#C85A32] border-[#DFD5C6] h-4 w-4 mt-0.5 cursor-pointer"
+                      />
+                      <label htmlFor="use-saved-profile-voice" className="flex flex-col cursor-pointer">
+                        <span className="text-xs font-bold text-[#262626]">Use Saved Profile & Resume</span>
+                        <span className="text-[10px] text-[#6E6359] mt-0.5 leading-normal">
+                          Resume: <span className="font-semibold text-[#2E5A44]">{savedProfile.resume_name}</span><br />
+                          GitHub: <span className="font-mono bg-[#FAF6F0] px-1 py-0.5 rounded text-[#262626]">{savedProfile.github_url}</span>
+                        </span>
+                      </label>
+                    </div>
+                  )}
+
                   {/* PDF Resume Uploader */}
-                  <div className="text-left">
+                  <div className={`text-left transition-all ${useSavedProfile ? 'opacity-40 pointer-events-none' : ''}`}>
                     <label className="block text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono mb-2">
                       1. Resume (PDF)
                     </label>
@@ -709,7 +772,7 @@ export default function VoiceCopilot() {
                           ? "border-emerald-300 bg-emerald-50/20"
                           : "border-[#DFD5C6] hover:bg-[#C85A32]/5 hover:border-[#C85A32] bg-[#FAF6F0]"
                       }`}
-                      onClick={() => document.getElementById("file-input").click()}
+                      onClick={() => !useSavedProfile && document.getElementById("file-input").click()}
                     >
                       <input
                         id="file-input"
@@ -759,7 +822,7 @@ export default function VoiceCopilot() {
                       </div>
                     </div>
 
-                    <div>
+                    <div className={`transition-all ${useSavedProfile ? 'opacity-40 pointer-events-none' : ''}`}>
                       <label className="block text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono mb-2">
                         3. LinkedIn Ingestion Mode
                       </label>
@@ -787,7 +850,7 @@ export default function VoiceCopilot() {
                   </div>
 
                   {/* Dynamic LinkedIn Input Field based on Ingestion Mode */}
-                  <div className="text-left mt-4 border-t border-[#DFD5C6]/60 pt-4">
+                  <div className={`text-left mt-4 border-t border-[#DFD5C6]/60 pt-4 transition-all ${useSavedProfile ? 'opacity-40 pointer-events-none' : ''}`}>
                     {linkedinIngestMode === "url" && (
                       <div className="space-y-2">
                         <label className="block text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono mb-2">

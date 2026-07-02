@@ -16,12 +16,35 @@ import {
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
 
-export default function InterviewPrep({ onEndInterview }) {
+export default function InterviewPrep({ onEndInterview, user }) {
   // Ingestion states: 'idle', 'reading_resume', 'scraping_github', 'parsing_code', 'completed'
   const [ingestState, setIngestState] = useState("idle");
   const [resumeFile, setResumeFile] = useState(null);
   const [githubUrl, setGithubUrl] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [savedProfile, setSavedProfile] = useState(null);
+  const [useSavedProfile, setUseSavedProfile] = useState(false);
+
+  useEffect(() => {
+    async function loadSavedProfile() {
+      if (user?.uid) {
+        try {
+          const res = await fetch(`${BACKEND_URL}/api/career/profile?user_id=${user.uid}`);
+          if (res.ok) {
+            const data = await res.json();
+            setSavedProfile(data);
+            setUseSavedProfile(true); // default to using saved profile
+            if (data.github_url) {
+              setGithubUrl(data.github_url);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load saved profile:", e);
+        }
+      }
+    }
+    loadSavedProfile();
+  }, [user]);
 
   // Active interview states
   const [sessionStarted, setSessionStarted] = useState(false);
@@ -141,8 +164,18 @@ export default function InterviewPrep({ onEndInterview }) {
   // 1. Ingestion Form Submit to FastAPI
   const handleStartIngestion = async (e) => {
     e.preventDefault();
-    if (!githubUrl) return;
-    if (!resumeFile) {
+    
+    let targetGithubUrl = githubUrl;
+    if (useSavedProfile && savedProfile) {
+      targetGithubUrl = githubUrl || savedProfile.github_url;
+    }
+
+    if (!targetGithubUrl) {
+      setIngestError("Please provide a GitHub Repository URL.");
+      return;
+    }
+
+    if (!useSavedProfile && !resumeFile) {
       setIngestError("Please upload your resume before starting the session.");
       return;
     }
@@ -160,10 +193,13 @@ export default function InterviewPrep({ onEndInterview }) {
 
     try {
       const formData = new FormData();
-      if (resumeFile) {
+      if (!useSavedProfile && resumeFile) {
         formData.append("resume", resumeFile);
       }
-      formData.append("github_url", githubUrl);
+      formData.append("github_url", targetGithubUrl);
+      if (useSavedProfile && user?.uid) {
+        formData.append("user_id", user.uid);
+      }
 
       const res = await fetch(`${BACKEND_URL}/api/ingest`, {
         method: "POST",
@@ -448,8 +484,33 @@ export default function InterviewPrep({ onEndInterview }) {
               </div>
 
               <form onSubmit={handleStartIngestion} className="space-y-6">
+                {/* Saved Profile Toggle */}
+                {savedProfile && (
+                  <div className="flex items-start gap-3 p-3 bg-[#E8F2EC]/30 border border-[#B3D6C2] rounded-xl text-left select-none">
+                    <input
+                      type="checkbox"
+                      id="use-saved-profile"
+                      checked={useSavedProfile}
+                      onChange={(e) => {
+                        setUseSavedProfile(e.target.checked);
+                        if (e.target.checked && savedProfile.github_url) {
+                          setGithubUrl(savedProfile.github_url);
+                        }
+                      }}
+                      className="rounded text-[#C85A32] focus:ring-[#C85A32] border-[#DFD5C6] h-4 w-4 mt-0.5 cursor-pointer"
+                    />
+                    <label htmlFor="use-saved-profile" className="flex flex-col cursor-pointer">
+                      <span className="text-xs font-bold text-[#262626]">Use Saved Profile & Resume</span>
+                      <span className="text-[10px] text-[#6E6359] mt-0.5 leading-normal">
+                        Resume: <span className="font-semibold text-[#2E5A44]">{savedProfile.resume_name}</span><br />
+                        GitHub: <span className="font-mono bg-[#FAF6F0] px-1 py-0.5 rounded text-[#262626]">{savedProfile.github_url}</span>
+                      </span>
+                    </label>
+                  </div>
+                )}
+
                 {/* Resume File */}
-                <div className="text-left">
+                <div className={`text-left transition-all ${useSavedProfile ? 'opacity-40 pointer-events-none' : ''}`}>
                   <label className="block text-xs font-bold uppercase tracking-wider text-[#6E6359] font-mono mb-2">
                     1. Upload Resume
                   </label>

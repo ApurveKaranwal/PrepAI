@@ -139,10 +139,10 @@ export default function Home() {
           />
         )}
         {activeTab === "interviews" && (
-          <InterviewPrep onEndInterview={handleEndInterview} />
+          <InterviewPrep onEndInterview={handleEndInterview} user={user} />
         )}
         {activeTab === "voice-copilot" && (
-          <VoiceCopilot />
+          <VoiceCopilot user={user} />
         )}
         {activeTab === "career-agent" && (
           <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-6">
