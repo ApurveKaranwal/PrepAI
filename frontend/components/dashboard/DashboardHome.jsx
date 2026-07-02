@@ -112,7 +112,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
 
   // SVG circular progress calculation for Readiness
   const readiness = overallStats?.overall_readiness || 0;
-  const radius = 38;
+  const radius = 30;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (readiness / 100) * circumference;
 
