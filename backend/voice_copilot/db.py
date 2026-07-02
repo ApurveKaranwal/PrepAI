@@ -11,15 +11,24 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 def get_db_conn():
     if DATABASE_URL:
         # If PostgreSQL is configured
-        try:
-            import psycopg2
-            from psycopg2.extras import RealDictCursor
-            conn = psycopg2.connect(DATABASE_URL)
-            # Enable auto-commit for ease of use or manage transaction
-            conn.autocommit = True
-            return conn, True
-        except ImportError:
-            print("psycopg2 not installed, falling back to SQLite.")
+        import time
+        max_retries = 4
+        delay = 0.5
+        for attempt in range(max_retries):
+            try:
+                import psycopg2
+                from psycopg2.extras import RealDictCursor
+                conn = psycopg2.connect(DATABASE_URL)
+                # Enable auto-commit for ease of use or manage transaction
+                conn.autocommit = True
+                return conn, True
+            except Exception as e:
+                print(f"PostgreSQL connection attempt {attempt+1} failed in voice_copilot/db: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    print("PostgreSQL connection failed in voice_copilot/db after all retries. Falling back to SQLite.")
     
     # SQLite fallback
     conn = sqlite3.connect(DB_FILE)

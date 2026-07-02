@@ -170,8 +170,20 @@ def get_db_connection():
     if not database_url:
         raise ValueError("DATABASE_URL environment variable is missing. Neon PostgreSQL is required.")
     import psycopg2
-    conn = psycopg2.connect(database_url)
-    return PgConnectionWrapper(conn)
+    import time
+    max_retries = 4
+    delay = 0.5
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(database_url)
+            return PgConnectionWrapper(conn)
+        except Exception as e:
+            print(f"PostgreSQL connection attempt {attempt+1} failed in database.py: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise e
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
