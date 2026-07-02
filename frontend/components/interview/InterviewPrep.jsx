@@ -486,7 +486,7 @@ export default function InterviewPrep({ onEndInterview, user }) {
               <form onSubmit={handleStartIngestion} className="space-y-6">
                 {/* Saved Profile Toggle */}
                 {savedProfile && (
-                  <div className="flex items-start gap-3 p-3 bg-[#E8F2EC]/30 border border-[#B3D6C2] rounded-xl text-left select-none">
+                  <div className="flex items-start gap-3.5 p-4 bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl text-left select-none shadow-2xs transition-all hover:border-[#C85A32]/40">
                     <input
                       type="checkbox"
                       id="use-saved-profile"
@@ -497,13 +497,13 @@ export default function InterviewPrep({ onEndInterview, user }) {
                           setGithubUrl(savedProfile.github_url);
                         }
                       }}
-                      className="rounded text-[#C85A32] focus:ring-[#C85A32] border-[#DFD5C6] h-4 w-4 mt-0.5 cursor-pointer"
+                      className="rounded text-[#C85A32] focus:ring-[#C85A32] border-[#DFD5C6] h-4 w-4 mt-0.5 cursor-pointer accent-[#C85A32]"
                     />
-                    <label htmlFor="use-saved-profile" className="flex flex-col cursor-pointer">
-                      <span className="text-xs font-bold text-[#262626]">Use Saved Profile & Resume</span>
-                      <span className="text-[10px] text-[#6E6359] mt-0.5 leading-normal">
-                        Resume: <span className="font-semibold text-[#2E5A44]">{savedProfile.resume_name}</span><br />
-                        GitHub: <span className="font-mono bg-[#FAF6F0] px-1 py-0.5 rounded text-[#262626]">{savedProfile.github_url}</span>
+                    <label htmlFor="use-saved-profile" className="flex flex-col cursor-pointer space-y-1">
+                      <span className="text-xs font-bold text-[#262626] font-serif">Use Saved Profile & Resume</span>
+                      <span className="text-[10px] text-[#6E6359] leading-relaxed">
+                        Resume: <span className="font-semibold text-[#C85A32]">{savedProfile.resume_name}</span><br />
+                        GitHub: <span className="font-mono bg-[#FAF6F0] px-1.5 py-0.5 rounded border border-[#DFD5C6]/60 text-[#262626]">{savedProfile.github_url}</span>
                       </span>
                     </label>
                   </div>
