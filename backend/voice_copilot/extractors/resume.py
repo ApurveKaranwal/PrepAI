@@ -4,7 +4,7 @@ import json
 import pypdf
 from typing import Dict, Any, List
 from groq import Groq
-from config import GROQ_LIGHT_MODEL
+from config import GROQ_HEAVY_MODEL
 
 # Initialize Groq client
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -116,47 +116,49 @@ def parse_resume_content(resume_text: str) -> Dict[str, Any]:
         return default_structure
 
     try:
-        prompt = f"""
-        You are an advanced ATS resume parser. Your job is to extract resume details from raw text and structure it into a clean JSON object matching the following structure:
+        prompt = f"""Extract resume details from the text below into a JSON object with these keys:
+{{
+    "skills": ["skill1", "skill2"],
+    "experience": [
         {{
-            "skills": ["skill1", "skill2"],
-            "experience": [
-                {{
-                    "company": "Company Name",
-                    "title": "Job Title",
-                    "duration": "Duration (e.g., Jun 2022 - Present)",
-                    "description": "Short summary of responsibilities and impact"
-                }}
-            ],
-            "education": [
-                {{
-                    "institution": "University/Institution Name",
-                    "degree": "Degree (e.g., Bachelor of Science)",
-                    "field_of_study": "Field (e.g., Computer Science)",
-                    "graduation_year": "Year (e.g., 2024)"
-                }}
-            ],
-            "projects": [
-                {{
-                    "name": "Project Name",
-                    "description": "Short summary of the project",
-                    "technologies": ["tech1", "tech2"]
-                }}
-            ],
-            "technologies": ["tech1", "tech2", "language1"],
-            "certifications": ["cert1", "cert2"]
+            "company": "Company Name",
+            "title": "Job Title",
+            "duration": "Duration",
+            "description": "Short summary"
         }}
+    ],
+    "education": [
+        {{
+            "institution": "University Name",
+            "degree": "Degree",
+            "field_of_study": "Field",
+            "graduation_year": "Year"
+        }}
+    ],
+    "projects": [
+        {{
+            "name": "Project Name",
+            "description": "Short summary",
+            "technologies": ["tech1", "tech2"]
+        }}
+    ],
+    "technologies": ["tech1", "tech2"],
+    "certifications": ["cert1", "cert2"]
+}}
 
-        Resume text:
-        {resume_text[:12000]}
+Resume text:
+{resume_text[:8000]}
 
-        Output ONLY valid JSON. Do not include markdown code block syntax (like ```json ... ```) or any extra conversational text.
-        """
+Output ONLY valid JSON."""
         
         completion = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=GROQ_LIGHT_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a JSON-only response bot. Parse the resume and return structured JSON. Do not include any text outside the JSON object."},
+                {"role": "user", "content": prompt}
+            ],
+            model=GROQ_HEAVY_MODEL,
             temperature=0.1,
+            max_tokens=2048,
             response_format={"type": "json_object"}
         )
         

@@ -43,13 +43,30 @@ def get_db_conn():
         # 1. Try connection pool
         pool = _get_connection_pool()
         if pool:
-            try:
-                conn = pool.getconn()
-                # Enable auto-commit for ease of use
-                conn.autocommit = True
-                return PoolConnectionWrapper(conn, pool), True
-            except Exception as e:
-                print(f"voice_copilot/db: Failed to get connection from pool ({e}). Falling back to direct connect.")
+            import psycopg2
+            for attempt in range(3):
+                try:
+                    conn = pool.getconn()
+                    # Test connection health
+                    try:
+                        with conn.cursor() as test_cursor:
+                            test_cursor.execute("SELECT 1")
+                        conn.rollback()
+                        conn.autocommit = True
+                        return PoolConnectionWrapper(conn, pool), True
+                    except (psycopg2.OperationalError, psycopg2.InterfaceError) as test_err:
+                        print(f"voice_copilot/db: Detected dead connection from pool (attempt {attempt+1}): {test_err}. Discarding and retrying...")
+                        try:
+                            pool.putconn(conn, close=True)
+                        except Exception as put_err:
+                            print(f"voice_copilot/db: Error closing dead connection: {put_err}")
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                except Exception as e:
+                    print(f"voice_copilot/db: Failed to get connection from pool ({e}).")
+                    break
 
         # 2. Fallback to direct connect if pool is exhausted or failed
         import time
@@ -73,6 +90,7 @@ def get_db_conn():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn, False
+
 
 def execute_query(query: str, params: tuple = (), fetch_all: bool = False, fetch_one: bool = False, is_insert: bool = False):
     conn, is_pg = get_db_conn()
@@ -122,24 +140,44 @@ def create_voice_session(
         INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """
-    conn, is_pg = get_db_conn()
-    try:
-        cursor = conn.cursor()
-        if is_pg:
-            # PostgreSQL syntax
-            pg_query = """
-                INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language)
-                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
-            """
-            cursor.execute(pg_query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
-            session_id = cursor.fetchone()[0]
-        else:
-            cursor.execute(query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
-            conn.commit()
-            session_id = cursor.lastrowid
-        return session_id
-    finally:
-        conn.close()
+    import time
+    max_retries = 3
+    delay = 0.5
+    last_err = None
+    for attempt in range(max_retries):
+        conn, is_pg = get_db_conn()
+        try:
+            cursor = conn.cursor()
+            if is_pg:
+                # PostgreSQL syntax
+                pg_query = """
+                    INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
+                """
+                cursor.execute(pg_query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
+                session_id = cursor.fetchone()[0]
+            else:
+                cursor.execute(query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
+                conn.commit()
+                session_id = cursor.lastrowid
+            return session_id
+        except Exception as e:
+            last_err = e
+            print(f"create_voice_session attempt {attempt+1} failed: {e}")
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise last_err
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 def update_voice_profile(session_id: int, profile_summary: Dict[str, Any]):
     conn, is_pg = get_db_conn()

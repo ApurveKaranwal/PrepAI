@@ -56,6 +56,13 @@ class PgCursorWrapper:
         self._cursor = pg_cursor
         self._lastrowid = None
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._cursor.close()
+
+
     def execute(self, query, params=None):
         converted_query = self._convert_query(query)
         is_insert = converted_query.strip().upper().startswith("INSERT")
@@ -201,11 +208,31 @@ def get_db_connection():
         
     pool = _get_connection_pool()
     if pool:
-        try:
-            conn = pool.getconn()
-            return PgConnectionWrapper(conn, pool=pool)
-        except Exception as e:
-            print(f"PgConnectionPool: Failed to get connection from pool ({e}). Falling back to direct connection.")
+        import psycopg2
+        # Try to get a healthy connection from the pool (up to 3 attempts)
+        for attempt in range(3):
+            try:
+                conn = pool.getconn()
+                # Test connection health
+                try:
+                    with conn.cursor() as test_cursor:
+                        test_cursor.execute("SELECT 1")
+                    conn.rollback()
+                    return PgConnectionWrapper(conn, pool=pool)
+                except (psycopg2.OperationalError, psycopg2.InterfaceError) as test_err:
+                    print(f"PgConnectionPool: Retrieved dead connection from pool (attempt {attempt+1}): {test_err}. Discarding and retrying...")
+                    try:
+                        pool.putconn(conn, close=True)
+                    except Exception as put_err:
+                        print(f"PgConnectionPool: Error closing dead connection: {put_err}")
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"PgConnectionPool: Failed to get connection from pool ({e}).")
+                break
+        print("PgConnectionPool: Failed to get a healthy connection from pool after retries. Falling back to direct connection.")
             
     import psycopg2
     import time
@@ -222,6 +249,7 @@ def get_db_connection():
                 delay *= 2
             else:
                 raise e
+
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)

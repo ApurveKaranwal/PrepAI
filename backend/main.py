@@ -513,8 +513,12 @@ def speech_to_text(file: UploadFile = File(...), language_code: str = Form("en-I
 
 @app.get("/api/history")
 def get_history():
-    history_data = database.get_history_data()
-    return history_data
+    try:
+        history_data = database.get_history_data()
+        return history_data
+    except Exception as e:
+        print(f"Error fetching history: {e}")
+        return {"sessions": [], "error": "Failed to load history. Please try again."}
 
 # User authentication endpoints
 @app.post("/api/auth/signup")

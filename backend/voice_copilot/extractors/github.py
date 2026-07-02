@@ -4,7 +4,7 @@ import json
 import requests
 from typing import Dict, Any, List, Optional
 from groq import Groq
-from config import GROQ_LIGHT_MODEL
+from config import GROQ_HEAVY_MODEL
 
 # Initialize Groq client
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -200,40 +200,58 @@ def run_llm_analysis(raw_data: Dict[str, Any]) -> Dict[str, Any]:
         return default_structure
         
     try:
-        prompt = f"""
-        You are an elite developer and technical architect.
-        Review this raw scraped GitHub profile and repository data for username "{raw_data['username']}".
-        Deduce the primary technologies, frameworks, and architecture patterns of the repositories from their README snippets and config files.
-        
-        Raw Data:
-        {json.dumps(raw_data, indent=2)}
-        
-        Produce a structured analysis in EXACTLY the following JSON format:
+        # Truncate large fields to prevent hitting token limits
+        trimmed_data = {
+            "username": raw_data["username"],
+            "name": raw_data["name"],
+            "bio": raw_data["bio"],
+            "top_languages": raw_data["top_languages"],
+            "total_stars": raw_data["total_stars"],
+            "repos": []
+        }
+        for r in raw_data.get("repos", []):
+            trimmed_data["repos"].append({
+                "name": r["name"],
+                "description": r.get("description", ""),
+                "languages": r.get("languages", []),
+                "config_files": r.get("config_files", []),
+                "readme_snippet": r.get("readme_snippet", "")[:500]
+            })
+
+        prompt = f"""You are a technical architect. Analyze this GitHub profile data and produce a JSON summary.
+
+Raw Data:
+{json.dumps(trimmed_data, indent=2)}
+
+Return a JSON object with these exact keys:
+{{
+    "username": "the github username",
+    "name": "display name",
+    "bio": "bio text",
+    "languages_summary": ["top languages"],
+    "total_stars": 0,
+    "projects": [
         {{
-            "username": "{raw_data['username']}",
-            "name": "{raw_data['name']}",
-            "bio": "{raw_data['bio']}",
-            "languages_summary": {json.dumps(raw_data['top_languages'])},
-            "total_stars": {raw_data['total_stars']},
-            "projects": [
-                {{
-                    "name": "Project name",
-                    "description": "Short description",
-                    "technologies": ["detected technology like FastAPI, Redis, Docker, React, etc."],
-                    "architecture": "Inferred architecture style (e.g. Microservices, Clean Architecture, Serverless, Monolith)",
-                    "insights": "One sentence describing the implementation highlights or technical choices visible in the repository."
-                }}
-            ],
-            "overall_architecture": "Summary of the candidate's preferred systems design and architectural paradigms based on their repositories"
+            "name": "repo name",
+            "description": "short description",
+            "technologies": ["detected techs"],
+            "architecture": "architecture style",
+            "insights": "one sentence of highlights"
         }}
-        
-        Output ONLY valid JSON. Do not include markdown code block syntax (like ```json ... ```) or any extra conversational text.
-        """
+    ],
+    "overall_architecture": "summary of preferred design paradigms"
+}}
+
+Output ONLY valid JSON."""
         
         completion = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=GROQ_LIGHT_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a JSON-only response bot. You must respond with valid JSON and nothing else."},
+                {"role": "user", "content": prompt}
+            ],
+            model=GROQ_HEAVY_MODEL,
             temperature=0.1,
+            max_tokens=2048,
             response_format={"type": "json_object"}
         )
         
