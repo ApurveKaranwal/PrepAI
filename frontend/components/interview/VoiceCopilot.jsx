@@ -249,6 +249,20 @@ export default function VoiceCopilot({ user }) {
 
   // Start Interview triggered manually
   const triggerStartInterview = async () => {
+    // Automatically clean up pre-flight monitor feedback loop if active
+    if (hearOwnVoice) {
+      setHearOwnVoice(false);
+      if (feedbackGainRef.current) {
+        try { feedbackGainRef.current.disconnect(); } catch (e) {}
+      }
+      if (streamRef.current) {
+        try { streamRef.current.getTracks().forEach(t => t.stop()); } catch (e) {}
+      }
+      if (audioContextRef.current) {
+        try { audioContextRef.current.close(); } catch (e) {}
+      }
+    }
+
     setStage("active");
     setVoiceStatus("thinking");
     
