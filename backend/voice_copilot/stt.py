@@ -3,6 +3,9 @@ import io
 from typing import Optional
 from groq import Groq
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Initialize Groq client
 groq_api_key = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
@@ -71,6 +74,8 @@ class SpeechToTextService:
                     transcript = resp_json.get("transcript", "").strip()
                     if transcript:
                         return transcript
+                else:
+                    print(f"Sarvam API returned status {response.status_code}: {response.text}")
             except Exception as e:
                 print(f"Sarvam AI STT transcription failed: {e}. Falling back to Groq Whisper.")
 
