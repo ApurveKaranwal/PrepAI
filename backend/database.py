@@ -147,8 +147,9 @@ class PgCursorWrapper:
         return getattr(self._cursor, name)
 
 class PgConnectionWrapper:
-    def __init__(self, pg_conn):
+    def __init__(self, pg_conn, pool=None):
         self._conn = pg_conn
+        self._pool = pool
 
     def cursor(self):
         return PgCursorWrapper(self._conn.cursor())
@@ -160,15 +161,52 @@ class PgConnectionWrapper:
         self._conn.rollback()
 
     def close(self):
-        self._conn.close()
+        if self._pool:
+            try:
+                self._pool.putconn(self._conn)
+            except Exception as e:
+                print(f"Error returning connection to pool: {e}")
+                self._conn.close()
+        else:
+            self._conn.close()
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
+
+_connection_pool = None
+
+def _get_connection_pool():
+    global _connection_pool
+    if _connection_pool is not None:
+        return _connection_pool
+    
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        return None
+        
+    from psycopg2.pool import ThreadedConnectionPool
+    try:
+        # Initialize connection pool with min 1 and max 15 connections
+        _connection_pool = ThreadedConnectionPool(1, 15, database_url)
+        print("PgConnectionPool: Threaded pool successfully initialized.")
+        return _connection_pool
+    except Exception as e:
+        print(f"PgConnectionPool: Failed to initialize connection pool: {e}")
+        return None
 
 def get_db_connection():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         raise ValueError("DATABASE_URL environment variable is missing. Neon PostgreSQL is required.")
+        
+    pool = _get_connection_pool()
+    if pool:
+        try:
+            conn = pool.getconn()
+            return PgConnectionWrapper(conn, pool=pool)
+        except Exception as e:
+            print(f"PgConnectionPool: Failed to get connection from pool ({e}). Falling back to direct connection.")
+            
     import psycopg2
     import time
     max_retries = 4

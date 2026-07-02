@@ -8,18 +8,57 @@ from typing import List, Dict, Any, Optional
 DB_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "interviews.db")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+class PoolConnectionWrapper:
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+    def close(self):
+        try:
+            self._pool.putconn(self._conn)
+        except Exception as e:
+            print(f"Error returning connection to pool in voice_copilot/db: {e}")
+            self._conn.close()
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+_connection_pool = None
+
+def _get_connection_pool():
+    global _connection_pool
+    if _connection_pool is not None:
+        return _connection_pool
+    if not DATABASE_URL:
+        return None
+    from psycopg2.pool import ThreadedConnectionPool
+    try:
+        _connection_pool = ThreadedConnectionPool(1, 15, DATABASE_URL)
+        print("voice_copilot/db: Threaded connection pool successfully initialized.")
+        return _connection_pool
+    except Exception as e:
+        print(f"voice_copilot/db: Failed to initialize connection pool: {e}")
+        return None
+
 def get_db_conn():
     if DATABASE_URL:
-        # If PostgreSQL is configured
+        # 1. Try connection pool
+        pool = _get_connection_pool()
+        if pool:
+            try:
+                conn = pool.getconn()
+                # Enable auto-commit for ease of use
+                conn.autocommit = True
+                return PoolConnectionWrapper(conn, pool), True
+            except Exception as e:
+                print(f"voice_copilot/db: Failed to get connection from pool ({e}). Falling back to direct connect.")
+
+        # 2. Fallback to direct connect if pool is exhausted or failed
         import time
         max_retries = 4
         delay = 0.5
         for attempt in range(max_retries):
             try:
                 import psycopg2
-                from psycopg2.extras import RealDictCursor
                 conn = psycopg2.connect(DATABASE_URL)
-                # Enable auto-commit for ease of use or manage transaction
                 conn.autocommit = True
                 return conn, True
             except Exception as e:
