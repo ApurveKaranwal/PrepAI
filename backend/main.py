@@ -546,14 +546,10 @@ async def process_gaze(frame: UploadFile = File(...)):
         if len(faces) == 0:
             return {"looking_at_screen": False, "reason": "No face detected"}
 
-        # Check for eyes in the first (largest) face
-        for (x, y, w, h) in faces:
-            roi_gray = gray[y:y+h, x:x+w]
-            eyes = eye_cascade.detectMultiScale(roi_gray, 1.1, 4)
-            if len(eyes) > 0:
-                return {"looking_at_screen": True}
-        
-        return {"looking_at_screen": False, "reason": "Face detected but no eyes detected"}
+        # If a face is detected, we mark them as looking at the screen.
+        # Haar cascade eye tracking is highly fragile and fails for users wearing glasses
+        # or in poor lighting conditions due to lens glare/reflections.
+        return {"looking_at_screen": True}
         
     except Exception as e:
         print(f"Error processing vision frame: {e}")
