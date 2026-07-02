@@ -21,6 +21,8 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+
 const hasFirebaseConfig =
   firebaseConfig.apiKey &&
   firebaseConfig.authDomain &&
@@ -46,7 +48,7 @@ function ensureFirebase() {
 
 // Wrapper for Email/Password Sign Up using local DB
 export async function authSignUp(email, password, name) {
-  const res = await fetch("http://localhost:8001/api/auth/signup", {
+  const res = await fetch(`${BACKEND_URL}/api/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, name })
@@ -61,7 +63,7 @@ export async function authSignUp(email, password, name) {
 
 // Wrapper for Email/Password Sign In using local DB
 export async function authSignIn(email, password) {
-  const res = await fetch("http://localhost:8001/api/auth/signin", {
+  const res = await fetch(`${BACKEND_URL}/api/auth/signin`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password })
@@ -80,7 +82,7 @@ export async function authSignInWithGoogle() {
   const userCredential = await signInWithPopup(auth, googleProvider);
   const fbUser = userCredential.user;
   
-  const res = await fetch("http://localhost:8001/api/auth/google", {
+  const res = await fetch(`${BACKEND_URL}/api/auth/google`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -110,7 +112,7 @@ export async function checkRedirectResult() {
     const userCredential = await getRedirectResult(auth);
     if (userCredential && userCredential.user) {
       const fbUser = userCredential.user;
-      const res = await fetch("http://localhost:8001/api/auth/google", {
+      const res = await fetch(`${BACKEND_URL}/api/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -144,7 +146,7 @@ export function authOnAuthStateChanged(callback) {
   return onAuthStateChanged(auth, async (user) => {
     if (user) {
       try {
-        const res = await fetch("http://localhost:8001/api/auth/google", {
+        const res = await fetch(`${BACKEND_URL}/api/auth/google`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
