@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import pypdf
 from dotenv import load_dotenv
+import time
 from groq import Groq
 
 # Import our database layer and custom ML model
@@ -197,21 +198,28 @@ def generate_initial_question(resume_text: str, repo_files: List[dict], role: st
         {"role": "user", "content": user_prompt}
     ]
     
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=messages,
-            model=GROQ_HEAVY_MODEL,
-            response_format={"type": "json_object"},
-            temperature=0.7,
-        )
-        result = json.loads(chat_completion.choices[0].message.content)
-        return {
-            "result": result,
-            "raw_prompt": user_prompt
-        }
-    except Exception as e:
-        print(f"Failed to generate initial question: {e}")
-        return {}
+    max_retries = 3
+    delay = 1.5
+    for attempt in range(max_retries):
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=messages,
+                model=GROQ_HEAVY_MODEL,
+                response_format={"type": "json_object"},
+                temperature=0.7,
+            )
+            result = json.loads(chat_completion.choices[0].message.content)
+            return {
+                "result": result,
+                "raw_prompt": user_prompt
+            }
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed to generate initial question: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                return {}
 
 def generate_next_turn(session_id: int) -> dict:
     if not client:
@@ -223,18 +231,25 @@ def generate_next_turn(session_id: int) -> dict:
     for msg in history:
         messages.append({"role": msg["role"], "content": msg["content"]})
         
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=messages,
-            model=GROQ_HEAVY_MODEL,
-            response_format={"type": "json_object"},
-            temperature=0.7,
-        )
-        result = json.loads(chat_completion.choices[0].message.content)
-        return result
-    except Exception as e:
-        print(f"Failed to generate next turn: {e}")
-        return {}
+    max_retries = 3
+    delay = 1.5
+    for attempt in range(max_retries):
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=messages,
+                model=GROQ_HEAVY_MODEL,
+                response_format={"type": "json_object"},
+                temperature=0.7,
+            )
+            result = json.loads(chat_completion.choices[0].message.content)
+            return result
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed to generate next turn: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                return {}
 
 @app.get("/")
 def read_root():
