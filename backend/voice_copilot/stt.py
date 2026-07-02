@@ -37,7 +37,10 @@ class SpeechToTextService:
         Transcribe audio bytes using local model, Sarvam AI STT, or Groq API.
         """
         if not audio_bytes:
+            print("STT: Empty audio bytes received.")
             return ""
+        
+        print(f"STT: Received {len(audio_bytes)} bytes of {file_format} audio. Language: {language}")
             
         if self.use_local and self.local_model:
             try:
@@ -51,33 +54,49 @@ class SpeechToTextService:
                 
         # 1. API-based STT via Sarvam AI (preferred for Indian accents & code-mixing)
         if sarvam_api_key:
-            try:
-                import requests
-                url = "https://api.sarvam.ai/speech-to-text"
-                headers = {
-                    "api-subscription-key": sarvam_api_key
-                }
-                file_name = f"recording.{file_format}"
-                files = {
-                    "file": (file_name, audio_bytes, f"audio/{file_format}")
-                }
-                data = {
-                    "model": "saaras:v3"
-                }
-                # Sarvam accepts full BCP-47 language code (e.g. hi-IN)
-                if language:
-                    data["language_code"] = language
-                
-                response = requests.post(url, headers=headers, files=files, data=data, timeout=10)
-                if response.status_code == 200:
-                    resp_json = response.json()
-                    transcript = resp_json.get("transcript", "").strip()
-                    if transcript:
-                        return transcript
-                else:
-                    print(f"Sarvam API returned status {response.status_code}: {response.text}")
-            except Exception as e:
-                print(f"Sarvam AI STT transcription failed: {e}. Falling back to Groq Whisper.")
+            import time as _time
+            sarvam_retries = 2
+            for sarvam_attempt in range(sarvam_retries):
+                try:
+                    import requests
+                    url = "https://api.sarvam.ai/speech-to-text"
+                    headers = {
+                        "api-subscription-key": sarvam_api_key
+                    }
+                    file_name = f"recording.{file_format}"
+                    files = {
+                        "file": (file_name, io.BytesIO(audio_bytes), f"audio/{file_format}")
+                    }
+                    data = {
+                        "model": "saaras:v3"
+                    }
+                    # Sarvam accepts full BCP-47 language code (e.g. hi-IN)
+                    if language:
+                        data["language_code"] = language
+                    
+                    response = requests.post(url, headers=headers, files=files, data=data, timeout=15)
+                    if response.status_code == 200:
+                        resp_json = response.json()
+                        transcript = resp_json.get("transcript", "").strip()
+                        print(f"STT Sarvam transcript (attempt {sarvam_attempt+1}): '{transcript[:100]}...' ({len(transcript)} chars)")
+                        if transcript:
+                            return transcript
+                        else:
+                            print("STT Sarvam returned empty transcript. Falling back to Groq.")
+                            break  # Don't retry Sarvam on empty result, go to Groq
+                    elif response.status_code == 429:
+                        print(f"Sarvam API rate limited (429). Retrying in 1s...")
+                        _time.sleep(1)
+                        continue
+                    else:
+                        print(f"Sarvam API returned status {response.status_code}: {response.text[:200]}")
+                        break  # Don't retry on non-retryable errors
+                except Exception as e:
+                    print(f"Sarvam AI STT attempt {sarvam_attempt+1} failed: {e}")
+                    if sarvam_attempt < sarvam_retries - 1:
+                        _time.sleep(0.5)
+            
+            print("Sarvam STT exhausted. Falling back to Groq Whisper.")
 
         # 2. Fallback API-based STT via Groq Whisper
         if not client:
@@ -98,14 +117,16 @@ class SpeechToTextService:
                 
                 kwargs = {
                     "file": audio_file,
-                    "model": "whisper-large-v3",
+                    "model": "whisper-large-v3-turbo",
                     "response_format": "json"
                 }
                 if iso_lang:
                     kwargs["language"] = iso_lang
                     
                 transcription = client.audio.transcriptions.create(**kwargs)
-                return transcription.text.strip()
+                result = transcription.text.strip()
+                print(f"STT Groq transcript (attempt {attempt+1}): '{result[:100]}...' ({len(result)} chars)")
+                return result
             except Exception as e:
                 print(f"Groq Whisper transcription attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
@@ -113,3 +134,4 @@ class SpeechToTextService:
                     delay *= 2
                 else:
                     return "[Transcription failed]"
+
