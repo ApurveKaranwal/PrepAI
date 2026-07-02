@@ -295,6 +295,19 @@ async def ingest_details(
                     extracted_pages.append(page_text)
             resume_text = "\n".join(extracted_pages)
             print(f"Parsed PDF. Length: {len(resume_text)}")
+            
+            # Auto-save resume to candidate profile in DB if user_id is provided
+            if user_id:
+                try:
+                    profile = database.get_candidate_profile(user_id) or {}
+                    profile["resume_name"] = resume_name
+                    profile["resume_text"] = resume_text
+                    if github_url:
+                        profile["github_url"] = github_url
+                    database.save_candidate_profile(user_id, profile)
+                    print(f"Auto-saved uploaded resume to profile for user: {user_id}")
+                except Exception as db_err:
+                    print(f"Failed to auto-save profile: {db_err}")
         except Exception as e:
             print(f"Failed to parse PDF Resume: {e}")
             

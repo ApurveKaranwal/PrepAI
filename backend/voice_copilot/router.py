@@ -73,6 +73,22 @@ async def onboard_candidate(
             print(f"Extracted Resume text. Length: {len(resume_text)}")
             if resume_text:
                 resume_profile = parse_resume_content(resume_text)
+                
+            # Auto-save resume to candidate profile in DB if user_id is provided
+            if user_id:
+                try:
+                    import database
+                    profile = database.get_candidate_profile(user_id) or {}
+                    profile["resume_name"] = resume_name
+                    profile["resume_text"] = resume_text
+                    if github_url:
+                        profile["github_url"] = github_url
+                    if linkedin_url:
+                        profile["linkedin_url"] = linkedin_url
+                    database.save_candidate_profile(user_id, profile)
+                    print(f"Auto-saved Voice Copilot uploaded resume to profile for user: {user_id}")
+                except Exception as db_err:
+                    print(f"Failed to auto-save voice copilot profile: {db_err}")
         except Exception as e:
             print(f"Failed to parse resume PDF: {e}")
             

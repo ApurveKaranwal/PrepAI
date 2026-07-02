@@ -197,7 +197,7 @@ export default function InterviewPrep({ onEndInterview, user }) {
         formData.append("resume", resumeFile);
       }
       formData.append("github_url", targetGithubUrl);
-      if (useSavedProfile && user?.uid) {
+      if (user?.uid) {
         formData.append("user_id", user.uid);
       }
 

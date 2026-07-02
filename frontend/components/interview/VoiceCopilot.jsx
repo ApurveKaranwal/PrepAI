@@ -191,25 +191,28 @@ export default function VoiceCopilot({ user }) {
     if (!useSavedProfile && resumeFile) formData.append("resume", resumeFile);
     formData.append("github_url", targetGithubUrl);
     
+    if (user?.uid) {
+      formData.append("user_id", user.uid);
+    }
+
     if (useSavedProfile) {
       formData.append("linkedin_url", targetLinkedinUrl || "");
-      if (user?.uid) {
-        formData.append("user_id", user.uid);
-      }
     } else {
-      formData.append("linkedin_url", linkedinUrl);
-    } else if (linkedinIngestMode === "pdf") {
-      if (linkedinFile) {
-        formData.append("linkedin_pdf", linkedinFile);
+      if (linkedinIngestMode === "url") {
+        formData.append("linkedin_url", linkedinUrl);
+      } else if (linkedinIngestMode === "pdf") {
+        if (linkedinFile) {
+          formData.append("linkedin_pdf", linkedinFile);
+        }
+        formData.append("linkedin_url", "");
+      } else if (linkedinIngestMode === "text") {
+        if (linkedinText) {
+          formData.append("linkedin_text", linkedinText);
+        }
+        formData.append("linkedin_url", "");
+      } else {
+        formData.append("linkedin_url", "");
       }
-      formData.append("linkedin_url", "");
-    } else if (linkedinIngestMode === "text") {
-      if (linkedinText) {
-        formData.append("linkedin_text", linkedinText);
-      }
-      formData.append("linkedin_url", "");
-    } else {
-      formData.append("linkedin_url", "");
     }
     
     formData.append("interview_mode", interviewMode);
