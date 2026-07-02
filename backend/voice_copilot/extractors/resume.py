@@ -26,6 +26,70 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         print(f"Error extracting text from PDF: {e}")
         return ""
 
+def get_rule_based_skills(resume_text: str) -> list:
+    import re
+    skills_keywords = [
+        "python", "javascript", "typescript", "react", "next.js", "nextjs", "vue", "angular", "node.js", "nodejs",
+        "express", "fastapi", "django", "flask", "docker", "kubernetes", "aws", "gcp", "azure",
+        "sql", "postgresql", "mysql", "mongodb", "redis", "html", "css", "git", "github", "java",
+        "c++", "c#", "rust", "go", "golang", "php", "laravel", "machine learning", "deep learning",
+        "nlp", "tensorflow", "pytorch", "ci/cd", "graphql", "tailwind", "rest api", "api", "flutter",
+        "dart", "swift", "kotlin", "spring boot", "terraform", "jenkins"
+    ]
+    found_skills = []
+    resume_lower = resume_text.lower()
+    for kw in skills_keywords:
+        pattern = r'\b' + re.escape(kw) + r'\b'
+        if re.search(pattern, resume_lower):
+            name = kw
+            if kw in ["nextjs", "next.js"]:
+                name = "Next.js"
+            elif kw in ["nodejs", "node.js"]:
+                name = "Node.js"
+            elif kw in ["machine learning"]:
+                name = "Machine Learning"
+            elif kw in ["deep learning"]:
+                name = "Deep Learning"
+            elif kw in ["rest api"]:
+                name = "REST API"
+            elif kw in ["ci/cd"]:
+                name = "CI/CD"
+            elif kw in ["spring boot"]:
+                name = "Spring Boot"
+            elif kw in ["sql", "html", "css", "aws", "gcp", "api", "nlp", "mern"]:
+                name = kw.upper()
+            else:
+                name = kw.title()
+            found_skills.append(name)
+            
+    # Try parsing text lines
+    for line in resume_text.split("\n"):
+        line_l = line.lower()
+        if "skills:" in line_l or "key skills:" in line_l:
+            try:
+                parts = [s.strip() for s in line.split(":", 1)[1].split(",")]
+                for p in parts:
+                    if p and len(p) < 25 and p.title() not in found_skills:
+                        found_skills.append(p.title())
+            except Exception:
+                pass
+        if "languages:" in line_l or "technologies:" in line_l:
+            try:
+                parts = [t.strip() for t in line.split(":", 1)[1].split(",")]
+                for p in parts:
+                    if p and len(p) < 25 and p.title() not in found_skills:
+                        found_skills.append(p.title())
+            except Exception:
+                pass
+                    
+    seen = set()
+    unique_skills = []
+    for s in found_skills:
+        if s.lower() not in seen:
+            seen.add(s.lower())
+            unique_skills.append(s)
+    return unique_skills[:12]
+
 def parse_resume_content(resume_text: str) -> Dict[str, Any]:
     """
     Parse raw resume text into a structured JSON profile using Groq LLM.
@@ -42,26 +106,14 @@ def parse_resume_content(resume_text: str) -> Dict[str, Any]:
     if not resume_text.strip():
         return default_structure
         
+    # Pre-extract rule-based skills in case LLM fails or returns empty skills
+    fallback_skills = get_rule_based_skills(resume_text)
+    default_structure["skills"] = fallback_skills if fallback_skills else ["Software Engineering"]
+    default_structure["technologies"] = fallback_skills if fallback_skills else ["Python", "JavaScript"]
+
     if not client:
-        # Minimal rule-based fallback if Groq API is not set
-        print("Groq API key not set, using rule-based resume parsing.")
-        # Basic parsing heuristics
-        skills = []
-        techs = []
-        for line in resume_text.split("\n"):
-            line_l = line.lower()
-            if "skills:" in line_l or "key skills:" in line_l:
-                skills.extend([s.strip() for s in line.split(":", 1)[1].split(",")])
-            if "languages:" in line_l or "technologies:" in line_l:
-                techs.extend([t.strip() for t in line.split(":", 1)[1].split(",")])
-        return {
-            "skills": list(set(skills)) if skills else ["Software Engineering"],
-            "experience": [{"company": "N/A", "title": "Software Engineer", "duration": "N/A", "description": "Extracted from raw text"}],
-            "education": [],
-            "projects": [],
-            "technologies": list(set(techs)) if techs else ["Python", "JavaScript"],
-            "certifications": []
-        }
+        print("Groq API client not set, using rule-based resume parsing fallback.")
+        return default_structure
 
     try:
         prompt = f"""
@@ -109,7 +161,9 @@ def parse_resume_content(resume_text: str) -> Dict[str, Any]:
         )
         
         parsed_json = json.loads(completion.choices[0].message.content)
+        if not parsed_json.get("skills") or len(parsed_json.get("skills")) == 0:
+            parsed_json["skills"] = fallback_skills if fallback_skills else ["Software Engineering"]
         return parsed_json
     except Exception as e:
-        print(f"Error parsing resume via Groq: {e}")
+        print(f"Error parsing resume via Groq: {e}. Falling back to rule-based parsed skills.")
         return default_structure
