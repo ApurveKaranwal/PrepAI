@@ -40,6 +40,9 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
     Main GitHub scraper and analyzer. Fetches profile info, repos,
     READMEs, languages, file lists, and structures the analysis.
     """
+    import time
+    start_time = time.time()
+
     username = extract_username_from_url(github_url)
     if not username:
         return {"error": "Invalid GitHub URL or username"}
@@ -51,7 +54,7 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
     # 1. Fetch User Profile
     user_url = f"https://api.github.com/users/{username}"
     try:
-        user_res = requests.get(user_url, headers=headers, timeout=10)
+        user_res = requests.get(user_url, headers=headers, timeout=3)
         if user_res.status_code == 404:
             return {"error": f"GitHub user '{username}' not found"}
         user_data = user_res.json()
@@ -62,7 +65,7 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
     repos_url = f"https://api.github.com/users/{username}/repos?sort=updated&per_page=8"
     repos = []
     try:
-        repos_res = requests.get(repos_url, headers=headers, timeout=10)
+        repos_res = requests.get(repos_url, headers=headers, timeout=3)
         if repos_res.status_code == 200:
             repos = repos_res.json()
     except Exception as e:
@@ -74,8 +77,13 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
     total_stars = 0
     total_forks = 0
     
-    # Process top 4 repositories in depth
-    for repo in repos[:4]:
+    # Process top 3 repositories in depth (capped at 3 to save API quota and prevent timeouts)
+    for repo in repos[:3]:
+        # Fast exit if cumulative scraping takes more than 6 seconds (prevent gateway timeout)
+        if time.time() - start_time > 6.0:
+            print("GitHub detail scraping time limit reached. Returning partial repository data.")
+            break
+
         repo_name = repo["name"]
         description = repo.get("description") or ""
         stars = repo.get("stargazers_count", 0)
@@ -87,7 +95,7 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
         languages = {}
         lang_url = f"https://api.github.com/repos/{username}/{repo_name}/languages"
         try:
-            lang_res = requests.get(lang_url, headers=headers, timeout=5)
+            lang_res = requests.get(lang_url, headers=headers, timeout=2)
             if lang_res.status_code == 200:
                 languages = lang_res.json()
                 for lang, bytes_count in languages.items():
@@ -99,7 +107,7 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
         readme_content = ""
         readme_url = f"https://api.github.com/repos/{username}/{repo_name}/readme"
         try:
-            readme_res = requests.get(readme_url, headers=headers, timeout=5)
+            readme_res = requests.get(readme_url, headers=headers, timeout=2)
             if readme_res.status_code == 200:
                 import base64
                 readme_data = readme_res.json()
@@ -108,7 +116,7 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
             # Fallback direct raw.githubusercontent.com
             try:
                 raw_url = f"https://raw.githubusercontent.com/{username}/{repo_name}/main/README.md"
-                raw_res = requests.get(raw_url, timeout=5)
+                raw_res = requests.get(raw_url, timeout=2)
                 if raw_res.status_code == 200:
                     readme_content = raw_res.text
             except:
@@ -119,7 +127,7 @@ def analyze_github_profile(github_url: str) -> Dict[str, Any]:
         config_files = []
         contents_url = f"https://api.github.com/repos/{username}/{repo_name}/contents"
         try:
-            contents_res = requests.get(contents_url, headers=headers, timeout=5)
+            contents_res = requests.get(contents_url, headers=headers, timeout=2)
             if contents_res.status_code == 200:
                 for file_item in contents_res.json():
                     name = file_item["name"]
