@@ -18,6 +18,7 @@ from groq import Groq
 # Import our database layer and custom ML model
 import database
 from ml.evaluation.evaluation import InterviewMLModel
+from config import GROQ_HEAVY_MODEL, GROQ_LIGHT_MODEL
 
 # Load environment variables
 load_dotenv()
@@ -52,7 +53,7 @@ groq_api_key = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 if client:
-    print("Groq API successfully initialized for live evaluations using llama-3.3-70b-versatile!")
+    print(f"Groq API successfully initialized for live evaluations using {GROQ_HEAVY_MODEL}!")
 else:
     print("Groq API key not set in backend/.env. Running on local ML engine.")
 
@@ -199,7 +200,7 @@ def generate_initial_question(resume_text: str, repo_files: List[dict], role: st
     try:
         chat_completion = client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile",
+            model=GROQ_HEAVY_MODEL,
             response_format={"type": "json_object"},
             temperature=0.7,
         )
@@ -225,7 +226,7 @@ def generate_next_turn(session_id: int) -> dict:
     try:
         chat_completion = client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile",
+            model=GROQ_HEAVY_MODEL,
             response_format={"type": "json_object"},
             temperature=0.7,
         )
@@ -281,7 +282,7 @@ async def ingest_details(
                     {"role": "system", "content": "You are a resume parser. Output ONLY a short job role title (2-4 words) that describes the candidate based on their resume. Examples: 'Senior Backend Engineer', 'Frontend Developer', 'Data Scientist'. Return nothing else."},
                     {"role": "user", "content": resume_text[:2000]}
                 ],
-                model="llama-3.1-8b-instant",
+                model=GROQ_LIGHT_MODEL,
                 temperature=0.1,
             )
             extracted_role = chat_completion.choices[0].message.content.strip()
@@ -496,13 +497,24 @@ def google_auth(req: GoogleSignInRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Load OpenCV cascades for gaze tracking
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+face_cascade = None
+eye_cascade = None
+try:
+    if hasattr(cv2, 'CascadeClassifier') and hasattr(cv2, 'data'):
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+    else:
+        print("[Vision] cv2.CascadeClassifier is not available in this OpenCV build/version.")
+except Exception as cv_err:
+    print(f"[Vision] Failed to load OpenCV cascades: {cv_err}")
 
 @app.post("/api/vision/gaze")
 async def process_gaze(frame: UploadFile = File(...)):
     try:
         contents = await frame.read()
+        if face_cascade is None or eye_cascade is None:
+            return {"looking_at_screen": True, "warning": "Gaze tracking not available: OpenCV cascades not loaded."}
+            
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
@@ -580,7 +592,7 @@ async def analyze_resume(
         
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
+            model=GROQ_HEAVY_MODEL,
             temperature=0.2,
             response_format={"type": "json_object"}
         )
@@ -645,7 +657,7 @@ async def rewrite_resume(
         
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
+            model=GROQ_HEAVY_MODEL,
             temperature=0.3,
             response_format={"type": "json_object"}
         )

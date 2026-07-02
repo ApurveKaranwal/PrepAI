@@ -54,6 +54,8 @@ const SUPPORTED_LANGUAGES = [
   { code: "od-IN", name: "Odia (ଓଡ଼ିଆ)" }
 ];
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+
 export default function VoiceCopilot() {
   // Navigation & session state
   const [stage, setStage] = useState("onboarding"); // onboarding, scraping, ready, active, analysis
@@ -178,7 +180,7 @@ export default function VoiceCopilot() {
     formData.append("language", language);
 
     try {
-      const res = await fetch("http://localhost:8001/api/voice-copilot/onboard", {
+      const res = await fetch(`${BACKEND_URL}/api/voice-copilot/onboard`, {
         method: "POST",
         body: formData,
       });
@@ -215,7 +217,7 @@ export default function VoiceCopilot() {
     setVoiceStatus("thinking");
     
     try {
-      const res = await fetch("http://localhost:8001/api/voice-copilot/start", {
+      const res = await fetch(`${BACKEND_URL}/api/voice-copilot/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId })
@@ -291,7 +293,9 @@ export default function VoiceCopilot() {
 
   // WebSocket Connection
   const connectWebSocket = (sessId) => {
-    const ws = new WebSocket(`ws://localhost:8001/api/voice-copilot/stream/${sessId}`);
+    const wsProto = BACKEND_URL.startsWith("https") ? "wss" : "ws";
+    const wsHost = BACKEND_URL.replace(/^https?:\/\//, "");
+    const ws = new WebSocket(`${wsProto}://${wsHost}/api/voice-copilot/stream/${sessId}`);
     wsRef.current = ws;
     
     ws.onmessage = (event) => {
@@ -571,7 +575,7 @@ export default function VoiceCopilot() {
     }
     
     try {
-      const res = await fetch("http://localhost:8001/api/voice-copilot/end", {
+      const res = await fetch(`${BACKEND_URL}/api/voice-copilot/end`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

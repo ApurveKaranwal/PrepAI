@@ -37,6 +37,8 @@ const CustomRadarTooltip = ({ active, payload }) => {
   return null;
 };
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+
 export default function DashboardHome({ onStartPractice, onNavigate, user }) {
   const [history, setHistory] = useState([]);
   const [voiceHistory, setVoiceHistory] = useState([]);
@@ -66,7 +68,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
   useEffect(() => {
     async function fetchHistory() {
       try {
-        const res = await fetch("http://localhost:8001/api/history");
+        const res = await fetch(`${BACKEND_URL}/api/history`);
         if (res.ok) {
           const data = await res.json();
           if (data) {

@@ -4,6 +4,7 @@ import json
 import requests
 from typing import Dict, Any, List, Optional
 from groq import Groq
+from config import GROQ_LIGHT_MODEL
 
 # Initialize Groq client
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -223,7 +224,7 @@ def run_llm_analysis(raw_data: Dict[str, Any]) -> Dict[str, Any]:
         
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.1-8b-instant",
+            model=GROQ_LIGHT_MODEL,
             temperature=0.1,
             response_format={"type": "json_object"}
         )

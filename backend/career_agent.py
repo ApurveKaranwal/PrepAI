@@ -12,6 +12,7 @@ from ml.tfidf.tfidf import TFIDFModel
 from browser_agent import AutoApplyAgent
 from dotenv import load_dotenv
 import pypdf
+from config import GROQ_HEAVY_MODEL, GROQ_LIGHT_MODEL
 import io
 import requests
 
@@ -388,7 +389,7 @@ async def prepare_application(req: GenerateAnswersRequest):
                     {"role": "system", "content": "You are a precise resume parser. Output ONLY a valid JSON object. Do not include markdown blocks or extra text."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-3.1-8b-instant",
+                model=GROQ_LIGHT_MODEL,
                 temperature=0.1,
             )
             resp_text = chat_completion.choices[0].message.content.strip()
@@ -440,7 +441,7 @@ async def prepare_application(req: GenerateAnswersRequest):
                             {"role": "system", "content": "You are a professional recruitment assistant. Output ONLY the response text."},
                             {"role": "user", "content": prompt}
                         ],
-                        model="llama-3.1-8b-instant",
+                        model=GROQ_LIGHT_MODEL,
                         temperature=0.7,
                     )
                     ai_answers[q_label] = chat_completion.choices[0].message.content.strip()
@@ -634,7 +635,7 @@ def generate_cold_outreach(job_id: int, user_id: str, target_role: str = "Hiring
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": "Please generate the outreach materials."}
             ],
-            model="llama-3.3-70b-versatile",
+            model=GROQ_HEAVY_MODEL,
             response_format={"type": "json_object"}
         )
         response_text = chat_completion.choices[0].message.content

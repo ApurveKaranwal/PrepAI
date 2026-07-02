@@ -56,7 +56,7 @@ The browser automation pipeline handles job application submissions using Playwr
 ![Playwright Auto-Apply Browser Flow](docs/images/auto_apply_playwright_flow.png)
 
 * **Form Analysis Mode**: Playwright loads job boards in a headful Chromium session. It parses standard application layouts to detect fields (Name, Email, Resume Upload, GitHub/LinkedIn URLs).
-* **LLM Cover Question Formulation**: When custom questions are detected (e.g. "Why do you want to join?"), the system forwards the candidate resume text, project metrics, and job details to Groq LLM running `llama-3.1-8b-instant`. The model writes a professional, context-aware 2-3 sentence answer.
+* **LLM Cover Question Formulation**: When custom questions are detected (e.g. "Why do you want to join?"), the system forwards the candidate resume text, project metrics, and job details to Groq LLM running `qwen/qwen3.6-27b` (default). The model writes a professional, context-aware 2-3 sentence answer.
 * **Interactive Verification Hook**: The candidate can review, modify, and confirm all filled credentials and generated answers on the Next.js frontend drawer before launching the submission action.
 
 ### 3. Voice Copilot Stateful Interactions and Seniority Modes
@@ -256,7 +256,7 @@ The database initializer (`init_db`) executes checks using metadata tables (`inf
 * **API Framework**: FastAPI (Uvicorn web server)
 * **Language**: Python 3
 * **Database Driver**: Psycopg2 (Neon serverless PostgreSQL integration)
-* **AI Orchestration**: Groq Client, Llama-3.3-70b-versatile, Llama-3.1-8b-instant
+* **AI Orchestration**: Groq Client, GPT-OSS-120B, Qwen-3.6-27B
 * **Speech Engine**: Sarvam AI API (saaras:v3, bulbul:v3), OpenAI API (tts-1), or local Faster-Whisper/Kokoro TTS libraries
 * **Document Parsing**: PyPDF
 * **Automation**: Playwright (Headless Chromium browser orchestration)

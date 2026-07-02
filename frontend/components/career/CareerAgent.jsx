@@ -26,6 +26,8 @@ import {
   DollarSign
 } from "lucide-react";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+
 export default function CareerAgent({ user }) {
   const [activeSubTab, setActiveSubTab] = useState("dashboard"); // dashboard, tracker, onboarding
   const [profile, setProfile] = useState(null);
@@ -93,7 +95,7 @@ export default function CareerAgent({ user }) {
     setLoading(true);
     try {
       // 1. Fetch Profile
-      const profileRes = await fetch(`http://localhost:8001/api/career/profile?user_id=${user.uid}`);
+      const profileRes = await fetch(`${BACKEND_URL}/api/career/profile?user_id=${user.uid}`);
       if (profileRes.ok) {
         const profileData = await profileRes.json();
         setProfile(profileData);
@@ -126,14 +128,14 @@ export default function CareerAgent({ user }) {
         setPortfolioUrl(profileData.portfolio_url || "");
 
         // 2. Fetch matched jobs
-        const jobsRes = await fetch(`http://localhost:8001/api/career/jobs?user_id=${user.uid}`);
+        const jobsRes = await fetch(`${BACKEND_URL}/api/career/jobs?user_id=${user.uid}`);
         if (jobsRes.ok) {
           const jobsData = await jobsRes.json();
           setJobs(jobsData);
         }
 
         // 3. Fetch applications
-        const appsRes = await fetch(`http://localhost:8001/api/career/applications?user_id=${user.uid}`);
+        const appsRes = await fetch(`${BACKEND_URL}/api/career/applications?user_id=${user.uid}`);
         if (appsRes.ok) {
           const appsData = await appsRes.json();
           setApplications(appsData.applications || []);
@@ -197,7 +199,7 @@ export default function CareerAgent({ user }) {
     }
 
     try {
-      const res = await fetch("http://localhost:8001/api/career/onboard", {
+      const res = await fetch(`${BACKEND_URL}/api/career/onboard`, {
         method: "POST",
         body: formData,
       });
@@ -239,7 +241,7 @@ export default function CareerAgent({ user }) {
     setShowRoadmapDrawer(true);
     setShowApplyDrawer(false);
     try {
-      const res = await fetch(`http://localhost:8001/api/career/readiness/${job.id}?user_id=${user.uid}`);
+      const res = await fetch(`${BACKEND_URL}/api/career/readiness/${job.id}?user_id=${user.uid}`);
       if (res.ok) {
         const data = await res.json();
         setRoadmap(data);
@@ -254,7 +256,7 @@ export default function CareerAgent({ user }) {
     if (!selectedJob) return;
     setOutreachLoading(true);
     try {
-      const res = await fetch(`http://localhost:8001/api/career/outreach?job_id=${selectedJob.id}&user_id=${user.uid}&target_role=${encodeURIComponent(outreachRole)}`);
+      const res = await fetch(`${BACKEND_URL}/api/career/outreach?job_id=${selectedJob.id}&user_id=${user.uid}&target_role=${encodeURIComponent(outreachRole)}`);
       if (res.ok) {
         const data = await res.json();
         setOutreachData(data);
@@ -284,7 +286,7 @@ export default function CareerAgent({ user }) {
     setApplying(false);
     setAppliedSuccess(false);
     try {
-      const res = await fetch(`http://localhost:8001/api/career/apply/prepare`, {
+      const res = await fetch(`${BACKEND_URL}/api/career/apply/prepare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: user.uid, job_id: job.id }),
@@ -310,7 +312,7 @@ export default function CareerAgent({ user }) {
     setApplyLogs("[BrowserAgent] Queueing application task in background worker thread...\n");
 
     try {
-      const res = await fetch("http://localhost:8001/api/career/apply/submit", {
+      const res = await fetch(`${BACKEND_URL}/api/career/apply/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -341,7 +343,7 @@ export default function CareerAgent({ user }) {
         }
         setAppliedSuccess(true);
         // Refresh Applications list
-        const appsRes = await fetch(`http://localhost:8001/api/career/applications?user_id=${user.uid}`);
+        const appsRes = await fetch(`${BACKEND_URL}/api/career/applications?user_id=${user.uid}`);
         if (appsRes.ok) {
           const appsData = await appsRes.json();
           setApplications(appsData.applications || []);
@@ -359,7 +361,7 @@ export default function CareerAgent({ user }) {
   // Update application tracker status
   const updateStatus = async (appId, newStatus) => {
     try {
-      await fetch(`http://localhost:8001/api/career/applications`, {
+      await fetch(`${BACKEND_URL}/api/career/applications`, {
         method: "GET",
       });
       // We can update locally first
@@ -368,7 +370,7 @@ export default function CareerAgent({ user }) {
       );
       
       // Update in backend database
-      await fetch(`http://localhost:8001/api/history`, {
+      await fetch(`${BACKEND_URL}/api/history`, {
         method: "GET", // trigger db endpoints
       });
     } catch (err) {

@@ -3,6 +3,7 @@ import json
 import asyncio
 from typing import Dict, Any, Optional
 from groq import Groq
+from config import GROQ_LIGHT_MODEL
 
 # Initialize Groq client
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -173,7 +174,7 @@ def parse_linkedin_text(raw_text: str) -> Dict[str, Any]:
         
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.1-8b-instant",
+            model=GROQ_LIGHT_MODEL,
             temperature=0.1,
             response_format={"type": "json_object"}
         )

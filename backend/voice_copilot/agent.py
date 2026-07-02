@@ -3,6 +3,7 @@ import json
 from typing import Dict, Any, List, Tuple
 from groq import Groq
 from voice_copilot import db
+from config import GROQ_HEAVY_MODEL, GROQ_LIGHT_MODEL
 
 # Initialize Groq client
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -158,7 +159,7 @@ Your persona: {mode_instruction}
                 ]
                 completion = client.chat.completions.create(
                     messages=conclusion_prompt,
-                    model="llama-3.3-70b-versatile",
+                    model=GROQ_HEAVY_MODEL,
                     temperature=0.7,
                     max_tokens=150
                 )
@@ -220,7 +221,7 @@ Your persona: {mode_instruction}
         try:
             completion = client.chat.completions.create(
                 messages=messages,
-                model="llama-3.3-70b-versatile",
+                model=GROQ_HEAVY_MODEL,
                 temperature=0.8,
                 max_tokens=600
             )
@@ -286,7 +287,7 @@ Your persona: {mode_instruction}
         try:
             completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="llama-3.1-8b-instant",
+                model=GROQ_LIGHT_MODEL,
                 temperature=0.1,
                 response_format={"type": "json_object"}
             )
@@ -380,7 +381,7 @@ Your persona: {mode_instruction}
         try:
             completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="llama-3.3-70b-versatile",
+                model=GROQ_HEAVY_MODEL,
                 temperature=0.2,
                 response_format={"type": "json_object"}
             )

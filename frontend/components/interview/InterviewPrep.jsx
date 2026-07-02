@@ -14,6 +14,8 @@ import {
   Brain
 } from "lucide-react";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+
 export default function InterviewPrep({ onEndInterview }) {
   // Ingestion states: 'idle', 'reading_resume', 'scraping_github', 'parsing_code', 'completed'
   const [ingestState, setIngestState] = useState("idle");
@@ -97,7 +99,7 @@ export default function InterviewPrep({ onEndInterview }) {
           formData.append("frame", blob, "frame.jpg");
           
           try {
-            const res = await fetch("http://localhost:8001/api/vision/gaze", {
+            const res = await fetch(`${BACKEND_URL}/api/vision/gaze`, {
               method: "POST",
               body: formData,
             });
@@ -163,7 +165,7 @@ export default function InterviewPrep({ onEndInterview }) {
       }
       formData.append("github_url", githubUrl);
 
-      const res = await fetch("http://localhost:8001/api/ingest", {
+      const res = await fetch(`${BACKEND_URL}/api/ingest`, {
         method: "POST",
         body: formData
       });
@@ -197,7 +199,7 @@ export default function InterviewPrep({ onEndInterview }) {
     } catch (err) {
       console.error("FastAPI backend error during ingestion:", err);
       setIngestState("idle");
-      setIngestError("Failed to connect to the backend server. Please make sure the FastAPI backend is running on http://localhost:8001 before starting an interview session.");
+      setIngestError(`Failed to connect to the backend server. Please make sure the FastAPI backend is running on ${BACKEND_URL} before starting an interview session.`);
     }
   };
 
@@ -205,7 +207,7 @@ export default function InterviewPrep({ onEndInterview }) {
   const triggerEndSession = async () => {
     if (sessionId) {
       try {
-        await fetch("http://localhost:8001/api/end-session", {
+        await fetch(`${BACKEND_URL}/api/end-session`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -236,7 +238,7 @@ export default function InterviewPrep({ onEndInterview }) {
     ]);
 
     try {
-      const res = await fetch("http://localhost:8001/api/submit-answer", {
+      const res = await fetch(`${BACKEND_URL}/api/submit-answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
