@@ -84,24 +84,32 @@ class SpeechToTextService:
             print("Groq client not initialized for STT.")
             return "[Error: STT credentials missing]"
             
-        try:
-            # File-like object with a name and content-type is expected by Groq API
-            file_name = f"recording.{file_format}"
-            audio_file = (file_name, audio_bytes, f"audio/{file_format}")
-            
-            # Map BCP-47 code (e.g. "hi-IN" to "hi")
-            iso_lang = language[:2] if language else None
-            
-            kwargs = {
-                "file": audio_file,
-                "model": "whisper-large-v3",
-                "response_format": "json"
-            }
-            if iso_lang:
-                kwargs["language"] = iso_lang
+        import time
+        max_retries = 3
+        delay = 1.0
+        for attempt in range(max_retries):
+            try:
+                # File-like object with a name and content-type is expected by Groq API
+                file_name = f"recording.{file_format}"
+                audio_file = (file_name, io.BytesIO(audio_bytes), f"audio/{file_format}")
                 
-            transcription = client.audio.transcriptions.create(**kwargs)
-            return transcription.text.strip()
-        except Exception as e:
-            print(f"Groq Whisper transcription failed: {e}")
-            return "[Transcription failed]"
+                # Map BCP-47 code (e.g. "hi-IN" to "hi")
+                iso_lang = language[:2] if language else None
+                
+                kwargs = {
+                    "file": audio_file,
+                    "model": "whisper-large-v3",
+                    "response_format": "json"
+                }
+                if iso_lang:
+                    kwargs["language"] = iso_lang
+                    
+                transcription = client.audio.transcriptions.create(**kwargs)
+                return transcription.text.strip()
+            except Exception as e:
+                print(f"Groq Whisper transcription attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    return "[Transcription failed]"
