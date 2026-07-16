@@ -110,8 +110,8 @@ export default function PerformanceAnalytics({ user }) {
   return (
     <div className="flex-1 bg-[#FAF6F0] bg-grid-overlay overflow-y-auto h-screen flex flex-col font-sans text-[#262626]">
       {/* Top Header Row */}
-      <header className="border-b border-[#DFD5C6] py-3.5 px-8 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]/90 backdrop-blur-md sticky top-0 z-10">
-        <div className="relative w-80">
+      <header className="border-b border-[#DFD5C6] py-3.5 px-4 lg:px-8 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]/90 backdrop-blur-md sticky top-0 z-10">
+        <div className="relative w-full max-w-[200px] sm:max-w-xs md:w-80">
           <Search className="absolute inset-y-0 left-3 my-auto h-4 w-4 text-[#6E6359]/60" />
           <input
             type="text"
@@ -119,7 +119,7 @@ export default function PerformanceAnalytics({ user }) {
             className="w-full pl-9 pr-4 py-1.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#C85A32] transition-colors placeholder-[#6E6359]/40"
           />
         </div>
-        <div className="flex items-center gap-4 text-[#6E6359]">
+        <div className="hidden sm:flex items-center gap-4 text-[#6E6359]">
           <div className="h-7 w-7 rounded-full bg-[#C85A32] text-[#FCFAF7] flex items-center justify-center text-xs font-bold uppercase shadow-sm border border-[#C85A32]/20">
             {user?.name ? user.name.slice(0, 2) : "US"}
           </div>
@@ -127,7 +127,7 @@ export default function PerformanceAnalytics({ user }) {
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 p-6 lg:p-8 space-y-8 max-w-5xl w-full mx-auto">
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-8 max-w-5xl w-full mx-auto">
         
         {/* Title Block */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-[#DFD5C6]/40 select-none">
@@ -394,57 +394,59 @@ export default function PerformanceAnalytics({ user }) {
             </div>
 
             <div className="border border-[#DFD5C6] rounded-2xl overflow-hidden shadow-sm bg-[#FCFAF7]">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[#DFD5C6] bg-[#FAF6F0] text-xs text-[#262626] font-serif font-bold select-none">
-                    <th className="py-3.5 px-5">Date</th>
-                    <th className="py-3.5 px-5">Role</th>
-                    <th className="py-3.5 px-5">Score</th>
-                    <th className="py-3.5 px-5">Trend</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#DFD5C6]/60 text-xs">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-[#6E6359]/70">
-                        <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-[#DFD5C6]" />
-                        Loading session history...
-                      </td>
+              <div className="overflow-x-auto w-full">
+                <table className="w-full min-w-[500px] text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-[#DFD5C6] bg-[#FAF6F0] text-xs text-[#262626] font-serif font-bold select-none">
+                      <th className="py-3.5 px-5">Date</th>
+                      <th className="py-3.5 px-5">Role</th>
+                      <th className="py-3.5 px-5">Score</th>
+                      <th className="py-3.5 px-5">Trend</th>
                     </tr>
-                  ) : history.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-[#6E6359]/70 font-medium font-serif">
-                        No session history records.
-                      </td>
-                    </tr>
-                  ) : (
-                    history.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-[#FAF6F0]/40 transition-colors">
-                        <td className="py-3.5 px-5 text-[#6E6359] font-mono">{row.date}</td>
-                        <td className="py-3.5 px-5 font-bold text-[#262626] font-serif">{row.role}</td>
-                        <td className="py-3.5 px-5 font-bold text-[#262626] font-mono">{row.score}</td>
-                        <td className="py-3.5 px-5 select-none">
-                          {row.trend === "up" && (
-                            <span className="inline-flex items-center gap-1 text-[#2E5A44] font-bold bg-[#E8F2EC] px-2 py-0.5 rounded-full border border-[#B3D6C2] text-[10px]">
-                              <TrendingUp className="h-3 w-3" /> Up
-                            </span>
-                          )}
-                          {row.trend === "down" && (
-                            <span className="inline-flex items-center gap-1 text-[#C85A32] font-bold bg-[#FCEBE6] px-2 py-0.5 rounded-full border border-[#F2C2B8] text-[10px]">
-                              <TrendingDown className="h-3 w-3" /> Down
-                            </span>
-                          )}
-                          {row.trend === "neutral" && (
-                            <span className="inline-flex items-center gap-1 text-[#6E6359] font-bold bg-[#FAF6F0] px-2 py-0.5 rounded-full border border-[#DFD5C6] text-[10px]">
-                              <Minus className="h-3 w-3" /> Flat
-                            </span>
-                          )}
+                  </thead>
+                  <tbody className="divide-y divide-[#DFD5C6]/60 text-xs">
+                    {loading ? (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-[#6E6359]/70">
+                          <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-[#DFD5C6]" />
+                          Loading session history...
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : history.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-[#6E6359]/70 font-medium font-serif">
+                          No session history records.
+                        </td>
+                      </tr>
+                    ) : (
+                      history.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-[#FAF6F0]/40 transition-colors">
+                          <td className="py-3.5 px-5 text-[#6E6359] font-mono">{row.date}</td>
+                          <td className="py-3.5 px-5 font-bold text-[#262626] font-serif">{row.role}</td>
+                          <td className="py-3.5 px-5 font-bold text-[#262626] font-mono">{row.score}</td>
+                          <td className="py-3.5 px-5 select-none">
+                            {row.trend === "up" && (
+                              <span className="inline-flex items-center gap-1 text-[#2E5A44] font-bold bg-[#E8F2EC] px-2 py-0.5 rounded-full border border-[#B3D6C2] text-[10px]">
+                                <TrendingUp className="h-3 w-3" /> Up
+                              </span>
+                            )}
+                            {row.trend === "down" && (
+                              <span className="inline-flex items-center gap-1 text-[#C85A32] font-bold bg-[#FCEBE6] px-2 py-0.5 rounded-full border border-[#F2C2B8] text-[10px]">
+                                <TrendingDown className="h-3 w-3" /> Down
+                              </span>
+                            )}
+                            {row.trend === "neutral" && (
+                              <span className="inline-flex items-center gap-1 text-[#6E6359] font-bold bg-[#FAF6F0] px-2 py-0.5 rounded-full border border-[#DFD5C6] text-[10px]">
+                                <Minus className="h-3 w-3" /> Flat
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 

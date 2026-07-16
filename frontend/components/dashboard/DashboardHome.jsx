@@ -129,8 +129,8 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
   return (
     <div className="flex-1 bg-[#FAF6F0] bg-grid-overlay overflow-y-auto h-screen flex flex-col font-sans text-[#262626]">
       {/* Top Header Row */}
-      <header className="border-b border-[#DFD5C6] py-3.5 px-8 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]/90 backdrop-blur-md sticky top-0 z-10">
-        <div className="relative w-80">
+      <header className="border-b border-[#DFD5C6] py-3.5 px-4 lg:px-8 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]/90 backdrop-blur-md sticky top-0 z-10">
+        <div className="relative w-full max-w-[200px] sm:max-w-xs md:w-80">
           <Search className="absolute inset-y-0 left-3 my-auto h-4 w-4 text-[#6E6359]/60" />
           <input
             type="text"
@@ -138,7 +138,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
             className="w-full pl-9 pr-4 py-1.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#C85A32] transition-colors placeholder-[#6E6359]/40"
           />
         </div>
-        <div className="flex items-center gap-4 text-[#6E6359]">
+        <div className="hidden sm:flex items-center gap-4 text-[#6E6359]">
           <div className="h-7 w-7 rounded-full bg-[#C85A32] text-[#FCFAF7] flex items-center justify-center text-xs font-bold uppercase shadow-sm border border-[#C85A32]/20">
             {user?.name ? user.name.slice(0, 2) : "US"}
           </div>
@@ -146,7 +146,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
       </header>
 
       {/* Main Workspace Panel */}
-      <main className="flex-1 p-6 lg:p-8 space-y-8 max-w-5xl w-full mx-auto">
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-8 max-w-5xl w-full mx-auto">
         
         {/* Top Greeting Block */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-[#DFD5C6]/40 select-none">
@@ -393,101 +393,103 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
             
             {/* History Table Container */}
             <div className="border border-[#DFD5C6] rounded-2xl overflow-hidden shadow-sm bg-[#FCFAF7]">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[#DFD5C6] bg-[#FAF6F0] text-[10px] font-mono text-[#6E6359] uppercase select-none">
-                    <th className="py-3.5 px-5 font-semibold">Session Name</th>
-                    <th className="py-3.5 px-5 font-semibold">Date Completed</th>
-                    <th className="py-3.5 px-5 font-semibold">Overall Score</th>
-                    <th className="py-3.5 px-5 font-semibold">Duration</th>
-                    <th className="py-3.5 px-5 text-right font-semibold">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#DFD5C6]/60 text-xs">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={5} className="py-12 text-center text-[#6E6359]/70">
-                        <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-[#C85A32]" />
-                        Syncing workspace stats...
-                      </td>
+              <div className="overflow-x-auto w-full">
+                <table className="w-full min-w-[650px] text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-[#DFD5C6] bg-[#FAF6F0] text-[10px] font-mono text-[#6E6359] uppercase select-none">
+                      <th className="py-3.5 px-5 font-semibold">Session Name</th>
+                      <th className="py-3.5 px-5 font-semibold">Date Completed</th>
+                      <th className="py-3.5 px-5 font-semibold">Overall Score</th>
+                      <th className="py-3.5 px-5 font-semibold">Duration</th>
+                      <th className="py-3.5 px-5 text-right font-semibold">Actions</th>
                     </tr>
-                  ) : activeHistoryTab === "voice" ? (
-                    // Voice History Rows
-                    voiceHistory.length === 0 ? (
+                  </thead>
+                  <tbody className="divide-y divide-[#DFD5C6]/60 text-xs">
+                    {loading ? (
                       <tr>
-                        <td colSpan={5} className="py-12 text-center text-[#6E6359]/70 font-medium font-serif">
-                          No Voice Copilot sessions finished yet. Start one to view metrics!
+                        <td colSpan={5} className="py-12 text-center text-[#6E6359]/70">
+                          <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-[#C85A32]" />
+                          Syncing workspace stats...
                         </td>
                       </tr>
-                    ) : (
-                      voiceHistory.map((row) => (
-                        <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
-                          <td className="py-4 px-5 font-serif font-bold text-[#262626]">
-                            {row.session}
-                          </td>
-                          <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
-                            {row.date}
-                          </td>
-                          <td className="py-4 px-5">
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]">
-                              {row.status}
-                            </span>
-                          </td>
-                          <td className="py-4 px-5 text-[#6E6359] font-mono">{row.duration}</td>
-                          <td className="py-4 px-5 text-right">
-                            <button
-                              onClick={() => onNavigate("analytics")}
-                              className="border border-[#DFD5C6] hover:border-[#C85A32] bg-[#FCFAF7] text-[#6E6359] hover:text-[#C85A32] hover:bg-[#C85A32]/5 py-1 px-3 rounded-lg text-[10px] font-bold transition-all shadow-2xs cursor-pointer"
-                            >
-                              Review Analytics
-                            </button>
+                    ) : activeHistoryTab === "voice" ? (
+                      // Voice History Rows
+                      voiceHistory.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-12 text-center text-[#6E6359]/70 font-medium font-serif">
+                            No Voice Copilot sessions finished yet. Start one to view metrics!
                           </td>
                         </tr>
-                      ))
-                    )
-                  ) : (
-                    // Coding History Rows
-                    history.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-12 text-center text-[#6E6359]/70 font-medium font-serif">
-                          No coding practice sessions finished yet.
-                        </td>
-                      </tr>
+                      ) : (
+                        voiceHistory.map((row) => (
+                          <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
+                            <td className="py-4 px-5 font-serif font-bold text-[#262626]">
+                              {row.session}
+                            </td>
+                            <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
+                              <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
+                              {row.date}
+                            </td>
+                            <td className="py-4 px-5">
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]">
+                                {row.status}
+                              </span>
+                            </td>
+                            <td className="py-4 px-5 text-[#6E6359] font-mono">{row.duration}</td>
+                            <td className="py-4 px-5 text-right">
+                              <button
+                                onClick={() => onNavigate("analytics")}
+                                className="border border-[#DFD5C6] hover:border-[#C85A32] bg-[#FCFAF7] text-[#6E6359] hover:text-[#C85A32] hover:bg-[#C85A32]/5 py-1 px-3 rounded-lg text-[10px] font-bold transition-all shadow-2xs cursor-pointer"
+                              >
+                                Review Analytics
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )
                     ) : (
-                      history.map((row) => (
-                        <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
-                          <td className="py-4 px-5 font-serif font-bold text-[#262626]">
-                            {row.session}
-                          </td>
-                          <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
-                            {row.date}
-                          </td>
-                          <td className="py-4 px-5">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              parseFloat(row.status) >= 8.0
-                                ? "bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]"
-                                : "bg-[#FAF4EB] text-[#A6690B] border border-[#F2E0C9]"
-                            }`}>
-                              {row.status}
-                            </span>
-                          </td>
-                          <td className="py-4 px-5 text-[#6E6359] font-mono">{row.duration}</td>
-                          <td className="py-4 px-5 text-right">
-                            <button
-                              onClick={onStartPractice}
-                              className="border border-[#DFD5C6] hover:border-[#C85A32] bg-[#FCFAF7] text-[#6E6359] hover:text-[#C85A32] hover:bg-[#C85A32]/5 py-1 px-3 rounded-lg text-[10px] font-bold transition-all shadow-2xs cursor-pointer"
-                            >
-                              Review Recording
-                            </button>
+                      // Coding History Rows
+                      history.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-12 text-center text-[#6E6359]/70 font-medium font-serif">
+                            No coding practice sessions finished yet.
                           </td>
                         </tr>
-                      ))
-                    )
-                  )}
-                </tbody>
-              </table>
+                      ) : (
+                        history.map((row) => (
+                          <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
+                            <td className="py-4 px-5 font-serif font-bold text-[#262626]">
+                              {row.session}
+                            </td>
+                            <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
+                              <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
+                              {row.date}
+                            </td>
+                            <td className="py-4 px-5">
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                parseFloat(row.status) >= 8.0
+                                  ? "bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]"
+                                  : "bg-[#FAF4EB] text-[#A6690B] border border-[#F2E0C9]"
+                              }`}>
+                                {row.status}
+                              </span>
+                            </td>
+                            <td className="py-4 px-5 text-[#6E6359] font-mono">{row.duration}</td>
+                            <td className="py-4 px-5 text-right">
+                              <button
+                                onClick={onStartPractice}
+                                className="border border-[#DFD5C6] hover:border-[#C85A32] bg-[#FCFAF7] text-[#6E6359] hover:text-[#C85A32] hover:bg-[#C85A32]/5 py-1 px-3 rounded-lg text-[10px] font-bold transition-all shadow-2xs cursor-pointer"
+                              >
+                                Review Recording
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             {/* Topic-wise Preparation Progress */}

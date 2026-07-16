@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Menu } from "lucide-react";
 import AuthPage from "@/components/auth/AuthPage";
 import Sidebar from "@/components/navigation/Sidebar";
 import DashboardHome from "@/components/dashboard/DashboardHome";
@@ -23,6 +24,7 @@ export default function Home() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
 
   // Check redirects and listen to auth state changes for session persistence
   useEffect(() => {
@@ -127,14 +129,35 @@ export default function Home() {
         user={user}
         onLogout={handleLogout}
         onStartPractice={handleStartPractice}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
       />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden bg-[#FAF6F0]">
+        {/* Mobile Header Bar */}
+        <header className="lg:hidden border-b border-[#DFD5C6] py-3.5 px-4 flex items-center justify-between shrink-0 bg-[#FCFAF7]/95 backdrop-blur-md z-30 select-none">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-1.5 rounded-lg border border-[#DFD5C6] hover:bg-[#FAF6F0] text-[#6E6359] cursor-pointer"
+          >
+            <Menu className="h-4 w-4" />
+          </button>
+          <span className="font-serif font-semibold text-base tracking-tight text-[#262626]">
+            PrepFlow <span className="text-[#C85A32]">AI</span>
+          </span>
+          <div className="h-7 w-7 rounded-full bg-[#C85A32] text-[#FCFAF7] flex items-center justify-center text-xs font-bold uppercase shadow-sm">
+            {user?.name ? user.name.slice(0, 2) : "US"}
+          </div>
+        </header>
+
         {activeTab === "dashboard" && (
           <DashboardHome 
             onStartPractice={handleStartPractice} 
-            onNavigate={(tab: string) => setActiveTab(tab)} 
+            onNavigate={(tab: string) => {
+              setActiveTab(tab);
+              setSidebarOpen(false);
+            }} 
             user={user} 
           />
         )}
@@ -145,7 +168,7 @@ export default function Home() {
           <VoiceCopilot user={user} />
         )}
         {activeTab === "career-agent" && (
-          <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-6">
+          <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-4 sm:p-6">
             <CareerAgent user={user} />
           </div>
         )}
@@ -153,7 +176,7 @@ export default function Home() {
           <PerformanceAnalytics user={user} />
         )}
         {activeTab === "resume-analyzer" && (
-          <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-6">
+          <div className="flex-1 overflow-y-auto bg-[#FAF6F0]">
             <ResumeAnalyzer />
           </div>
         )}

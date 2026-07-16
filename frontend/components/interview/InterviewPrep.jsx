@@ -59,6 +59,7 @@ export default function InterviewPrep({ onEndInterview, user }) {
   const gazeIntervalRef = useRef(null);
   const [isLookingAway, setIsLookingAway] = useState(false);
   const [cameraError, setCameraError] = useState("");
+  const [showCameraPanel, setShowCameraPanel] = useState(false);
 
   const [secondsElapsed, setSecondsElapsed] = useState(0);
   const [liveTip, setLiveTip] = useState("");
@@ -603,19 +604,24 @@ export default function InterviewPrep({ onEndInterview, user }) {
   return (
     <div className="flex-1 bg-[#FAF6F0] overflow-hidden h-screen flex flex-col font-sans text-[#262626]">
       {/* Top Header Row */}
-      <header className="border-b border-[#DFD5C6] py-3.5 px-6 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7]">
+      <header className="border-b border-[#DFD5C6] py-3.5 px-6 flex items-center justify-between shrink-0 select-none bg-[#FCFAF7] z-20">
         <div className="flex items-center gap-3">
           <span className="font-serif font-semibold text-lg tracking-tight text-[#262626]">PrepFlow <span className="text-[#C85A32]">AI</span></span>
-          <div className="h-4 w-[1px] bg-[#DFD5C6]"></div>
-          <div className="flex items-center gap-1.5 bg-[#FAF6F0] border border-[#DFD5C6] px-2.5 py-0.5 rounded-full">
+          <div className="hidden sm:block h-4 w-[1px] bg-[#DFD5C6]"></div>
+          <div className="hidden sm:flex items-center gap-1.5 bg-[#FAF6F0] border border-[#DFD5C6] px-2.5 py-0.5 rounded-full">
             <span className="h-2 w-2 rounded-full bg-[#C85A32] recording-indicator"></span>
             <span className="text-[9px] font-bold font-mono text-[#C85A32] uppercase tracking-widest">
               Session Live
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-
+        <div className="flex items-center gap-3 sm:gap-4">
+          <button
+            onClick={() => setShowCameraPanel((prev) => !prev)}
+            className="lg:hidden bg-[#FCFAF7] border border-[#DFD5C6] hover:bg-[#FAF6F0] text-[#6E6359] text-xs px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer"
+          >
+            {showCameraPanel ? "Hide Video" : "Show Video"}
+          </button>
 
           <div className="h-4 w-[1px] bg-[#DFD5C6]"></div>
 
@@ -628,16 +634,24 @@ export default function InterviewPrep({ onEndInterview, user }) {
               await triggerEndSession();
               onEndInterview();
             }}
-            className="bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] text-xs px-4 py-2 rounded-lg font-bold transition-colors shadow-sm cursor-pointer"
+            className="bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] text-xs px-3.5 py-2 rounded-lg font-bold transition-colors shadow-sm cursor-pointer"
           >
-            End Interview
+            End
           </button>
         </div>
       </header>
 
       {/* Main Layout: Split Screen */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         
+        {/* Backdrop overlay for mobile sidebar */}
+        {showCameraPanel && (
+          <div 
+            className="fixed inset-0 bg-[#262626]/20 backdrop-blur-xs z-30 lg:hidden animate-in fade-in duration-200"
+            onClick={() => setShowCameraPanel(false)}
+          />
+        )}
+
         {/* Left Side: Conversation Area (Chat-like layout) */}
         <section className="flex-1 flex flex-col bg-[#FAF6F0] overflow-hidden">
           
@@ -745,7 +759,9 @@ export default function InterviewPrep({ onEndInterview, user }) {
         </section>
 
         {/* Right Sidebar: Camera Preview & Dynamic Context Panel */}
-        <aside className="w-80 border-l border-[#DFD5C6] bg-[#FCFAF7] flex flex-col select-none shrink-0 p-5 space-y-6 overflow-y-auto custom-scrollbar">
+        <aside className={`fixed inset-y-0 right-0 w-80 border-l border-[#DFD5C6] bg-[#FCFAF7] flex flex-col select-none shrink-0 p-5 space-y-6 overflow-y-auto custom-scrollbar shadow-xl lg:shadow-none transition-transform duration-300 ease-in-out z-40 lg:translate-x-0 ${
+          showCameraPanel ? "translate-x-0" : "translate-x-full lg:translate-x-0"
+        } lg:static lg:flex`}>
           
           {/* Webcam Preview Container */}
           <div className="space-y-2">
@@ -754,6 +770,12 @@ export default function InterviewPrep({ onEndInterview, user }) {
                 <span className="h-1.5 w-1.5 rounded-full bg-[#2E5A44] animate-pulse"></span>
                 Webcam Feed
               </span>
+              <button
+                onClick={() => setShowCameraPanel(false)}
+                className="lg:hidden text-[10px] font-bold text-[#C85A32] hover:underline cursor-pointer"
+              >
+                Hide
+              </button>
             </div>
             <div className="relative aspect-[4/3] rounded-lg overflow-hidden border border-[#DFD5C6] bg-[#FAF6F0] flex items-center justify-center shadow-xs">
               <video

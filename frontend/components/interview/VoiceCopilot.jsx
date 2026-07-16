@@ -702,7 +702,7 @@ export default function VoiceCopilot({ user }) {
 
       {/* 1. Onboarding Stage */}
       {stage === "onboarding" && (
-        <div className="flex-1 overflow-y-auto h-screen flex flex-col justify-between py-12 px-8">
+        <div className="flex-1 overflow-y-auto min-h-screen lg:h-screen flex flex-col justify-between py-6 px-4 md:py-12 md:px-8">
           <div className="max-w-5xl mx-auto w-full my-auto py-4">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
               
@@ -1153,14 +1153,14 @@ export default function VoiceCopilot({ user }) {
 
       {/* 3. Active Interview Stage */}
       {stage === "active" && (
-        <div className="flex-1 flex overflow-hidden h-screen">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
           
           {/* Main workspace */}
-          <div className="flex-1 flex flex-col justify-between p-8 overflow-hidden bg-[#FAF6F0] bg-grid-overlay">
+          <div className="flex-1 flex flex-col justify-between p-4 sm:p-6 lg:p-8 overflow-hidden bg-[#FAF6F0] bg-grid-overlay">
             
             {/* Top Bar - Minimal */}
-            <div className="flex items-center justify-between pb-4 border-b border-[#DFD5C6]/50 select-none">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between pb-4 border-b border-[#DFD5C6]/50 select-none">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[9px] font-bold uppercase tracking-wider bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25 px-2.5 py-0.5 rounded-md font-mono">
                   {interviewMode} Mode
                 </span>
@@ -1169,7 +1169,7 @@ export default function VoiceCopilot({ user }) {
                 </span>
                 <span className="text-[#262626] text-xs font-bold font-serif">{roleTitle} Technical Screening</span>
               </div>
-              <div className="flex items-center gap-2 text-xs font-mono font-bold text-[#6E6359] bg-[#FCFAF7] px-3.5 py-1.5 rounded-xl border border-[#DFD5C6]/50 shadow-2xs">
+              <div className="flex items-center gap-2 self-end sm:self-auto text-xs font-mono font-bold text-[#6E6359] bg-[#FCFAF7] px-3.5 py-1.5 rounded-xl border border-[#DFD5C6]/50 shadow-2xs">
                 <Clock className="h-3.5 w-3.5 text-[#C85A32]" />
                 {formatTime(secondsElapsed)}
               </div>
@@ -1257,8 +1257,8 @@ export default function VoiceCopilot({ user }) {
             </div>
 
             {/* Control Panel - Sleek and clean */}
-            <div className="flex items-center justify-between mt-4 bg-[#FCFAF7] p-3 rounded-xl border border-[#DFD5C6]/50 shadow-2xs">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 mt-4 bg-[#FCFAF7] p-3 rounded-xl border border-[#DFD5C6]/50 shadow-2xs">
+              <div className="flex flex-wrap items-center gap-3">
                 
                 {/* Mic Status Indicator Group */}
                 <div className="flex items-center gap-3 border-r border-[#DFD5C6]/50 pr-4">
@@ -1298,7 +1298,7 @@ export default function VoiceCopilot({ user }) {
                 {/* Primary Mic Controls */}
                 <button
                   onClick={toggleMute}
-                  className={`py-2 px-4 rounded-xl border text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer ${
+                  className={`py-2 px-3 rounded-xl border text-[11px] sm:text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer ${
                     isMuted
                       ? "bg-red-50 border-red-100 text-red-600 hover:bg-red-100"
                       : "bg-[#FCFAF7] border-[#DFD5C6] text-[#6E6359] hover:bg-[#FAF6F0]"
@@ -1310,7 +1310,7 @@ export default function VoiceCopilot({ user }) {
                 {/* Hear Your Own Voice Loopback Toggle */}
                 <button
                   onClick={toggleHearOwnVoice}
-                  className={`py-2 px-4 rounded-xl border text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer flex items-center gap-1.5 ${
+                  className={`py-2 px-3 rounded-xl border text-[11px] sm:text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer flex items-center gap-1.5 ${
                     hearOwnVoice
                       ? "bg-[#C85A32]/10 border-[#C85A32] text-[#C85A32] shadow-2xs"
                       : "bg-[#FCFAF7] border-[#DFD5C6] text-[#6E6359] hover:bg-[#FAF6F0]"
@@ -1324,7 +1324,7 @@ export default function VoiceCopilot({ user }) {
                 {voiceStatus === "listening" && (
                   <button
                     onClick={handleDoneSpeaking}
-                    className="py-2 px-4 rounded-xl bg-[#C85A32] border border-[#C85A32] text-white hover:bg-[#B83A14] text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer flex items-center gap-1.5 shadow-sm"
+                    className="py-2 px-3 rounded-xl bg-[#C85A32] border border-[#C85A32] text-white hover:bg-[#B83A14] text-[11px] sm:text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer flex items-center gap-1.5 shadow-sm"
                   >
                     <Send className="h-3.5 w-3.5 fill-white" />
                     Submit Answer
@@ -1336,7 +1336,7 @@ export default function VoiceCopilot({ user }) {
               {/* End Interview Action */}
               <button
                 onClick={handleEndInterview}
-                className="bg-slate-950 hover:bg-slate-800 text-white font-semibold py-2 px-4 rounded-xl text-xs flex items-center gap-1.5 active:scale-[0.98] transition-all shadow-sm cursor-pointer"
+                className="bg-slate-950 hover:bg-slate-800 text-white font-semibold py-2 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all shadow-sm cursor-pointer self-end md:self-auto"
               >
                 <Square className="h-3 w-3" /> End session
               </button>
@@ -1345,7 +1345,13 @@ export default function VoiceCopilot({ user }) {
 
           {/* Profile Sidebar - SarvamAI-like minimal Metadata Inspector */}
           {isProfileOpen ? (
-            <div className="w-80 border-l border-[#DFD5C6]/50 bg-[#FCFAF7] p-6 flex flex-col justify-between overflow-y-auto shrink-0 shadow-2xs animate-in fade-in slide-in-from-right duration-300">
+            <>
+              {/* Backdrop overlay for mobile drawer */}
+              <div 
+                className="fixed inset-0 bg-[#262626]/20 backdrop-blur-xs z-35 lg:hidden animate-in fade-in duration-200"
+                onClick={() => setIsProfileOpen(false)}
+              />
+              <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-80 border-l border-[#DFD5C6]/50 bg-[#FCFAF7] p-6 flex flex-col justify-between overflow-y-auto shrink-0 shadow-xl lg:shadow-none animate-in slide-in-from-right duration-300 lg:static lg:h-auto">
               
               {/* Sidebar Header */}
               <div className="flex items-center justify-between pb-3 border-b border-[#DFD5C6]/50">
@@ -1475,6 +1481,7 @@ export default function VoiceCopilot({ user }) {
 
               </div>
             </div>
+            </>
           ) : (
             <button
               onClick={() => setIsProfileOpen(true)}

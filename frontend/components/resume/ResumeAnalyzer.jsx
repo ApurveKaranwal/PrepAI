@@ -501,6 +501,10 @@ return (
                           <ArrowRight className="w-5 h-5" />
                         </div>
 
+                        <div className="flex md:hidden items-center justify-center text-[#DFD5C6] my-1">
+                          <ArrowRight className="w-5 h-5 rotate-90" />
+                        </div>
+
                         {/* Optimized */}
                         <div className="flex-[1.5] space-y-3">
                           <div className="flex items-center justify-between">

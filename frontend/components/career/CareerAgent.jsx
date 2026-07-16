@@ -1074,7 +1074,12 @@ export default function CareerAgent({ user }) {
 
       {/* DRAWER 1: PREPARATION ROADMAP */}
       {showRoadmapDrawer && selectedJob && (
-        <div className="fixed inset-y-0 right-0 w-[550px] bg-[#FCFAF7] border-l border-[#DFD5C6] shadow-2xl z-50 p-6 overflow-y-auto flex flex-col justify-between select-none animate-in slide-in-from-right duration-250">
+        <>
+          <div 
+            className="fixed inset-0 bg-[#262626]/20 backdrop-blur-xs z-45 animate-in fade-in duration-250"
+            onClick={() => setShowRoadmapDrawer(false)}
+          />
+          <div className="fixed inset-y-0 right-0 w-full sm:w-[550px] bg-[#FCFAF7] border-l border-[#DFD5C6] shadow-2xl z-50 p-6 overflow-y-auto flex flex-col justify-between select-none animate-in slide-in-from-right duration-250">
           <div className="space-y-6">
             
             {/* Header */}
@@ -1385,11 +1390,12 @@ export default function CareerAgent({ user }) {
             </button>
           </div>
         </div>
+        </>
       )}
 
       {/* DRAWER 2: APPLY VIA AGENT / BROWSER AUTOMATION */}
       {showApplyDrawer && selectedJob && (
-        <div className="fixed inset-y-0 right-0 w-[550px] bg-[#FCFAF7] border-l border-[#DFD5C6] shadow-2xl z-50 p-6 overflow-y-auto flex flex-col justify-between select-none">
+        <div className="fixed inset-y-0 right-0 w-full sm:w-[550px] bg-[#FCFAF7] border-l border-[#DFD5C6] shadow-2xl z-50 p-6 overflow-y-auto flex flex-col justify-between select-none">
           <div className="space-y-6">
             
             {/* Header */}
@@ -1444,7 +1450,7 @@ export default function CareerAgent({ user }) {
                       <h5 className="text-[10px] font-bold font-mono text-[#C85A32] uppercase tracking-wider border-b border-[#DFD5C6]/30 pb-1">
                         Candidate Credentials (Extracted)
                       </h5>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1 text-xs">
                           <label className="font-bold text-[#6E6359]">Full Name</label>
                           <input
@@ -1465,7 +1471,7 @@ export default function CareerAgent({ user }) {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1 text-xs">
                           <label className="font-bold text-[#6E6359]">Phone Number</label>
                           <input
