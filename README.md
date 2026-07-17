@@ -1,5 +1,15 @@
 # PrepAI: AI-Powered Technical Interview Simulator and Career Co-Pilot
 
+<p align="left">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js" alt="Next.js" /></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.110-009688?style=flat-square&logo=fastapi" alt="FastAPI" /></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9+-blue?style=flat-square&logo=python" alt="Python" /></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-blue?style=flat-square&logo=react" alt="React" /></a>
+  <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-Automation-2EAD33?style=flat-square&logo=playwright" alt="Playwright" /></a>
+  <a href="https://firebase.google.com/"><img src="https://img.shields.io/badge/Firebase-Auth-FFCA28?style=flat-square&logo=firebase" alt="Firebase" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License" /></a>
+</p>
+
 PrepAI is an advanced, enterprise-grade technical interview simulation and career management system. The platform analyzes candidate profiles, parses PDF resumes, scrapes target GitHub repositories, and coordinates stateful technical mock interviews across various seniority levels. Additionally, it features an automated job discovery matching engine, a prep roadmap planner, an AI-driven outreach sequence generator, and a browser automation auto-apply pipeline.
 
 ---
@@ -77,6 +87,13 @@ The AI Voice Copilot maintains a real-time conversational workflow using standar
   * **Senior**: Probes deeply into system design, indexing, caching policies, tradeoffs, performance profiling, and load balancing.
   * **Staff Engineer**: Asks about multi-region failovers, disaster recovery, long-term technical migrations, legacy refactoring, and multi-team engineering consensus.
   * **Bar Raiser (FAANG Mock)**: Implements a high-pressure technical screening. Directly challenges candidate design assumptions, probes edge cases (e.g. partition failures, consensus problems), and calls out vague or incomplete answers.
+
+### 4. Responsive Mobile & Tablet Layout Optimization
+PrepAI is fully optimized for fluid browsing on small screens, adapting complex dashboards, code reviews, and voice panels to mobile viewports.
+
+* **Sliding Navigation Drawer**: Sidebars compress into sliding overlays on viewports smaller than `1024px` (`lg`), complete with a dismissible blur backdrop.
+* **Auto-Wrapping Data Views**: Score tables and performance timelines dynamically shift into horizontal scrolling containers (`overflow-x-auto`) to prevent column clipping.
+* **Responsive Forms**: Candidate details grids automatically shift from multi-column grids to single-column inputs on phone widths.
 
 ---
 
