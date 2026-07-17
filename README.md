@@ -165,13 +165,13 @@ erDiagram
     users ||--o{ candidate_profiles : "owns"
     users {
         int id PK
-        string email UNIQUE
+        string email
         string password
         string name
         timestamp created_at
     }
     candidate_profiles {
-        string user_id PK, FK
+        string user_id PK "FK"
         string job_type
         string work_mode
         string countries
@@ -204,7 +204,7 @@ erDiagram
         string skills_required
         string description
         string source
-        string url UNIQUE
+        string url
         string ats_type
         timestamp created_at
     }
