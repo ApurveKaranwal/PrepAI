@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License" /></a>
 </p>
 
-PrepAI is an advanced, enterprise-grade technical interview simulation and career management system. The platform analyzes candidate profiles, parses PDF resumes, scrapes target GitHub repositories, and coordinates stateful technical mock interviews across various seniority levels. Additionally, it features an automated job discovery matching engine, a prep roadmap planner, an AI-driven outreach sequence generator, and a browser automation auto-apply pipeline.
+PrepAI is an advanced, enterprise-grade technical interview simulation and career management system. The platform analyzes candidate profiles, parses PDF resumes, scrapes target GitHub repositories, and coordinates stateful technical mock interviews across various seniority levels. Additionally, it features an automated job discovery matching engine, a prep roadmap planner, an AI-driven outreach sequence generator, and a browser automation auto-apply pipeline (Beta).
 
 ---
 
@@ -27,7 +27,7 @@ The AI Career Agent coordinates job matching, preparatory roadmaps, and human-in
 1. **Information Extraction**: Candidate uploads a PDF resume and provides target career preferences. The system parses the document, extracting technical skills, programming languages, and projects.
 2. **Background Web Scraping**: The system periodically crawls Greenhouse and Ashby job boards of leading technology companies, populating a unified Postgres jobs database.
 3. **Similarity Engine**: Candidates are matched against scraped positions using a from-scratch Term Frequency-Inverse Document Frequency (TF-IDF) similarity vectorizer.
-4. **Outreach & Applying**: The system generates tailored networking outreach packages (cold emails, LinkedIn connection requests, follow-ups) using large language models. The Playwright-based browser automation agent can fill out job board application forms, solve simple questionnaires, and handle submissions.
+4. **Outreach & Applying**: The system generates tailored networking outreach packages (cold emails, LinkedIn connection requests, follow-ups) using large language models. The Playwright-based browser automation agent (Beta) can attempt to fill out job board application forms, solve simple questionnaires, and handle submissions (Note: this feature is experimental and may not work on all sites).
 
 ### 2. AI Voice Copilot
 
@@ -60,7 +60,10 @@ The Preparation Roadmap Engine analyzes candidate skill coverages and constructs
   * **14-Day Plan (>4 gaps)**: Standard roadmap focusing on prototype development, distributed system components (load balancers, message queues), advanced DSA (graphs, dynamic programming), and final polish simulations.
 * **Mock Drill Generation**: Questions are categorized into Coding, System Design, and Behavioral challenges, tailored specifically to target company profiles.
 
-### 2. Human-in-the-Loop Auto-Apply Engine
+### 2. Human-in-the-Loop Auto-Apply Engine [BETA]
+> [!WARNING]
+> The auto-apply browser automation engine is in **Beta**. Due to the dynamic nature of job board selectors, site protection mechanisms, and CAPTCHAs, this feature is experimental and may not work correctly on all external sites.
+
 The browser automation pipeline handles job application submissions using Playwright.
 
 ![Playwright Auto-Apply Browser Flow](docs/images/auto_apply_playwright_flow.png)
