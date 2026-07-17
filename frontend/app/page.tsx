@@ -1,5 +1,5 @@
 "use client";
-
+// v1.0.1 - Responsive UI Stable
 import React, { useState, useEffect } from "react";
 import { Menu } from "lucide-react";
 import AuthPage from "@/components/auth/AuthPage";
