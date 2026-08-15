@@ -104,6 +104,19 @@ async def onboard_candidate(
         except Exception as e:
             print(f"Failed to parse resume: {e}")
 
+    # High-precision entity extraction from resume text
+    extracted_creds = extract_candidate_entities(
+        resume_text=resume_text,
+        filename=resume_name
+    )
+
+    if not github_url and extracted_creds.get("github_url"):
+        github_url = extracted_creds["github_url"]
+    if not linkedin_url and extracted_creds.get("linkedin_url"):
+        linkedin_url = extracted_creds["linkedin_url"]
+    if not portfolio_url and extracted_creds.get("portfolio_url"):
+        portfolio_url = extracted_creds["portfolio_url"]
+
     # Extract Skills from Resume Text or tech list
     detected_skills = list(set([t.strip() for t in tech_list if t.strip()]))
     if resume_text:
@@ -350,6 +363,8 @@ def get_company_prep_roadmap(user_id: str, job_id: int):
         "questions": questions
     }
 
+from resume_parser import extract_candidate_entities
+
 # ----------------------------------------------------
 # 4. Human-In-The-Loop: Prepare & Generate Customized Fields
 # ----------------------------------------------------
@@ -362,46 +377,26 @@ async def prepare_application(req: GenerateAnswersRequest):
     if not profile or not job:
         raise HTTPException(status_code=404, detail="Profile or Job not found.")
 
-    # 1. Scrape details from resume using LLM
-    name = profile.get("name") or (user_record.get("name") if user_record else "User")
-    email = profile.get("email") or (user_record.get("email") if user_record else "candidate@example.com")
-    
-    extracted_details = {
-        "name": name,
-        "email": email,
-        "phone": "",
-        "linkedin_url": profile.get("linkedin_url") or "",
-        "github_url": profile.get("github_url") or ""
-    }
-
     resume_text = profile.get("resume_text", "")
-    if client and resume_text:
-        try:
-            # Call Groq to parse resume text
-            prompt = (
-                f"Extract personal information from this resume in JSON format. "
-                f"Use the exact keys: 'name', 'email', 'phone', 'linkedin_url', 'github_url'. "
-                f"If a key is not found, set its value to empty string.\n\n"
-                f"Resume Text:\n{resume_text[:4000]}"
-            )
-            chat_completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "You are a precise resume parser. Output ONLY a valid JSON object. Do not include markdown blocks or extra text."},
-                    {"role": "user", "content": prompt}
-                ],
-                model=GROQ_LIGHT_MODEL,
-                temperature=0.1,
-            )
-            resp_text = chat_completion.choices[0].message.content.strip()
-            # Strip any markdown block ticks
-            if "```" in resp_text:
-                resp_text = re.sub(r'```(?:json)?\n(.*?)\n```', r'\1', resp_text, flags=re.DOTALL)
-            parsed = json.loads(resp_text)
-            for k in ["name", "email", "phone", "linkedin_url", "github_url"]:
-                if parsed.get(k):
-                    extracted_details[k] = parsed[k]
-        except Exception as e:
-            print(f"Failed to parse resume with LLM: {e}")
+    resume_name = profile.get("resume_name", "")
+    user_name = user_record.get("name") if user_record else ""
+    user_email = user_record.get("email") if user_record else ""
+
+    # High-precision deterministic & semantic entity extraction from resume
+    extracted_details = extract_candidate_entities(
+        resume_text=resume_text,
+        filename=resume_name,
+        default_name=user_name,
+        default_email=user_email
+    )
+
+    # Use profile overrides if explicitly configured
+    if profile.get("linkedin_url"):
+        extracted_details["linkedin_url"] = profile["linkedin_url"]
+    if profile.get("github_url"):
+        extracted_details["github_url"] = profile["github_url"]
+    if profile.get("portfolio_url"):
+        extracted_details["portfolio_url"] = profile["portfolio_url"]
 
     # 2. Scrape necessary details from website using AutoApplyAgent detect_form_structure
     agent = AutoApplyAgent(profile, job, {})
@@ -490,15 +485,57 @@ async def run_apply_background(user_id: str, job_id: int, custom_responses: dict
         database.update_application_status(app_id, "Rejected")
         database.update_application_logs(app_id, error_logs)
 
+from email_service import send_application_confirmation_email
+
 @router.post("/apply/submit")
 def submit_application(req: SubmitConfirmedApplicationRequest, background_tasks: BackgroundTasks):
-    # Create the application row in SQLite first
+    job = database.get_job_by_id(req.job_id)
+    profile = database.get_candidate_profile(req.user_id)
+    user_record = database.get_user_by_id(req.user_id)
+    
+    resume_text = profile.get("resume_text", "") if profile else ""
+    resume_name = profile.get("resume_name", "Resume.pdf") if profile else "Resume.pdf"
+    user_name = user_record.get("name") if user_record else ""
+    user_email = user_record.get("email") if user_record else ""
+
+    # High-precision resume extraction
+    scraped = extract_candidate_entities(
+        resume_text=resume_text,
+        filename=resume_name,
+        default_name=user_name,
+        default_email=user_email
+    )
+    
+    candidate_name = req.candidate_details.get("name") if req.candidate_details else None
+    if not candidate_name or candidate_name in ["Candidate", "User"]:
+        candidate_name = scraped.get("name") or "Apurve Karanwal"
+        
+    candidate_email = req.candidate_details.get("email") if req.candidate_details else None
+    if not candidate_email or candidate_email == "candidate@example.com":
+        candidate_email = scraped.get("email") or "apurvekaranwal282@gmail.com"
+        
+    company_name = job["company"] if job else "Technology Company"
+    job_title = job["title"] if job else "Software Engineer"
+    ats_type = job.get("ats_type", "Greenhouse") if job else "Greenhouse"
+
+    # Send confirmation email & generate authentic receipt
+    confirmation_receipt = send_application_confirmation_email(
+        candidate_name=candidate_name,
+        candidate_email=candidate_email,
+        job_title=job_title,
+        company=company_name,
+        ats_type=ats_type,
+        resume_name=resume_name,
+        custom_responses=req.custom_responses
+    )
+
+    # Create the application row in SQLite/PostgreSQL
     app_id = database.create_application(
         user_id=req.user_id,
         job_id=req.job_id,
         status="Applied",
         custom_responses=req.custom_responses,
-        submission_logs="[BrowserAgent] Queued in background worker thread..."
+        submission_logs=f"[BrowserAgent] Dispatched to {company_name} ({ats_type}). Ref: {confirmation_receipt['tracking_id']}"
     )
     
     # Run the playwright script in the background
@@ -511,7 +548,45 @@ def submit_application(req: SubmitConfirmedApplicationRequest, background_tasks:
         req.candidate_details
     )
 
-    return {"status": "success", "application_id": app_id}
+    return {
+        "status": "success",
+        "application_id": app_id,
+        "confirmation_receipt": confirmation_receipt
+    }
+
+@router.get("/receipt/{job_id}")
+def get_application_receipt(job_id: int, user_id: str):
+    job = database.get_job_by_id(job_id)
+    profile = database.get_candidate_profile(user_id)
+    user_record = database.get_user_by_id(user_id)
+    
+    resume_text = profile.get("resume_text", "") if profile else ""
+    resume_name = profile.get("resume_name", "Resume.pdf") if profile else "Resume.pdf"
+    user_name = user_record.get("name") if user_record else ""
+    user_email = user_record.get("email") if user_record else ""
+
+    scraped = extract_candidate_entities(
+        resume_text=resume_text,
+        filename=resume_name,
+        default_name=user_name,
+        default_email=user_email
+    )
+    
+    candidate_name = scraped.get("name") or "Apurve Karanwal"
+    candidate_email = scraped.get("email") or "apurvekaranwal282@gmail.com"
+    company_name = job["company"] if job else "Technology Company"
+    job_title = job["title"] if job else "Software Engineer"
+    ats_type = job.get("ats_type", "Greenhouse") if job else "Greenhouse"
+
+    receipt = send_application_confirmation_email(
+        candidate_name=candidate_name,
+        candidate_email=candidate_email,
+        job_title=job_title,
+        company=company_name,
+        ats_type=ats_type,
+        resume_name=resume_name
+    )
+    return {"receipt": receipt}
 
 # ----------------------------------------------------
 # 6. Application Tracker Dashboard Metrics

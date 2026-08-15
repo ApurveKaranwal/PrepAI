@@ -444,6 +444,31 @@ def init_db():
             FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
         )
     """)
+
+    # Create coding_studio_sessions table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS coding_studio_sessions (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT,
+            problem_id TEXT NOT NULL,
+            problem_title TEXT NOT NULL,
+            track TEXT NOT NULL,
+            difficulty TEXT NOT NULL,
+            language TEXT NOT NULL,
+            user_code TEXT NOT NULL,
+            time_complexity TEXT,
+            space_complexity TEXT,
+            tests_passed INTEGER DEFAULT 0,
+            total_tests INTEGER DEFAULT 0,
+            chaos_tests_passed INTEGER DEFAULT 0,
+            chaos_total_tests INTEGER DEFAULT 0,
+            overall_score REAL DEFAULT 0,
+            hiring_verdict TEXT,
+            evaluation_json TEXT,
+            duration_seconds INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     
     # Commit all table creations
     conn.commit()
@@ -1578,4 +1603,161 @@ def trigger_background_job_fetch():
     print("Triggering background job fetch...")
     thread = threading.Thread(target=run_jobs_fetch, args=(4,), daemon=True)
     thread.start()
+
+
+# =========================================================================
+# Coding Studio Session Helpers
+# =========================================================================
+
+def save_coding_studio_session(user_id: str, session_data: dict) -> int:
+    """
+    Saves a coding studio evaluation session into database.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        eval_json = session_data.get("evaluation_json")
+        if isinstance(eval_json, (dict, list)):
+            eval_json_str = json.dumps(eval_json)
+        else:
+            eval_json_str = str(eval_json) if eval_json else "{}"
+
+        cursor.execute("""
+            INSERT INTO coding_studio_sessions (
+                user_id, problem_id, problem_title, track, difficulty, language,
+                user_code, time_complexity, space_complexity, tests_passed, total_tests,
+                chaos_tests_passed, chaos_total_tests, overall_score, hiring_verdict,
+                evaluation_json, duration_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id or "anonymous",
+            session_data.get("problem_id", ""),
+            session_data.get("problem_title", ""),
+            session_data.get("track", "DSA"),
+            session_data.get("difficulty", "Medium"),
+            session_data.get("language", "python"),
+            session_data.get("user_code", ""),
+            session_data.get("time_complexity", "O(N)"),
+            session_data.get("space_complexity", "O(1)"),
+            session_data.get("tests_passed", 0),
+            session_data.get("total_tests", 0),
+            session_data.get("chaos_tests_passed", 0),
+            session_data.get("chaos_total_tests", 0),
+            session_data.get("overall_score", 0.0),
+            session_data.get("hiring_verdict", "Hire"),
+            eval_json_str,
+            session_data.get("duration_seconds", 0)
+        ))
+        conn.commit()
+        session_id = cursor.lastrowid
+        return session_id
+    except Exception as e:
+        print(f"Error saving coding studio session: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_coding_studio_sessions(user_id: str = None) -> list:
+    """
+    Fetches past coding studio sessions for a user.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if user_id:
+            cursor.execute("""
+                SELECT * FROM coding_studio_sessions
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 50
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT * FROM coding_studio_sessions
+                ORDER BY created_at DESC
+                LIMIT 50
+            """)
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            eval_data = {}
+            if r.get("evaluation_json"):
+                try:
+                    eval_data = json.loads(r.get("evaluation_json"))
+                except Exception:
+                    eval_data = {}
+            
+            result.append({
+                "id": r.get("id"),
+                "user_id": r.get("user_id"),
+                "problem_id": r.get("problem_id"),
+                "problem_title": r.get("problem_title"),
+                "track": r.get("track"),
+                "difficulty": r.get("difficulty"),
+                "language": r.get("language"),
+                "user_code": r.get("user_code"),
+                "time_complexity": r.get("time_complexity"),
+                "space_complexity": r.get("space_complexity"),
+                "tests_passed": r.get("tests_passed"),
+                "total_tests": r.get("total_tests"),
+                "chaos_tests_passed": r.get("chaos_tests_passed"),
+                "chaos_total_tests": r.get("chaos_total_tests"),
+                "overall_score": r.get("overall_score"),
+                "hiring_verdict": r.get("hiring_verdict"),
+                "evaluation": eval_data,
+                "duration_seconds": r.get("duration_seconds"),
+                "created_at": r.get("created_at")
+            })
+        return result
+    except Exception as e:
+        print(f"Error getting coding studio sessions: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_coding_studio_session_by_id(session_id: int) -> dict:
+    """
+    Fetches a single coding studio session by its ID.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM coding_studio_sessions WHERE id = %s", (session_id,))
+        r = cursor.fetchone()
+        if not r:
+            return None
+        eval_data = {}
+        if r.get("evaluation_json"):
+            try:
+                eval_data = json.loads(r.get("evaluation_json"))
+            except Exception:
+                eval_data = {}
+        return {
+            "id": r.get("id"),
+            "user_id": r.get("user_id"),
+            "problem_id": r.get("problem_id"),
+            "problem_title": r.get("problem_title"),
+            "track": r.get("track"),
+            "difficulty": r.get("difficulty"),
+            "language": r.get("language"),
+            "user_code": r.get("user_code"),
+            "time_complexity": r.get("time_complexity"),
+            "space_complexity": r.get("space_complexity"),
+            "tests_passed": r.get("tests_passed"),
+            "total_tests": r.get("total_tests"),
+            "chaos_tests_passed": r.get("chaos_tests_passed"),
+            "chaos_total_tests": r.get("chaos_total_tests"),
+            "overall_score": r.get("overall_score"),
+            "hiring_verdict": r.get("hiring_verdict"),
+            "evaluation": eval_data,
+            "duration_seconds": r.get("duration_seconds"),
+            "created_at": r.get("created_at")
+        }
+    except Exception as e:
+        print(f"Error getting coding studio session by ID: {e}")
+        return None
+    finally:
+        conn.close()
+
 

@@ -2,11 +2,14 @@ import os
 import base64
 import requests
 from typing import Dict, Any, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class TextToSpeechService:
     """
     Unified TTS service interface supporting local Kokoro TTS
-    and cloud APIs (Sarvam AI / OpenAI TTS) as a fallback.
+    and cloud APIs (Sarvam AI bulbul:v3 / OpenAI TTS) as a fallback.
     """
     def __init__(self, use_local: bool = False):
         self.use_local = use_local

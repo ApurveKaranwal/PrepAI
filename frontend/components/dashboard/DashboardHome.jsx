@@ -330,16 +330,16 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
             </div>
           </div>
 
-          {/* Card 4: Coding Accuracy */}
+          {/* Card 4: Coding Accuracy & Studio */}
           <div 
             onClick={onStartPractice}
             className="border border-[#DFD5C6] hover:border-[#C85A32] rounded-2xl p-5 shadow-sm bg-[#FCFAF7] flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-0.5 select-none group premium-glow-card"
           >
             <div className="space-y-1">
               <div className="flex justify-between items-center">
-                <h3 className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">Coding Averages</h3>
+                <h3 className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">Coding Studio</h3>
                 <span className="px-1.5 py-0.5 rounded-md text-[8px] font-bold bg-[#FCEBE6] text-[#C85A32] border border-[#F2C2B8]">
-                  Logic
+                  AST & Chaos
                 </span>
               </div>
               <p className="text-2xl font-bold font-serif text-[#262626] leading-none pt-2.5">
@@ -347,11 +347,11 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 <span className="text-xs text-[#6E6359]/60 font-mono font-medium">/ 10</span>
               </p>
               <p className="text-[10px] text-[#6E6359]/70 pt-1">
-                {history.length} coding sessions
+                DSA, Backend & Chaos Edge Cases
               </p>
             </div>
             <div className="text-[10px] font-bold text-[#2E5A44] flex items-center gap-0.5 pt-4 group-hover:translate-x-1 transition-transform">
-              Practice coding <ChevronRight className="h-3 w-3" />
+              Launch Studio <ChevronRight className="h-3 w-3" />
             </div>
           </div>
 

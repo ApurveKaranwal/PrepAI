@@ -1532,23 +1532,57 @@ export default function VoiceCopilot({ user }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
             {/* 1. Radar Chart of Dimensions */}
-            <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-6 shadow-sm flex flex-col justify-between h-[360px]">
-              <h3 className="text-sm font-semibold text-[#262626] font-serif pb-3 border-b border-[#DFD5C6]">
-                Technical Capability Radar
-              </h3>
-              <div className="flex-1 flex justify-center items-center h-[260px] w-full text-xs mt-2">
+            <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-6 shadow-sm flex flex-col justify-between h-[380px]">
+              <div className="flex items-center justify-between pb-3 border-b border-[#DFD5C6]">
+                <h3 className="text-sm font-semibold text-[#262626] font-serif">
+                  Technical Capability Radar
+                </h3>
+                <span className="text-[10px] font-mono font-bold text-[#C85A32] bg-[#C85A32]/10 border border-[#C85A32]/20 px-2 py-0.5 rounded-md">
+                  Scale: 0-10
+                </span>
+              </div>
+              <div className="flex-1 flex justify-center items-center h-[280px] w-full text-xs mt-2">
                 <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart cx="50%" cy="50%" radius="80%" data={[
+                  <RadarChart cx="50%" cy="50%" outerRadius="68%" data={[
                     { subject: "Tech Depth", value: scorecard.scores.technical_depth },
                     { subject: "Communication", value: scorecard.scores.communication },
                     { subject: "Problem Solving", value: scorecard.scores.problem_solving },
                     { subject: "System Design", value: scorecard.scores.system_design },
                     { subject: "Ownership", value: scorecard.scores.ownership }
                   ]}>
-                    <PolarGrid stroke="#e5dfd5" />
-                    <PolarAngleAxis dataKey="subject" stroke="#6e6359" />
-                    <PolarRadiusAxis angle={30} domain={[0, 10]} stroke="#cbd5e1" />
-                    <Radar name="Score" dataKey="value" stroke="#C85A32" fill="#C85A32" fillOpacity={0.3} />
+                    <PolarGrid stroke="#DFD5C6" strokeDasharray="3 3" />
+                    <PolarAngleAxis
+                      dataKey="subject"
+                      tick={{ fill: "#262626", fontSize: 11, fontWeight: 700 }}
+                    />
+                    <PolarRadiusAxis
+                      domain={[0, 10]}
+                      axisLine={false}
+                      tick={false}
+                    />
+                    <Radar
+                      name="Score"
+                      dataKey="value"
+                      stroke="#C85A32"
+                      fill="#C85A32"
+                      fillOpacity={0.25}
+                      strokeWidth={2}
+                      dot={{ r: 4, fill: "#C85A32", stroke: "#FCFAF7", strokeWidth: 1.5 }}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0];
+                          return (
+                            <div className="bg-[#1E1E1E] text-white px-3 py-1.5 rounded-lg text-xs font-mono shadow-md border border-[#333333]">
+                              <span className="font-bold">{data.payload.subject}: </span>
+                              <span className="text-amber-400 font-bold">{data.value} / 10</span>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
                   </RadarChart>
                 </ResponsiveContainer>
               </div>

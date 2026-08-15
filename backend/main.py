@@ -36,11 +36,15 @@ app.include_router(voice_copilot_router, prefix="/api/voice-copilot")
 from career_agent import router as career_agent_router
 app.include_router(career_agent_router, prefix="/api/career")
 
+from code_studio.router import router as code_studio_router
+app.include_router(code_studio_router, prefix="/api/code")
+
+
 # Enable CORS
 app.add_middleware(
-
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:3001", "*"],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -10,6 +10,7 @@ import PerformanceAnalytics from "@/components/analytics/PerformanceAnalytics";
 import ResumeAnalyzer from "@/components/resume/ResumeAnalyzer";
 import VoiceCopilot from "@/components/interview/VoiceCopilot";
 import CareerAgent from "@/components/career/CareerAgent";
+import LiveCodingStudio from "@/components/coding/LiveCodingStudio";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
 
 interface UserProfile {
@@ -99,7 +100,7 @@ export default function Home() {
   };
 
   const handleStartPractice = () => {
-    setActiveTab("interviews");
+    setActiveTab("coding-studio");
   };
 
   if (authLoading) {
@@ -161,6 +162,15 @@ export default function Home() {
             user={user} 
           />
         )}
+        {activeTab === "coding-studio" && (
+          <LiveCodingStudio 
+            user={user}
+            onNavigate={(tab: string) => {
+              setActiveTab(tab);
+              setSidebarOpen(false);
+            }}
+          />
+        )}
         {activeTab === "interviews" && (
           <InterviewPrep onEndInterview={handleEndInterview} user={user} />
         )}
@@ -184,3 +194,4 @@ export default function Home() {
     </div>
   );
 }
+

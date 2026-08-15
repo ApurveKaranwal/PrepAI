@@ -1,11 +1,12 @@
 "use client";
 
 import React from "react";
-import { LayoutDashboard, Video, BarChart3, LogOut, Plus, FileText, Mic, Briefcase, X } from "lucide-react";
+import { LayoutDashboard, Video, BarChart3, LogOut, Plus, FileText, Mic, Briefcase, X, Code2 } from "lucide-react";
 
 export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onStartPractice, sidebarOpen, setSidebarOpen }) {
   const menuItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "coding-studio", label: "Live Coding Studio", icon: Code2 },
     { id: "interviews", label: "Interviews", icon: Video },
     { id: "voice-copilot", label: "Voice Copilot", icon: Mic },
     { id: "career-agent", label: "AI Career Agent", icon: Briefcase },
