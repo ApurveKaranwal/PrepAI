@@ -74,6 +74,7 @@ export default function LiveCodingStudio({ user, onNavigate }) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [editorFontSize, setEditorFontSize] = useState(13);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [mobileActivePane, setMobileActivePane] = useState("left"); // 'left' | 'editor' | 'console'
 
   // Execution & AST State
   const [isRunningTests, setIsRunningTests] = useState(false);
@@ -220,6 +221,9 @@ export default function LiveCodingStudio({ user, onNavigate }) {
     if (!currentProblem) return;
     setIsRunningTests(true);
     setBottomTab("tests");
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setMobileActivePane("console");
+    }
     setConsoleOutput("> Initializing polyglot execution sandbox...\n> Compiling code against test suite...\n");
 
     try {
@@ -360,6 +364,9 @@ export default function LiveCodingStudio({ user, onNavigate }) {
     if (!currentProblem) return;
     setIsRunningChaos(true);
     setLeftTab("chaos");
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setMobileActivePane("left");
+    }
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/code/chaos-test`, {
@@ -394,6 +401,9 @@ export default function LiveCodingStudio({ user, onNavigate }) {
     if (!currentProblem) return;
     setIsSubmitting(true);
     setLeftTab("scorecard");
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setMobileActivePane("left");
+    }
 
     try {
       const passedCount = testResults?.tests_passed ?? (currentProblem.test_cases?.length || 0);
@@ -697,9 +707,9 @@ export default function LiveCodingStudio({ user, onNavigate }) {
       {/* =========================================================================
           TOP ACTION & CONTROL BAR WITH HIGH-TECH STATUS PILL
           ========================================================================= */}
-      <header className="bg-[#FCFAF7] border-b border-[#DFD5C6] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-xs backdrop-blur-xs">
+      <header className="bg-[#FCFAF7] border-b border-[#DFD5C6] px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2 sm:gap-3 shrink-0 shadow-xs backdrop-blur-xs overflow-x-auto custom-scrollbar">
         {/* Left: Tracks & Problem Selector */}
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <div className="flex items-center gap-1 bg-[#FAF6F0] p-1 rounded-xl border border-[#DFD5C6]">
             {[
               { id: "DSA", label: "DSA", icon: Cpu },
@@ -713,7 +723,7 @@ export default function LiveCodingStudio({ user, onNavigate }) {
                 <button
                   key={t.id}
                   onClick={() => handleTrackChange(t.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     active
                       ? "bg-[#C85A32] text-white shadow-xs"
                       : "text-[#6E6359] hover:text-[#262626] hover:bg-[#FCFAF7]"
@@ -733,7 +743,7 @@ export default function LiveCodingStudio({ user, onNavigate }) {
               const p = problems.find((item) => item.id === e.target.value);
               if (p) selectProblem(p);
             }}
-            className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs font-bold px-3 py-1.5 text-[#262626] focus:outline-none focus:border-[#C85A32] cursor-pointer max-w-[200px] truncate shadow-2xs"
+            className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs font-bold px-2.5 sm:px-3 py-1.5 text-[#262626] focus:outline-none focus:border-[#C85A32] cursor-pointer max-w-[140px] sm:max-w-[200px] truncate shadow-2xs"
           >
             {problems
               .filter((p) => p.track === activeTrack || activeTrack === "GitHub-Tailored")
@@ -747,7 +757,7 @@ export default function LiveCodingStudio({ user, onNavigate }) {
           {/* Browse Full Library Button */}
           <button
             onClick={() => setIsProblemLibraryOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF6F0] hover:bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs font-bold text-[#262626] transition-all cursor-pointer shadow-xs"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#FAF6F0] hover:bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs font-bold text-[#262626] transition-all cursor-pointer shadow-xs"
             title="Open Problem Explorer with search and filters"
           >
             <BookOpen className="h-3.5 w-3.5 text-[#C85A32]" />
@@ -759,7 +769,7 @@ export default function LiveCodingStudio({ user, onNavigate }) {
           {/* Difficulty Badge */}
           {currentProblem && (
             <span
-              className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border shadow-2xs ${getDifficultyBadge(
+              className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border shadow-2xs hidden sm:inline-block ${getDifficultyBadge(
                 currentProblem.difficulty
               )}`}
             >
@@ -769,13 +779,13 @@ export default function LiveCodingStudio({ user, onNavigate }) {
         </div>
 
         {/* Center: Live Session Timer & Polyglot Sandbox Status */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <div className="hidden xl:flex items-center gap-2 bg-[#FAF6F0] px-2.5 py-1 rounded-lg border border-[#DFD5C6] text-[11px] font-mono text-[#6E6359]">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
             <span>Native Sandbox</span>
           </div>
 
-          <div className="flex items-center gap-2 bg-[#FAF6F0] px-3 py-1.5 rounded-xl border border-[#DFD5C6] shadow-2xs">
+          <div className="flex items-center gap-1.5 sm:gap-2 bg-[#FAF6F0] px-2.5 sm:px-3 py-1.5 rounded-xl border border-[#DFD5C6] shadow-2xs">
             <Clock className="h-3.5 w-3.5 text-[#6E6359]" />
             <span className="font-mono text-xs font-bold text-[#262626]">{formatTime(timerSeconds)}</span>
             <button
@@ -788,12 +798,12 @@ export default function LiveCodingStudio({ user, onNavigate }) {
         </div>
 
         {/* Right: Actions (Language, Complexity, Stress Test, Run, Submit) */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Dynamic Language Switcher */}
           <select
             value={language}
             onChange={(e) => handleLanguageChange(e.target.value)}
-            className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs font-mono font-bold px-3 py-1.5 text-[#262626] focus:outline-none focus:border-[#C85A32] cursor-pointer shadow-2xs"
+            className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs font-mono font-bold px-2.5 sm:px-3 py-1.5 text-[#262626] focus:outline-none focus:border-[#C85A32] cursor-pointer shadow-2xs"
           >
             {activeTrack === "DSA" ? (
               <>
@@ -814,8 +824,11 @@ export default function LiveCodingStudio({ user, onNavigate }) {
 
           {/* Ask AI Interviewer */}
           <button
-            onClick={() => setLeftTab("copilot")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer shadow-2xs ${
+            onClick={() => {
+              setLeftTab("copilot");
+              if (typeof window !== "undefined" && window.innerWidth < 1024) setMobileActivePane("left");
+            }}
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer shadow-2xs ${
               leftTab === "copilot"
                 ? "bg-[#C85A32]/10 border-[#C85A32] text-[#C85A32]"
                 : "border-[#DFD5C6] bg-[#FCFAF7] hover:bg-[#FAF6F0] text-[#6E6359] hover:text-[#262626]"
@@ -828,9 +841,12 @@ export default function LiveCodingStudio({ user, onNavigate }) {
 
           {/* Analyze Complexity (AST) */}
           <button
-            onClick={() => runASTAnalysis(true)}
+            onClick={() => {
+              runASTAnalysis(true);
+              if (typeof window !== "undefined" && window.innerWidth < 1024) setMobileActivePane("console");
+            }}
             disabled={isAnalyzingAST}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#DFD5C6] bg-[#FCFAF7] hover:bg-[#FAF6F0] text-[#6E6359] hover:text-[#262626] transition-all cursor-pointer disabled:opacity-50 shadow-2xs"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#DFD5C6] bg-[#FCFAF7] hover:bg-[#FAF6F0] text-[#6E6359] hover:text-[#262626] transition-all cursor-pointer disabled:opacity-50 shadow-2xs"
             title="Analyze Big-O Complexity"
           >
             <Cpu className="h-3.5 w-3.5 text-[#6E6359]" />
@@ -841,7 +857,7 @@ export default function LiveCodingStudio({ user, onNavigate }) {
           <button
             onClick={handleChaosTest}
             disabled={isRunningChaos}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#DFD5C6] bg-[#FCFAF7] hover:bg-[#FAF6F0] text-[#6E6359] hover:text-[#262626] transition-all cursor-pointer disabled:opacity-50 shadow-2xs"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#DFD5C6] bg-[#FCFAF7] hover:bg-[#FAF6F0] text-[#6E6359] hover:text-[#262626] transition-all cursor-pointer disabled:opacity-50 shadow-2xs"
             title="Run Boundary Stress Test"
           >
             <ShieldAlert className="h-3.5 w-3.5 text-[#C85A32]" />
@@ -852,11 +868,11 @@ export default function LiveCodingStudio({ user, onNavigate }) {
           <button
             onClick={handleRunCode}
             disabled={isRunningTests}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-[#262626] hover:bg-black text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50 hover:scale-[1.01]"
+            className="flex items-center gap-1.5 px-3.5 sm:px-4 py-1.5 bg-[#262626] hover:bg-black text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50 hover:scale-[1.01]"
             title="Execute Code (Ctrl + Enter)"
           >
             <Play className="h-3.5 w-3.5 fill-current" />
-            <span>{isRunningTests ? "Running..." : "Run Code"}</span>
+            <span>{isRunningTests ? "Running..." : "Run"}</span>
             <span className="hidden xl:inline text-[9px] bg-white/20 px-1 py-0.2 rounded font-mono">⌘↵</span>
           </button>
 
@@ -864,13 +880,58 @@ export default function LiveCodingStudio({ user, onNavigate }) {
           <button
             onClick={handleSubmitSolution}
             disabled={isSubmitting}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50 hover:scale-[1.01]"
+            className="flex items-center gap-1.5 px-3.5 sm:px-4 py-1.5 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50 hover:scale-[1.01]"
           >
             <Award className="h-3.5 w-3.5" />
-            <span>{isSubmitting ? "Evaluating..." : "Submit Solution"}</span>
+            <span className="hidden sm:inline">{isSubmitting ? "Evaluating..." : "Submit Solution"}</span>
+            <span className="sm:hidden">{isSubmitting ? "..." : "Submit"}</span>
           </button>
         </div>
       </header>
+
+      {/* =========================================================================
+          MOBILE VIEW SELECTOR (Visible only on mobile/tablet < lg)
+          ========================================================================= */}
+      <div className="lg:hidden flex items-center justify-between border-b border-[#DFD5C6] bg-[#FCFAF7] px-3 py-1.5 shrink-0 select-none">
+        <div className="flex items-center gap-1 bg-[#FAF6F0] p-1 rounded-xl border border-[#DFD5C6] w-full">
+          <button
+            onClick={() => setMobileActivePane("left")}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              mobileActivePane === "left"
+                ? "bg-[#C85A32] text-white shadow-2xs"
+                : "text-[#6E6359] hover:text-[#262626]"
+            }`}
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+            <span>{leftTab === "problem" ? "Problem" : leftTab === "copilot" ? "Interviewer" : leftTab === "chaos" ? "Stress" : "Score"}</span>
+          </button>
+          <button
+            onClick={() => setMobileActivePane("editor")}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              mobileActivePane === "editor"
+                ? "bg-[#C85A32] text-white shadow-2xs"
+                : "text-[#6E6359] hover:text-[#262626]"
+            }`}
+          >
+            <Code2 className="h-3.5 w-3.5" />
+            <span>Editor</span>
+          </button>
+          <button
+            onClick={() => {
+              setMobileActivePane("console");
+              setBottomTab("tests");
+            }}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              mobileActivePane === "console"
+                ? "bg-[#C85A32] text-white shadow-2xs"
+                : "text-[#6E6359] hover:text-[#262626]"
+            }`}
+          >
+            <Terminal className="h-3.5 w-3.5" />
+            <span>{testResults ? `${testResults.tests_passed}/${testResults.total_tests} Tests` : "Console"}</span>
+          </button>
+        </div>
+      </div>
 
       {/* =========================================================================
           MAIN WORKSPACE: SPLIT SCREEN (LEFT: PROBLEM / AI, RIGHT: CODE / CONSOLE)
@@ -879,7 +940,9 @@ export default function LiveCodingStudio({ user, onNavigate }) {
         {/* =====================================================================
             LEFT PANEL: Problem Description, AI Copilot, Chaos Report, Scorecard
             ===================================================================== */}
-        <div className="w-full lg:w-[42%] border-r border-[#DFD5C6] flex flex-col bg-[#FCFAF7] overflow-hidden">
+        <div className={`w-full lg:w-[42%] border-r border-[#DFD5C6] flex flex-col bg-[#FCFAF7] overflow-hidden ${
+          mobileActivePane === "left" ? "flex flex-1" : "hidden lg:flex"
+        }`}>
           {/* Sub-tab Navigation */}
           <div className="flex items-center border-b border-[#DFD5C6] bg-[#FAF6F0] px-3 pt-2 gap-1 shrink-0">
             {[
@@ -1335,128 +1398,139 @@ export default function LiveCodingStudio({ user, onNavigate }) {
         {/* =====================================================================
             RIGHT PANEL: Full Code Studio Editor & Terminal / Test Runner
             ===================================================================== */}
-        <div className="flex-1 flex flex-col bg-[#1E1E1E] text-[#D4D4D4] overflow-hidden">
-          {/* Editor Header Toolbar */}
-          <div className="bg-[#252526] border-b border-[#333333] px-4 py-2.5 flex items-center justify-between shrink-0 text-xs font-mono select-none">
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1.5 text-white font-bold">
-                <FileCode2 className="h-4 w-4 text-[#C85A32]" />
-                {language === "cpp"
-                  ? "solution.cpp"
-                  : language === "java"
-                  ? "Solution.java"
-                  : language === "typescript"
-                  ? "solution.ts"
-                  : language === "go"
-                  ? "solution.go"
-                  : language === "javascript"
-                  ? "solution.js"
-                  : "solution.py"}
-              </span>
-              <span className="text-[#858585] text-[11px]">
-                Lines: {code.split("\n").length} | Chars: {code.length}
-              </span>
-            </div>
-
-            {/* AST Complexity Live Indicator Badge */}
-            <div className="flex items-center gap-2">
-              {astAnalysis && (
-                <div className="flex items-center gap-2 bg-[#18181B] px-3 py-1 rounded-lg border border-[#3E3E42] text-[11px] shadow-2xs">
-                  <span className="text-[#858585]">Time:</span>
-                  <span className="text-emerald-400 font-bold">{astAnalysis.time_complexity}</span>
-                  <span className="text-[#858585] ml-1">Space:</span>
-                  <span className="text-blue-400 font-bold">{astAnalysis.space_complexity}</span>
-                  <span className="text-[#858585] ml-1">Score:</span>
-                  <span className="text-amber-400 font-bold">{astAnalysis.code_quality_score}%</span>
-                </div>
-              )}
-
-              {/* Font Size Adjuster */}
-              <div className="flex items-center gap-1 bg-[#18181B] px-2 py-0.5 rounded-lg border border-[#333333]">
-                <button
-                  onClick={() => setEditorFontSize((prev) => Math.max(11, prev - 1))}
-                  className="text-[#858585] hover:text-white p-0.5 cursor-pointer text-[10px]"
-                  title="Decrease Font Size"
-                >
-                  A-
-                </button>
-                <span className="text-[#858585] text-[10px] font-bold px-1">{editorFontSize}px</span>
-                <button
-                  onClick={() => setEditorFontSize((prev) => Math.min(18, prev + 1))}
-                  className="text-[#858585] hover:text-white p-0.5 cursor-pointer text-[10px]"
-                  title="Increase Font Size"
-                >
-                  A+
-                </button>
+        <div className={`flex-1 flex flex-col bg-[#1E1E1E] text-[#D4D4D4] overflow-hidden ${
+          mobileActivePane !== "left" ? "flex flex-1" : "hidden lg:flex"
+        }`}>
+          {/* ===================================================================
+              TOP CODE EDITOR PANE
+              =================================================================== */}
+          <div className={`flex-1 flex flex-col min-h-0 ${
+            mobileActivePane === "console" ? "hidden lg:flex" : "flex"
+          }`}>
+            {/* Editor Header Toolbar */}
+            <div className="bg-[#252526] border-b border-[#333333] px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between shrink-0 text-xs font-mono select-none overflow-x-auto custom-scrollbar">
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="flex items-center gap-1.5 text-white font-bold">
+                  <FileCode2 className="h-4 w-4 text-[#C85A32]" />
+                  {language === "cpp"
+                    ? "solution.cpp"
+                    : language === "java"
+                    ? "Solution.java"
+                    : language === "typescript"
+                    ? "solution.ts"
+                    : language === "go"
+                    ? "solution.go"
+                    : language === "javascript"
+                    ? "solution.js"
+                    : "solution.py"}
+                </span>
+                <span className="text-[#858585] text-[11px] hidden sm:inline">
+                  Lines: {code.split("\n").length} | Chars: {code.length}
+                </span>
               </div>
 
-              {/* Editor Action Controls */}
-              <button
-                onClick={handleCopyCode}
-                className="p-1.5 rounded-lg hover:bg-[#333333] text-[#858585] hover:text-white cursor-pointer transition-all"
-                title="Copy Code Buffer"
-              >
-                {copiedCode ? <CheckCheck className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
-              </button>
+              {/* AST Complexity Live Indicator Badge */}
+              <div className="flex items-center gap-2 shrink-0">
+                {astAnalysis && (
+                  <div className="hidden md:flex items-center gap-2 bg-[#18181B] px-3 py-1 rounded-lg border border-[#3E3E42] text-[11px] shadow-2xs">
+                    <span className="text-[#858585]">Time:</span>
+                    <span className="text-emerald-400 font-bold">{astAnalysis.time_complexity}</span>
+                    <span className="text-[#858585] ml-1">Space:</span>
+                    <span className="text-blue-400 font-bold">{astAnalysis.space_complexity}</span>
+                    <span className="text-[#858585] ml-1">Score:</span>
+                    <span className="text-amber-400 font-bold">{astAnalysis.code_quality_score}%</span>
+                  </div>
+                )}
 
-              <button
-                onClick={() => {
-                  if (currentProblem?.starter_code?.[language]) {
-                    setCode(currentProblem.starter_code[language]);
+                {/* Font Size Adjuster */}
+                <div className="flex items-center gap-1 bg-[#18181B] px-2 py-0.5 rounded-lg border border-[#333333]">
+                  <button
+                    onClick={() => setEditorFontSize((prev) => Math.max(11, prev - 1))}
+                    className="text-[#858585] hover:text-white p-0.5 cursor-pointer text-[10px]"
+                    title="Decrease Font Size"
+                  >
+                    A-
+                  </button>
+                  <span className="text-[#858585] text-[10px] font-bold px-1">{editorFontSize}px</span>
+                  <button
+                    onClick={() => setEditorFontSize((prev) => Math.min(18, prev + 1))}
+                    className="text-[#858585] hover:text-white p-0.5 cursor-pointer text-[10px]"
+                    title="Increase Font Size"
+                  >
+                    A+
+                  </button>
+                </div>
+
+                {/* Editor Action Controls */}
+                <button
+                  onClick={handleCopyCode}
+                  className="p-1.5 rounded-lg hover:bg-[#333333] text-[#858585] hover:text-white cursor-pointer transition-all"
+                  title="Copy Code Buffer"
+                >
+                  {copiedCode ? <CheckCheck className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (currentProblem?.starter_code?.[language]) {
+                      setCode(currentProblem.starter_code[language]);
+                    }
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-[#333333] text-[#858585] hover:text-white cursor-pointer transition-all"
+                  title="Reset to Template"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </button>
+
+                <button
+                  onClick={() => setIsFullScreen(!isFullScreen)}
+                  className="p-1.5 rounded-lg hover:bg-[#333333] text-[#858585] hover:text-white cursor-pointer transition-all"
+                  title={isFullScreen ? "Exit Fullscreen" : "Fullscreen"}
+                >
+                  {isFullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Code Editor Body (Custom TextArea with line numbers & syntax feel) */}
+            <div className="flex-1 flex overflow-hidden relative font-mono text-xs">
+              {/* Line Numbers Column */}
+              <div className="w-10 sm:w-12 bg-[#18181B] text-[#858585]/50 text-right pr-2 sm:pr-3 pt-3 select-none border-r border-[#27272A] font-mono text-xs leading-5">
+                {code.split("\n").map((_, i) => (
+                  <div key={i}>{i + 1}</div>
+                ))}
+              </div>
+
+              {/* Editable Code Buffer */}
+              <textarea
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => {
+                  // Tab indentation handler
+                  if (e.key === "Tab") {
+                    e.preventDefault();
+                    const start = e.target.selectionStart;
+                    const end = e.target.selectionEnd;
+                    setCode(code.substring(0, start) + "    " + code.substring(end));
+                    setTimeout(() => {
+                      e.target.selectionStart = e.target.selectionEnd = start + 4;
+                    }, 0);
                   }
                 }}
-                className="p-1.5 rounded-lg hover:bg-[#333333] text-[#858585] hover:text-white cursor-pointer transition-all"
-                title="Reset to Template"
-              >
-                <RotateCcw className="h-4 w-4" />
-              </button>
-
-              <button
-                onClick={() => setIsFullScreen(!isFullScreen)}
-                className="p-1.5 rounded-lg hover:bg-[#333333] text-[#858585] hover:text-white cursor-pointer transition-all"
-                title={isFullScreen ? "Exit Fullscreen" : "Fullscreen"}
-              >
-                {isFullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-              </button>
+                spellCheck={false}
+                style={{ fontSize: `${editorFontSize}px` }}
+                className="flex-1 bg-[#1E1E1E] text-[#D4D4D4] p-3 focus:outline-none resize-none leading-5 font-mono overflow-auto custom-scrollbar whitespace-pre"
+                placeholder="// Write your solution here..."
+              />
             </div>
-          </div>
-
-          {/* Code Editor Body (Custom TextArea with line numbers & syntax feel) */}
-          <div className="flex-1 flex overflow-hidden relative font-mono text-xs">
-            {/* Line Numbers Column */}
-            <div className="w-12 bg-[#18181B] text-[#858585]/50 text-right pr-3 pt-3 select-none border-r border-[#27272A] font-mono text-xs leading-5">
-              {code.split("\n").map((_, i) => (
-                <div key={i}>{i + 1}</div>
-              ))}
-            </div>
-
-            {/* Editable Code Buffer */}
-            <textarea
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              onKeyDown={(e) => {
-                // Tab indentation handler
-                if (e.key === "Tab") {
-                  e.preventDefault();
-                  const start = e.target.selectionStart;
-                  const end = e.target.selectionEnd;
-                  setCode(code.substring(0, start) + "    " + code.substring(end));
-                  setTimeout(() => {
-                    e.target.selectionStart = e.target.selectionEnd = start + 4;
-                  }, 0);
-                }
-              }}
-              spellCheck={false}
-              style={{ fontSize: `${editorFontSize}px` }}
-              className="flex-1 bg-[#1E1E1E] text-[#D4D4D4] p-3 focus:outline-none resize-none leading-5 font-mono overflow-auto custom-scrollbar whitespace-pre"
-              placeholder="// Write your solution here..."
-            />
           </div>
 
           {/* ===================================================================
               BOTTOM RUNNER / TEST SUITE PANEL (Tabbed: Tests, Custom, Console, AST)
               =================================================================== */}
-          <div className="h-72 bg-[#252526] border-t border-[#333333] flex flex-col shrink-0">
+          <div className={`bg-[#252526] border-t border-[#333333] flex flex-col shrink-0 ${
+            mobileActivePane === "console" ? "flex-1 h-full" : "h-72 hidden lg:flex"
+          }`}>
             {/* Bottom Tabs */}
             <div className="flex items-center justify-between border-b border-[#333333] px-3 bg-[#18181B] text-xs">
               <div className="flex items-center gap-1">
