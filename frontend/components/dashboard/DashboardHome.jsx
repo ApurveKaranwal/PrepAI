@@ -392,7 +392,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
 
                 <div className="space-y-1">
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#FCFAF7] border border-[#DFD5C6] shadow-3xs text-[#262626]">
-                    <span>{devScoreData?.badge_icon || "🌱"}</span>
+                    <ShieldCheck className="h-3.5 w-3.5 text-[#C85A32]" />
                     <span className="font-serif">{devScoreData?.tier || "Apprentice / Growing"}</span>
                     <span className="text-[10px] font-mono text-[#C85A32] font-extrabold ml-1">
                       ({devScoreData?.percentile || "Baseline"})
@@ -643,7 +643,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                     <div className="flex items-baseline justify-between">
                       <span className="text-[10px] text-[#6E6359] font-mono">Public Repos & Stars</span>
                       <span className="text-base font-extrabold font-mono text-[#262626]">
-                        {devScoreData.platform_stats.github.public_repos} repos / {devScoreData.platform_stats.github.stars_total} ★
+                        {devScoreData.platform_stats.github.public_repos} repos • {devScoreData.platform_stats.github.stars_total} stars
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1 text-[9px] font-mono">

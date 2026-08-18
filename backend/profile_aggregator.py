@@ -411,27 +411,27 @@ def calculate_devscore(
     if total_devscore >= 900:
         tier_name = "Titan / Elite Staff"
         tier_color = "#C85A32"
-        badge_icon = "👑"
+        badge_icon = "titan"
         percentile = "Top 1%"
     elif total_devscore >= 750:
         tier_name = "Distinguished Senior"
         tier_color = "#2E5A44"
-        badge_icon = "🏆"
+        badge_icon = "senior"
         percentile = "Top 5%"
     elif total_devscore >= 600:
         tier_name = "Proficient Mid-Level"
         tier_color = "#2B4C7E"
-        badge_icon = "⭐"
+        badge_icon = "mid"
         percentile = "Top 20%"
     elif total_devscore >= 400:
         tier_name = "Active Developer"
         tier_color = "#A6690B"
-        badge_icon = "⚡"
+        badge_icon = "active"
         percentile = "Top 50%"
     else:
         tier_name = "Apprentice / Growing"
         tier_color = "#6E6359"
-        badge_icon = "🌱"
+        badge_icon = "apprentice"
         percentile = "Baseline"
 
     badges = []
