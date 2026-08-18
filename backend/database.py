@@ -407,6 +407,13 @@ def init_db():
             linkedin_data TEXT,
             company_type_preference TEXT,
             portfolio_url TEXT DEFAULT '',
+            leetcode_handle TEXT DEFAULT '',
+            leetcode_stats TEXT DEFAULT '{}',
+            codeforces_handle TEXT DEFAULT '',
+            codeforces_stats TEXT DEFAULT '{}',
+            devscore INTEGER DEFAULT 0,
+            devscore_breakdown TEXT DEFAULT '{}',
+            last_platform_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -538,6 +545,28 @@ def init_db():
             conn.rollback()
         except Exception:
             pass
+
+    # Alter candidate_profiles to add multi-platform & devscore columns
+    platform_cols = [
+        ("leetcode_handle", "TEXT DEFAULT ''"),
+        ("leetcode_stats", "TEXT DEFAULT '{}'"),
+        ("codeforces_handle", "TEXT DEFAULT ''"),
+        ("codeforces_stats", "TEXT DEFAULT '{}'"),
+        ("devscore", "INTEGER DEFAULT 0"),
+        ("devscore_breakdown", "TEXT DEFAULT '{}'"),
+        ("last_platform_sync", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    ]
+    for col_name, col_def in platform_cols:
+        try:
+            if not column_exists('candidate_profiles', col_name):
+                cursor.execute(f"ALTER TABLE candidate_profiles ADD COLUMN {col_name} {col_def}")
+                conn.commit()
+        except Exception as e:
+            print(f"Error adding {col_name} to candidate_profiles:", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
     conn.close()
     print("PostgreSQL Database successfully initialized.")
@@ -1056,6 +1085,13 @@ def save_candidate_profile(user_id: str, p: dict):
     cursor.execute("SELECT 1 FROM candidate_profiles WHERE user_id = ?", (user_id,))
     exists = cursor.fetchone()
     
+    leetcode_handle = p.get("leetcode_handle", "")
+    leetcode_stats = json.dumps(p.get("leetcode_stats", {})) if isinstance(p.get("leetcode_stats"), dict) else p.get("leetcode_stats", "{}")
+    codeforces_handle = p.get("codeforces_handle", "")
+    codeforces_stats = json.dumps(p.get("codeforces_stats", {})) if isinstance(p.get("codeforces_stats"), dict) else p.get("codeforces_stats", "{}")
+    devscore = p.get("devscore", 0)
+    devscore_breakdown = json.dumps(p.get("devscore_breakdown", {})) if isinstance(p.get("devscore_breakdown"), dict) else p.get("devscore_breakdown", "{}")
+
     if exists:
         cursor.execute("""
             UPDATE candidate_profiles SET
@@ -1063,7 +1099,9 @@ def save_candidate_profile(user_id: str, p: dict):
                 salary_expectations = ?, notice_period = ?, tech_stack_preferences = ?,
                 company_size_preference = ?, startup_vs_enterprise = ?, visa_sponsorship = ?,
                 resume_name = ?, resume_text = ?, github_url = ?, linkedin_url = ?,
-                github_stats = ?, linkedin_data = ?, company_type_preference = ?, portfolio_url = ?
+                github_stats = ?, linkedin_data = ?, company_type_preference = ?, portfolio_url = ?,
+                leetcode_handle = ?, leetcode_stats = ?, codeforces_handle = ?, codeforces_stats = ?,
+                devscore = ?, devscore_breakdown = ?, last_platform_sync = CURRENT_TIMESTAMP
             WHERE user_id = ?
         """, (
             p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
@@ -1072,6 +1110,8 @@ def save_candidate_profile(user_id: str, p: dict):
             p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
             json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
             p.get("company_type_preference", "Any"), p.get("portfolio_url", ""),
+            leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
+            devscore, devscore_breakdown,
             user_id
         ))
     else:
@@ -1081,17 +1121,74 @@ def save_candidate_profile(user_id: str, p: dict):
                 salary_expectations, notice_period, tech_stack_preferences,
                 company_size_preference, startup_vs_enterprise, visa_sponsorship,
                 resume_name, resume_text, github_url, linkedin_url,
-                github_stats, linkedin_data, company_type_preference, portfolio_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                github_stats, linkedin_data, company_type_preference, portfolio_url,
+                leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
+                devscore, devscore_breakdown, last_platform_sync
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (
             user_id, p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
             p.get("salary_expectations"), p.get("notice_period"), json.dumps(p.get("tech_stack_preferences", [])),
             p.get("company_size_preference"), p.get("startup_vs_enterprise"), p.get("visa_sponsorship"),
             p.get("resume_name"), p.get("resume_text"), p.get("github_url"), p.get("linkedin_url"),
             json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
-            p.get("company_type_preference", "Any"), p.get("portfolio_url", "")
+            p.get("company_type_preference", "Any"), p.get("portfolio_url", ""),
+            leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
+            devscore, devscore_breakdown
         ))
     
+    conn.commit()
+    conn.close()
+
+def update_candidate_platform_stats(user_id: str, p: dict):
+    """Updates only the verified competitive programming platforms and DevScore for a candidate."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    leetcode_handle = p.get("leetcode_handle", "")
+    leetcode_stats = json.dumps(p.get("leetcode_stats", {})) if isinstance(p.get("leetcode_stats"), dict) else p.get("leetcode_stats", "{}")
+    codeforces_handle = p.get("codeforces_handle", "")
+    codeforces_stats = json.dumps(p.get("codeforces_stats", {})) if isinstance(p.get("codeforces_stats"), dict) else p.get("codeforces_stats", "{}")
+    github_url = p.get("github_url", "")
+    github_stats = json.dumps(p.get("github_stats", {})) if isinstance(p.get("github_stats"), dict) else p.get("github_stats", "{}")
+    devscore = p.get("devscore", 0)
+    devscore_breakdown = json.dumps(p.get("devscore_breakdown", {})) if isinstance(p.get("devscore_breakdown"), dict) else p.get("devscore_breakdown", "{}")
+
+    # Check if candidate profile exists
+    cursor.execute("SELECT 1 FROM candidate_profiles WHERE user_id = ?", (user_id,))
+    exists = cursor.fetchone()
+
+    if exists:
+        cursor.execute("""
+            UPDATE candidate_profiles SET
+                leetcode_handle = ?,
+                leetcode_stats = ?,
+                codeforces_handle = ?,
+                codeforces_stats = ?,
+                github_url = ?,
+                github_stats = ?,
+                devscore = ?,
+                devscore_breakdown = ?,
+                last_platform_sync = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+        """, (
+            leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
+            github_url, github_stats, devscore, devscore_breakdown, user_id
+        ))
+    else:
+        cursor.execute("""
+            INSERT INTO candidate_profiles (
+                user_id, job_type, work_mode, countries, cities,
+                salary_expectations, notice_period, tech_stack_preferences,
+                company_size_preference, startup_vs_enterprise, visa_sponsorship,
+                resume_name, resume_text, github_url, linkedin_url,
+                github_stats, linkedin_data, company_type_preference, portfolio_url,
+                leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
+                devscore, devscore_breakdown, last_platform_sync
+            ) VALUES (?, 'Full-Time', 'Remote', '["India"]', '["Bengaluru"]', '₹15 LPA', 'Immediate', '["Python", "React"]', 'Any', 'Startup', 'No', '', '', ?, '', ?, '{}', 'Any', '', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (
+            user_id, github_url, github_stats, leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats, devscore, devscore_breakdown
+        ))
+
     conn.commit()
     conn.close()
 
@@ -1125,6 +1222,13 @@ def get_candidate_profile(user_id: str) -> dict:
         "github_stats": json.loads(row["github_stats"]) if row["github_stats"] else {},
         "linkedin_data": json.loads(row["linkedin_data"]) if row["linkedin_data"] else {},
         "company_type_preference": row["company_type_preference"] if "company_type_preference" in row.keys() else "Any",
+        "leetcode_handle": row["leetcode_handle"] if "leetcode_handle" in row.keys() else "",
+        "leetcode_stats": json.loads(row["leetcode_stats"]) if "leetcode_stats" in row.keys() and row["leetcode_stats"] else {},
+        "codeforces_handle": row["codeforces_handle"] if "codeforces_handle" in row.keys() else "",
+        "codeforces_stats": json.loads(row["codeforces_stats"]) if "codeforces_stats" in row.keys() and row["codeforces_stats"] else {},
+        "devscore": row["devscore"] if "devscore" in row.keys() and row["devscore"] else 0,
+        "devscore_breakdown": json.loads(row["devscore_breakdown"]) if "devscore_breakdown" in row.keys() and row["devscore_breakdown"] else {},
+        "last_platform_sync": str(row["last_platform_sync"]) if "last_platform_sync" in row.keys() and row["last_platform_sync"] else "",
         "created_at": row["created_at"]
     }
 

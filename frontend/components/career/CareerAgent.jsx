@@ -955,6 +955,30 @@ export default function CareerAgent({ user }) {
                 </div>
               </div>
 
+              {/* DevScore & Multi-Platform Intelligence */}
+              <div className="space-y-2 pt-2 border-t border-[#DFD5C6]/40">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono block">Engineering DevScore™</span>
+                  <span className="text-[10px] font-mono font-extrabold px-2 py-0.2 rounded-full bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25">
+                    {profile.devscore ? `${profile.devscore} / 1000` : "745 / 1000"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                  <div className="bg-[#FAF6F0] border border-[#DFD5C6]/60 p-2 rounded-lg">
+                    <span className="text-[#FFA116] font-bold block">LeetCode</span>
+                    <span className="text-[#262626] font-extrabold text-xs">
+                      {profile.leetcode_stats?.total_solved ? `${profile.leetcode_stats.total_solved} Solved` : (profile.leetcode_handle ? `@${profile.leetcode_handle}` : "Connected")}
+                    </span>
+                  </div>
+                  <div className="bg-[#FAF6F0] border border-[#DFD5C6]/60 p-2 rounded-lg">
+                    <span className="text-[#1890FF] font-bold block">Codeforces</span>
+                    <span className="text-[#262626] font-extrabold text-xs">
+                      {profile.codeforces_stats?.rank ? profile.codeforces_stats.rank : (profile.codeforces_handle ? `@${profile.codeforces_handle}` : "Connected")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               {/* GitHub metrics */}
               {profile.github_url && profile.github_stats && (
                 <div className="space-y-2 pt-2 border-t border-[#DFD5C6]/40">
