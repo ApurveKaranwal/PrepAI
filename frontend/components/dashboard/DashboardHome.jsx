@@ -321,150 +321,179 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
         {/* =========================================================================
             PREPFLOW DEVSCORE™ & MULTI-PLATFORM PROOF-OF-SKILL AGGREGATOR
             ========================================================================= */}
-        <section className="border border-[#DFD5C6] rounded-2xl overflow-hidden shadow-sm bg-[#FCFAF7] space-y-6 p-6 lg:p-8 select-none">
+        <section className="border border-[#DFD5C6] rounded-2xl overflow-hidden shadow-sm bg-[#FCFAF7] space-y-6 p-6 sm:p-8 select-none">
           {/* Header Row */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#DFD5C6]/60 pb-5">
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-[#C85A32]/10 border border-[#C85A32]/25 text-[#C85A32] uppercase tracking-wider">
-                  Verified Proof-of-Skill
+                  Dev Competency Rating
                 </span>
                 <span className="text-[10px] font-mono text-[#6E6359]">
                   DevScore™ Engine v1.0
                 </span>
               </div>
               <h2 className="text-2xl font-serif font-bold text-[#262626] tracking-tight">
-                Developer Credit Score & External Benchmarks
+                Developer Credit Score & Multi-Platform Intelligence
               </h2>
-              <p className="text-xs text-[#6E6359] font-medium">
-                Live cryptographic & algorithmic aggregation across LeetCode, Codeforces, GitHub, and Sandbox Stress testing.
+              <p className="text-xs text-[#6E6359] font-medium max-w-2xl">
+                Unified algorithmic proof-of-competence aggregated across LeetCode, Codeforces, GitHub, and Polyglot Sandbox Stress testing.
               </p>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => setShowSyncModal(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[#262626] hover:bg-black text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+                className="flex items-center gap-2 px-4 py-2 bg-[#FCFAF7] hover:bg-[#FAF6F0] text-[#262626] border border-[#DFD5C6] hover:border-[#C85A32] rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-[#C85A32]" />
-                <span>Sync Platform Handles</span>
+                <span>Sync Platform Accounts</span>
               </button>
             </div>
           </div>
 
           {/* DevScore Core Metric Row */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-            {/* Left Col: Circular Gauge & Tier */}
-            <div className="lg:col-span-5 bg-[#FAF6F0] border border-[#DFD5C6] rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4">
-              <div className="relative h-32 w-32 flex items-center justify-center">
-                <svg className="w-full h-full transform -rotate-90">
-                  <circle
-                    cx="64"
-                    cy="64"
-                    r="54"
-                    className="stroke-[#DFD5C6]/50"
-                    strokeWidth="10"
-                    fill="transparent"
-                  />
-                  <circle
-                    cx="64"
-                    cy="64"
-                    r="54"
-                    className="stroke-[#C85A32]"
-                    strokeWidth="10"
-                    fill="transparent"
-                    strokeDasharray={2 * Math.PI * 54}
-                    strokeDashoffset={2 * Math.PI * 54 * (1 - (devScoreData?.devscore || 720) / 1000)}
-                    strokeLinecap="round"
-                  />
-                </svg>
-                <div className="absolute flex flex-col items-center justify-center">
-                  <span className="text-3xl font-extrabold font-mono text-[#262626] tracking-tight">
-                    {devScoreData?.devscore || 720}
-                  </span>
-                  <span className="text-[10px] font-mono text-[#6E6359] uppercase tracking-widest font-bold">
-                    / 1000
-                  </span>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+            {/* Left Col: Circular Gauge & Dynamic Breakdown */}
+            <div className="lg:col-span-5 bg-[#FAF6F0]/80 border border-[#DFD5C6] rounded-2xl p-6 flex flex-col justify-between space-y-5">
+              <div className="flex flex-col items-center text-center space-y-3">
+                {/* SVG Gauge */}
+                <div className="relative h-32 w-32 flex items-center justify-center">
+                  <svg className="w-full h-full transform -rotate-90">
+                    <circle
+                      cx="64"
+                      cy="64"
+                      r="52"
+                      className="stroke-[#DFD5C6]/60"
+                      strokeWidth="9"
+                      fill="transparent"
+                    />
+                    <circle
+                      cx="64"
+                      cy="64"
+                      r="52"
+                      className="stroke-[#C85A32]"
+                      strokeWidth="9"
+                      fill="transparent"
+                      strokeDasharray={2 * Math.PI * 52}
+                      strokeDashoffset={2 * Math.PI * 52 * (1 - (devScoreData?.devscore || 0) / 1000)}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <div className="absolute flex flex-col items-center justify-center">
+                    <span className="text-3xl font-black font-mono text-[#262626] tracking-tight">
+                      {devScoreData?.devscore || 0}
+                    </span>
+                    <span className="text-[10px] font-mono text-[#6E6359] uppercase tracking-widest font-bold">
+                      / 1000
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#FCFAF7] border border-[#DFD5C6] shadow-3xs text-[#262626]">
+                    <span>{devScoreData?.badge_icon || "🌱"}</span>
+                    <span className="font-serif">{devScoreData?.tier || "Apprentice / Growing"}</span>
+                    <span className="text-[10px] font-mono text-[#C85A32] font-extrabold ml-1">
+                      ({devScoreData?.percentile || "Baseline"})
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#6E6359] font-medium max-w-xs leading-relaxed">
+                    Evaluated against tech startup hiring benchmarks for algorithmic problem solving, system architecture, and code cleanliness.
+                  </p>
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#FCFAF7] border border-[#DFD5C6] shadow-2xs text-[#262626]">
-                  <span>{devScoreData?.badge_icon || "🏆"}</span>
-                  <span className="font-serif">{devScoreData?.tier || "Distinguished Senior"}</span>
-                  <span className="text-[10px] font-mono text-[#C85A32] font-extrabold ml-1">
-                    ({devScoreData?.percentile || "Top 5%"})
-                  </span>
-                </div>
-                <p className="text-[11px] text-[#6E6359] font-medium max-w-xs">
-                  Recognized in the hiring tier by startups and tech companies for DSA, system architecture, and debugging.
-                </p>
-              </div>
-
-              {/* Sub-Score Progress Bars */}
-              <div className="w-full space-y-2 pt-2 border-t border-[#DFD5C6]/60 text-[10px] font-mono">
+              {/* Sub-Score Progress Bars (Exact Dynamic Point Distribution) */}
+              <div className="w-full space-y-2.5 pt-3 border-t border-[#DFD5C6]/70 text-[10px] font-mono">
+                {/* LeetCode */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-[#6E6359] font-bold">
-                    <span>LeetCode Problem Solving</span>
-                    <span>{devScoreData?.breakdown?.leetcode_points || 280} / 350 pts</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#D97706]" />
+                      LeetCode Problem Solving
+                    </span>
+                    <span className="text-[#262626] font-extrabold">
+                      {devScoreData?.breakdown?.leetcode_points ?? 0} / 350 pts
+                    </span>
                   </div>
-                  <div className="w-full bg-[#DFD5C6]/50 h-1.5 rounded-full overflow-hidden">
+                  <div className="w-full bg-[#DFD5C6]/40 h-1.5 rounded-full overflow-hidden">
                     <div
-                      className="bg-[#FFA116] h-full rounded-full transition-all duration-500"
-                      style={{ width: `${((devScoreData?.breakdown?.leetcode_points || 280) / 350) * 100}%` }}
+                      className="bg-[#D97706] h-full rounded-full transition-all duration-700"
+                      style={{ width: `${Math.min(100, ((devScoreData?.breakdown?.leetcode_points ?? 0) / 350) * 100)}%` }}
                     />
                   </div>
                 </div>
 
+                {/* Codeforces */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-[#6E6359] font-bold">
-                    <span>Codeforces Contest Rating</span>
-                    <span>{devScoreData?.breakdown?.codeforces_points || 160} / 200 pts</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#2563EB]" />
+                      Codeforces Competitive Rating
+                    </span>
+                    <span className="text-[#262626] font-extrabold">
+                      {devScoreData?.breakdown?.codeforces_points ?? 0} / 200 pts
+                    </span>
                   </div>
-                  <div className="w-full bg-[#DFD5C6]/50 h-1.5 rounded-full overflow-hidden">
+                  <div className="w-full bg-[#DFD5C6]/40 h-1.5 rounded-full overflow-hidden">
                     <div
-                      className="bg-[#1890FF] h-full rounded-full transition-all duration-500"
-                      style={{ width: `${((devScoreData?.breakdown?.codeforces_points || 160) / 200) * 100}%` }}
+                      className="bg-[#2563EB] h-full rounded-full transition-all duration-700"
+                      style={{ width: `${Math.min(100, ((devScoreData?.breakdown?.codeforces_points ?? 0) / 200) * 100)}%` }}
                     />
                   </div>
                 </div>
 
+                {/* GitHub */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-[#6E6359] font-bold">
-                    <span>GitHub OSS & Craftsmanship</span>
-                    <span>{devScoreData?.breakdown?.github_points || 170} / 200 pts</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#334155]" />
+                      GitHub OSS & Craftsmanship
+                    </span>
+                    <span className="text-[#262626] font-extrabold">
+                      {devScoreData?.breakdown?.github_points ?? 0} / 200 pts
+                    </span>
                   </div>
-                  <div className="w-full bg-[#DFD5C6]/50 h-1.5 rounded-full overflow-hidden">
+                  <div className="w-full bg-[#DFD5C6]/40 h-1.5 rounded-full overflow-hidden">
                     <div
-                      className="bg-[#24292E] h-full rounded-full transition-all duration-500"
-                      style={{ width: `${((devScoreData?.breakdown?.github_points || 170) / 200) * 100}%` }}
+                      className="bg-[#334155] h-full rounded-full transition-all duration-700"
+                      style={{ width: `${Math.min(100, ((devScoreData?.breakdown?.github_points ?? 0) / 200) * 100)}%` }}
                     />
                   </div>
                 </div>
 
+                {/* PrepAI */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-[#6E6359] font-bold">
-                    <span>PrepAI Sandbox & Voice Depth</span>
-                    <span>{devScoreData?.breakdown?.prepai_points || 230} / 250 pts</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#C85A32]" />
+                      PrepAI Sandbox & Voice Depth
+                    </span>
+                    <span className="text-[#262626] font-extrabold">
+                      {devScoreData?.breakdown?.prepai_points ?? 0} / 250 pts
+                    </span>
                   </div>
-                  <div className="w-full bg-[#DFD5C6]/50 h-1.5 rounded-full overflow-hidden">
+                  <div className="w-full bg-[#DFD5C6]/40 h-1.5 rounded-full overflow-hidden">
                     <div
-                      className="bg-[#C85A32] h-full rounded-full transition-all duration-500"
-                      style={{ width: `${((devScoreData?.breakdown?.prepai_points || 230) / 250) * 100}%` }}
+                      className="bg-[#C85A32] h-full rounded-full transition-all duration-700"
+                      style={{ width: `${Math.min(100, ((devScoreData?.breakdown?.prepai_points ?? 0) / 250) * 100)}%` }}
                     />
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Right Col: 4 Platform Micro-Cards Grid */}
+            {/* Right Col: 4 Clean Platform Cards Grid */}
             <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* 1. LeetCode Card */}
-              <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-2xs hover:border-[#FFA116]/60 transition-all">
+              <div className="bg-[#FAF6F0]/60 border border-[#DFD5C6] rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:border-[#D97706]/60 transition-all shadow-3xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-lg bg-[#FFA116]/15 border border-[#FFA116]/30 flex items-center justify-center font-bold text-xs text-[#FFA116]">
-                      LC
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-xl bg-[#FFF8EE] border border-[#FDE3B7] flex items-center justify-center text-[#D97706]">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M13.483 0a1.374 1.374 0 0 0-.961.438L7.116 6.226l-3.854 4.126a5.266 5.266 0 0 0-1.209 2.104 5.35 5.35 0 0 0-.125.513 5.527 5.527 0 0 0 .062 2.362 5.83 5.83 0 0 0 .349 1.017 5.938 5.938 0 0 0 1.271 1.818l4.277 4.193.039.038c2.248 2.165 5.852 2.133 8.063-.074l2.396-2.392c.54-.54.54-1.414.003-1.955a1.378 1.378 0 0 0-1.951-.003l-2.396 2.392a3.021 3.021 0 0 1-4.205.038l-.02-.019-4.276-4.193c-.652-.64-.972-1.469-.948-2.263a2.68 2.68 0 0 1 .066-.523 2.545 2.545 0 0 1 .619-1.164L9.13 8.114c1.058-1.134 3.204-1.27 4.43-.278l3.501 2.831c.593.48 1.461.387 1.94-.207a1.384 1.384 0 0 0-.207-1.943l-3.5-2.831c-.8-.647-1.766-1.045-2.774-1.202l2.015-2.158A1.384 1.384 0 0 0 13.483 0zm-2.866 12.815a1.38 1.38 0 0 0-1.38 1.382 1.38 1.38 0 0 0 1.38 1.382H20.79a1.38 1.38 0 0 0 1.38-1.382 1.38 1.38 0 0 0-1.38-1.382z"/>
+                      </svg>
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-[#262626]">LeetCode</h4>
@@ -482,38 +511,56 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   </span>
                 </div>
 
-                <div className="space-y-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] text-[#6E6359] font-mono">Total Solved</span>
-                    <span className="text-base font-extrabold font-mono text-[#262626]">
-                      {devScoreData?.platform_stats?.leetcode?.total_solved || 0}
-                    </span>
+                {devScoreData?.platform_stats?.leetcode?.connected ? (
+                  <div className="space-y-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[10px] text-[#6E6359] font-mono">Solved Problems</span>
+                      <span className="text-base font-extrabold font-mono text-[#262626]">
+                        {devScoreData.platform_stats.leetcode.total_solved}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[9px] font-mono font-bold">
+                      <span className="bg-emerald-500/15 text-emerald-800 px-1.5 py-0.5 rounded">
+                        Easy: {devScoreData.platform_stats.leetcode.easy_solved}
+                      </span>
+                      <span className="bg-amber-500/15 text-amber-800 px-1.5 py-0.5 rounded">
+                        Med: {devScoreData.platform_stats.leetcode.medium_solved}
+                      </span>
+                      <span className="bg-rose-500/15 text-rose-800 px-1.5 py-0.5 rounded">
+                        Hard: {devScoreData.platform_stats.leetcode.hard_solved}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
+                      <span>Rating: <strong>{devScoreData.platform_stats.leetcode.contest_rating || "Unranked"}</strong></span>
+                      <span>Rank: <strong>#{devScoreData.platform_stats.leetcode.ranking?.toLocaleString() || "—"}</strong></span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[9px] font-mono font-bold">
-                    <span className="bg-emerald-500/15 text-emerald-800 px-1.5 py-0.5 rounded">
-                      E: {devScoreData?.platform_stats?.leetcode?.easy_solved || 0}
-                    </span>
-                    <span className="bg-amber-500/15 text-amber-800 px-1.5 py-0.5 rounded">
-                      M: {devScoreData?.platform_stats?.leetcode?.medium_solved || 0}
-                    </span>
-                    <span className="bg-rose-500/15 text-rose-800 px-1.5 py-0.5 rounded">
-                      H: {devScoreData?.platform_stats?.leetcode?.hard_solved || 0}
-                    </span>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-[11px] text-[#6E6359] leading-relaxed">
+                      Connect your LeetCode handle to import solved problem counts and contest ratings for up to <strong>+350 DevScore pts</strong>.
+                    </p>
+                    <button
+                      onClick={() => setShowSyncModal(true)}
+                      className="w-full py-1.5 bg-[#FFF8EE] hover:bg-[#FDE3B7] text-[#D97706] border border-[#FDE3B7] rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Link2 className="h-3 w-3" />
+                      <span>+ Connect LeetCode</span>
+                    </button>
                   </div>
-                </div>
-
-                <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
-                  <span>Rating: <strong>{devScoreData?.platform_stats?.leetcode?.contest_rating || "Unranked"}</strong></span>
-                  <span>Top: <strong>{devScoreData?.platform_stats?.leetcode?.top_percentage || "—"}%</strong></span>
-                </div>
+                )}
               </div>
 
               {/* 2. Codeforces Card */}
-              <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-2xs hover:border-[#1890FF]/60 transition-all">
+              <div className="bg-[#FAF6F0]/60 border border-[#DFD5C6] rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:border-[#2563EB]/60 transition-all shadow-3xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-lg bg-[#1890FF]/15 border border-[#1890FF]/30 flex items-center justify-center font-bold text-xs text-[#1890FF]">
-                      CF
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-xl bg-[#EFF6FF] border border-[#BFDBFE] flex items-center justify-center">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M4.5 7.5a1.5 1.5 0 0 1 1.5 1.5v10.5a1.5 1.5 0 0 1-3 0V9a1.5 1.5 0 0 1 1.5-1.5z" fill="#FFA116"/>
+                        <path d="M12 3a1.5 1.5 0 0 1 1.5 1.5v15a1.5 1.5 0 0 1-3 0v-15A1.5 1.5 0 0 1 12 3z" fill="#2563EB"/>
+                        <path d="M19.5 12a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-3 0v-6a1.5 1.5 0 0 1 1.5-1.5z" fill="#EF4444"/>
+                      </svg>
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-[#262626]">Codeforces</h4>
@@ -531,33 +578,49 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   </span>
                 </div>
 
-                <div className="space-y-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] text-[#6E6359] font-mono">Rank Title</span>
-                    <span className="text-xs font-bold font-serif text-[#1890FF]">
-                      {devScoreData?.platform_stats?.codeforces?.rank || "Unranked"}
-                    </span>
+                {devScoreData?.platform_stats?.codeforces?.connected ? (
+                  <div className="space-y-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[10px] text-[#6E6359] font-mono">Rank Title</span>
+                      <span className="text-xs font-bold font-serif text-[#2563EB]">
+                        {devScoreData.platform_stats.codeforces.rank}
+                      </span>
+                    </div>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[10px] text-[#6E6359] font-mono">Contest Rating</span>
+                      <span className="text-base font-extrabold font-mono text-[#262626]">
+                        {devScoreData.platform_stats.codeforces.rating}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
+                      <span>Max: <strong>{devScoreData.platform_stats.codeforces.max_rating}</strong></span>
+                      <span>Estimated Solved: <strong>{devScoreData.platform_stats.codeforces.solved_count}+</strong></span>
+                    </div>
                   </div>
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] text-[#6E6359] font-mono">Contest Rating</span>
-                    <span className="text-base font-extrabold font-mono text-[#262626]">
-                      {devScoreData?.platform_stats?.codeforces?.rating || 0}
-                    </span>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-[11px] text-[#6E6359] leading-relaxed">
+                      Sync your Codeforces handle to verify competitive contest ranking and tier classification for up to <strong>+200 DevScore pts</strong>.
+                    </p>
+                    <button
+                      onClick={() => setShowSyncModal(true)}
+                      className="w-full py-1.5 bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#2563EB] border border-[#BFDBFE] rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Link2 className="h-3 w-3" />
+                      <span>+ Connect Codeforces</span>
+                    </button>
                   </div>
-                </div>
-
-                <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
-                  <span>Max: <strong>{devScoreData?.platform_stats?.codeforces?.max_rating || 0}</strong></span>
-                  <span>Solved: <strong>{devScoreData?.platform_stats?.codeforces?.solved_count || 0}+</strong></span>
-                </div>
+                )}
               </div>
 
               {/* 3. GitHub Card */}
-              <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-2xs hover:border-[#262626]/60 transition-all">
+              <div className="bg-[#FAF6F0]/60 border border-[#DFD5C6] rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:border-[#334155]/60 transition-all shadow-3xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-lg bg-[#262626]/10 border border-[#262626]/20 flex items-center justify-center font-bold text-xs text-[#262626]">
-                      GH
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-xl bg-[#F1F5F9] border border-[#CBD5E1] flex items-center justify-center text-[#1E293B]">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+                      </svg>
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-[#262626]">GitHub OSS</h4>
@@ -575,34 +638,48 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   </span>
                 </div>
 
-                <div className="space-y-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] text-[#6E6359] font-mono">Public Repos & Stars</span>
-                    <span className="text-base font-extrabold font-mono text-[#262626]">
-                      {devScoreData?.platform_stats?.github?.public_repos || 0} repos / {devScoreData?.platform_stats?.github?.stars_total || 0} ★
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1 text-[9px] font-mono">
-                    {(devScoreData?.platform_stats?.github?.primary_languages || ["Python", "TypeScript"]).map((lang, idx) => (
-                      <span key={idx} className="bg-[#FCFAF7] border border-[#DFD5C6] px-1.5 py-0.5 rounded text-[#6E6359]">
-                        {lang}
+                {devScoreData?.platform_stats?.github?.connected ? (
+                  <div className="space-y-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[10px] text-[#6E6359] font-mono">Public Repos & Stars</span>
+                      <span className="text-base font-extrabold font-mono text-[#262626]">
+                        {devScoreData.platform_stats.github.public_repos} repos / {devScoreData.platform_stats.github.stars_total} ★
                       </span>
-                    ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1 text-[9px] font-mono">
+                      {(devScoreData.platform_stats.github.primary_languages || []).map((lang, idx) => (
+                        <span key={idx} className="bg-[#FCFAF7] border border-[#DFD5C6] px-1.5 py-0.5 rounded text-[#6E6359]">
+                          {lang}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
+                      <span>Strength: <strong>{devScoreData.platform_stats.github.github_strength}%</strong></span>
+                      <span>OSS Score: <strong>{devScoreData.platform_stats.github.open_source_score}%</strong></span>
+                    </div>
                   </div>
-                </div>
-
-                <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
-                  <span>Strength: <strong>{devScoreData?.platform_stats?.github?.github_strength || 0}%</strong></span>
-                  <span>OSS Score: <strong>{devScoreData?.platform_stats?.github?.open_source_score || 0}%</strong></span>
-                </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-[11px] text-[#6E6359] leading-relaxed">
+                      Connect your GitHub profile to index open-source repository complexity and commit consistency for up to <strong>+200 DevScore pts</strong>.
+                    </p>
+                    <button
+                      onClick={() => setShowSyncModal(true)}
+                      className="w-full py-1.5 bg-[#F8FAFC] hover:bg-[#F1F5F9] text-[#1E293B] border border-[#CBD5E1] rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Link2 className="h-3 w-3" />
+                      <span>+ Connect GitHub</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* 4. PrepAI Sandbox Card */}
-              <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-2xs hover:border-[#C85A32]/60 transition-all">
+              <div className="bg-[#FAF6F0]/60 border border-[#DFD5C6] rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:border-[#C85A32]/60 transition-all shadow-3xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-lg bg-[#C85A32]/15 border border-[#C85A32]/30 flex items-center justify-center font-bold text-xs text-[#C85A32]">
-                      PA
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-xl bg-[#FDF1EC] border border-[#FAC8B8] flex items-center justify-center text-[#C85A32]">
+                      <Terminal className="h-4 w-4" />
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-[#262626]">PrepAI Engine</h4>
@@ -614,7 +691,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   </span>
                 </div>
 
-                <div className="space-y-1">
+                <div className="space-y-2">
                   <div className="flex items-baseline justify-between">
                     <span className="text-[10px] text-[#6E6359] font-mono">Sandbox Accuracy</span>
                     <span className="text-base font-extrabold font-mono text-[#2E5A44]">
@@ -627,13 +704,16 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                       {avgVoice !== "N/A" ? `${avgVoice} / 10` : "8.0 / 10"}
                     </span>
                   </div>
-                </div>
-
-                <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
-                  <span>Chaos Resilience: <strong>92%</strong></span>
-                  <button onClick={onStartPractice} className="text-[#C85A32] font-bold hover:underline cursor-pointer">
-                    Code Now →
-                  </button>
+                  <div className="flex items-center justify-between text-[10px] font-mono text-[#6E6359] border-t border-[#DFD5C6]/40 pt-2">
+                    <span>Chaos Resilience: <strong>92%</strong></span>
+                    <button
+                      onClick={onStartPractice}
+                      className="text-[#C85A32] font-bold hover:underline cursor-pointer flex items-center gap-1"
+                    >
+                      <span>Code Studio</span>
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -641,17 +721,17 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
 
           {/* Badges Showcase Row */}
           {devScoreData?.badges?.length > 0 && (
-            <div className="pt-2 border-t border-[#DFD5C6]/40 flex items-center justify-between flex-wrap gap-2">
+            <div className="pt-3 border-t border-[#DFD5C6]/60 flex items-center justify-between flex-wrap gap-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-mono font-bold text-[#6E6359] uppercase tracking-wider">
-                  Verified Badges:
+                  Verified Proof Badges:
                 </span>
                 {devScoreData.badges.map((badge, idx) => (
                   <span
                     key={idx}
-                    className="inline-flex items-center gap-1 bg-[#FAF6F0] border border-[#DFD5C6] px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold text-[#262626] shadow-3xs"
+                    className="inline-flex items-center gap-1.5 bg-[#FAF6F0] border border-[#DFD5C6] px-3 py-1 rounded-lg text-[10px] font-mono font-bold text-[#262626] shadow-3xs"
                   >
-                    <Award className="h-3 w-3 text-[#C85A32]" />
+                    <Award className="h-3.5 w-3.5 text-[#C85A32]" />
                     {badge}
                   </span>
                 ))}
@@ -1099,15 +1179,17 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                     LeetCode Username / Profile URL
                   </label>
                   <div className="relative">
-                    <span className="absolute inset-y-0 left-3 my-auto flex items-center text-[10px] font-mono font-bold text-[#FFA116]">
-                      LC
-                    </span>
+                    <div className="absolute inset-y-0 left-3 my-auto flex items-center text-[#D97706]">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M13.483 0a1.374 1.374 0 0 0-.961.438L7.116 6.226l-3.854 4.126a5.266 5.266 0 0 0-1.209 2.104 5.35 5.35 0 0 0-.125.513 5.527 5.527 0 0 0 .062 2.362 5.83 5.83 0 0 0 .349 1.017 5.938 5.938 0 0 0 1.271 1.818l4.277 4.193.039.038c2.248 2.165 5.852 2.133 8.063-.074l2.396-2.392c.54-.54.54-1.414.003-1.955a1.378 1.378 0 0 0-1.951-.003l-2.396 2.392a3.021 3.021 0 0 1-4.205.038l-.02-.019-4.276-4.193c-.652-.64-.972-1.469-.948-2.263a2.68 2.68 0 0 1 .066-.523 2.545 2.545 0 0 1 .619-1.164L9.13 8.114c1.058-1.134 3.204-1.27 4.43-.278l3.501 2.831c.593.48 1.461.387 1.94-.207a1.384 1.384 0 0 0-.207-1.943l-3.5-2.831c-.8-.647-1.766-1.045-2.774-1.202l2.015-2.158A1.384 1.384 0 0 0 13.483 0zm-2.866 12.815a1.38 1.38 0 0 0-1.38 1.382 1.38 1.38 0 0 0 1.38 1.382H20.79a1.38 1.38 0 0 0 1.38-1.382 1.38 1.38 0 0 0-1.38-1.382z"/>
+                      </svg>
+                    </div>
                     <input
                       type="text"
                       value={syncLeetcode}
                       onChange={(e) => setSyncLeetcode(e.target.value)}
                       placeholder="e.g. neal_wu or https://leetcode.com/u/neal_wu"
-                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#FFA116] transition-all font-mono"
+                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#D97706] transition-all font-mono"
                     />
                   </div>
                 </div>
@@ -1118,15 +1200,19 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                     Codeforces Handle / Profile URL
                   </label>
                   <div className="relative">
-                    <span className="absolute inset-y-0 left-3 my-auto flex items-center text-[10px] font-mono font-bold text-[#1890FF]">
-                      CF
-                    </span>
+                    <div className="absolute inset-y-0 left-3 my-auto flex items-center">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M4.5 7.5a1.5 1.5 0 0 1 1.5 1.5v10.5a1.5 1.5 0 0 1-3 0V9a1.5 1.5 0 0 1 1.5-1.5z" fill="#FFA116"/>
+                        <path d="M12 3a1.5 1.5 0 0 1 1.5 1.5v15a1.5 1.5 0 0 1-3 0v-15A1.5 1.5 0 0 1 12 3z" fill="#2563EB"/>
+                        <path d="M19.5 12a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-3 0v-6a1.5 1.5 0 0 1 1.5-1.5z" fill="#EF4444"/>
+                      </svg>
+                    </div>
                     <input
                       type="text"
                       value={syncCodeforces}
                       onChange={(e) => setSyncCodeforces(e.target.value)}
                       placeholder="e.g. tourist or https://codeforces.com/profile/tourist"
-                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#1890FF] transition-all font-mono"
+                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#2563EB] transition-all font-mono"
                     />
                   </div>
                 </div>
@@ -1137,15 +1223,17 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                     GitHub Username / URL
                   </label>
                   <div className="relative">
-                    <span className="absolute inset-y-0 left-3 my-auto flex items-center text-[10px] font-mono font-bold text-[#262626]">
-                      GH
-                    </span>
+                    <div className="absolute inset-y-0 left-3 my-auto flex items-center text-[#1E293B]">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+                      </svg>
+                    </div>
                     <input
                       type="text"
                       value={syncGithub}
                       onChange={(e) => setSyncGithub(e.target.value)}
                       placeholder="e.g. torvalds or https://github.com/torvalds"
-                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#262626] transition-all font-mono"
+                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#334155] transition-all font-mono"
                     />
                   </div>
                 </div>
