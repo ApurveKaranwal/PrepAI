@@ -40,20 +40,23 @@ def create_confirmation_html(
     submission_time: str,
     custom_responses: Dict[str, Any]
 ) -> str:
-    """Generates a responsive HTML email receipt."""
+    """Generates an authentic, warm, and professional human-style application acknowledgment letter."""
+    first_name = candidate_name.split()[0] if candidate_name else "there"
     
-    responses_html = ""
+    responses_section = ""
     if custom_responses:
-        responses_html = "<tr><td colspan='2' style='padding: 16px 0 8px 0; border-top: 1px solid #E5E7EB;'><strong style='font-size: 13px; color: #374151;'>Dispatched Application Responses:</strong></td></tr>"
+        responses_section = """
+        <div style="margin-top: 24px; padding: 16px; background-color: #FAF8F5; border-radius: 8px; border: 1px solid #E7E2DA;">
+            <div style="font-size: 13px; font-weight: 600; color: #1C1917; margin-bottom: 12px;">Submitted Application Details:</div>
+        """
         for q, a in list(custom_responses.items())[:3]:
-            responses_html += f"""
-            <tr>
-                <td colspan='2' style='padding: 6px 0; font-size: 12px; color: #4B5563;'>
-                    <div style='font-weight: 600; color: #1F2937;'>Q: {q[:90]}</div>
-                    <div style='margin-top: 2px; color: #4B5563; font-style: italic;'>"{a[:180]}..."</div>
-                </td>
-            </tr>
+            responses_section += f"""
+            <div style="margin-bottom: 10px; font-size: 12px; line-height: 1.5;">
+                <div style="font-weight: 600; color: #44403C;">{q}</div>
+                <div style="color: #57534E; margin-top: 2px;">"{a}"</div>
+            </div>
             """
+        responses_section += "</div>"
 
     html = f"""
     <!DOCTYPE html>
@@ -61,86 +64,51 @@ def create_confirmation_html(
     <head>
         <meta charset="utf-8">
         <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #FAF6F0; margin: 0; padding: 20px; }}
-            .card {{ max-width: 600px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #DFD5C6; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
-            .header {{ background-color: #262626; color: #FFFFFF; padding: 28px 24px; text-align: center; }}
-            .badge {{ display: inline-block; background-color: #C85A32; color: #FFFFFF; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }}
-            .body {{ padding: 24px; color: #262626; }}
-            .status-banner {{ background-color: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 10px; padding: 14px; margin: 16px 0; display: flex; align-items: center; }}
-            .table-data {{ width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }}
-            .table-data td {{ padding: 10px 4px; border-bottom: 1px solid #F3F4F6; }}
-            .label {{ color: #6B7280; font-weight: 500; width: 38%; }}
-            .value {{ color: #111827; font-weight: 600; }}
-            .timeline {{ background-color: #FCFAF7; border: 1px solid #DFD5C6; border-radius: 12px; padding: 16px; margin-top: 20px; }}
-            .timeline-step {{ display: flex; margin-bottom: 10px; font-size: 12px; }}
-            .timeline-dot {{ height: 8px; width: 8px; border-radius: 50%; background: #C85A32; margin-right: 10px; margin-top: 4px; }}
-            .footer {{ background-color: #FAF6F0; border-top: 1px solid #DFD5C6; padding: 16px; text-align: center; font-size: 11px; color: #6E6359; }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #F5F5F4; margin: 0; padding: 24px; color: #1C1917; }}
+            .container {{ max-width: 580px; margin: 0 auto; background: #FFFFFF; border-radius: 12px; border: 1px solid #E7E5E4; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
+            .header {{ padding: 28px 28px 20px 28px; border-bottom: 1px solid #F5F5F4; }}
+            .company-tag {{ font-size: 12px; font-weight: 700; color: #C85A32; text-transform: uppercase; letter-spacing: 0.5px; }}
+            .title {{ font-size: 20px; font-weight: 700; color: #1C1917; margin: 6px 0 0 0; }}
+            .content {{ padding: 24px 28px; font-size: 14px; line-height: 1.6; color: #44403C; }}
+            .tracking-box {{ background-color: #FAF8F5; border: 1px solid #E7E2DA; border-radius: 8px; padding: 14px 18px; margin: 20px 0; }}
+            .tracking-label {{ font-size: 11px; font-weight: 600; color: #78716C; text-transform: uppercase; letter-spacing: 0.5px; }}
+            .tracking-val {{ font-family: monospace; font-size: 15px; font-weight: 700; color: #C85A32; margin-top: 4px; }}
+            .steps {{ margin-top: 20px; border-top: 1px solid #F5F5F4; padding-top: 18px; }}
+            .step-item {{ margin-bottom: 12px; font-size: 13px; }}
+            .footer {{ background-color: #FAF8F5; border-top: 1px solid #E7E2DA; padding: 16px 28px; font-size: 12px; color: #78716C; }}
         </style>
     </head>
     <body>
-        <div class="card">
+        <div class="container">
             <div class="header">
-                <span class="badge">Application Confirmed</span>
-                <h1 style="margin: 12px 0 4px 0; font-size: 22px; font-family: Georgia, serif;">{company} Talent Acquisition</h1>
-                <p style="margin: 0; font-size: 13px; opacity: 0.85;">Dispatched via PrepAI Automated Career Agent</p>
+                <div class="company-tag">{company} Recruitment</div>
+                <h1 class="title">Application Received: {job_title}</h1>
             </div>
-            <div class="body">
-                <div class="status-banner">
-                    <div>
-                        <div style="font-size: 14px; font-weight: 700; color: #065F46;">✓ Application Successfully Dispatched & Logged</div>
-                        <div style="font-size: 12px; color: #047857; margin-top: 2px;">Your application has been delivered to the {company} recruiting department via {ats_type} automated pipeline.</div>
-                    </div>
+            <div class="content">
+                <p style="margin-top: 0;">Hi {first_name},</p>
+                <p>Thank you for your interest in joining {company}. We have received your application for the <strong>{job_title}</strong> role, along with your attached resume (<code>{resume_name}</code>) and technical portfolio profile.</p>
+                <p>Our engineering leads and founding team personally review each application. We look closely at engineering foundations, system design depth, and problem-solving craftsmanship.</p>
+                
+                <div class="tracking-box">
+                    <div class="tracking-label">Official Application Reference ID</div>
+                    <div class="tracking-val">{tracking_id}</div>
+                    <div style="font-size: 11px; color: #78716C; margin-top: 4px;">Submitted on {submission_time}</div>
                 </div>
 
-                <table class="table-data">
-                    <tr>
-                        <td class="label">Target Role:</td>
-                        <td class="value">{job_title}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Candidate:</td>
-                        <td class="value">{candidate_name} ({candidate_email})</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Reference Tracking ID:</td>
-                        <td class="value" style="font-family: monospace; color: #C85A32;">{tracking_id}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Timestamp:</td>
-                        <td class="value">{submission_time}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Attached Resume:</td>
-                        <td class="value">📄 {resume_name}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">ATS Routing Gateway:</td>
-                        <td class="value">{ats_type} Verified Pipeline</td>
-                    </tr>
-                    {responses_html}
-                </table>
+                {responses_section}
 
-                <div class="timeline">
-                    <strong style="font-size: 13px; color: #262626;">Next Steps in Hiring Process:</strong>
-                    <div style="margin-top: 10px;">
-                        <div class="timeline-step">
-                            <div class="timeline-dot"></div>
-                            <div><strong>1. Application Review:</strong> Hiring team reviews your portfolio & projects (1-2 business days).</div>
-                        </div>
-                        <div class="timeline-step">
-                            <div class="timeline-dot"></div>
-                            <div><strong>2. Recruiter Screening:</strong> Introductory sync to align on role expectations.</div>
-                        </div>
-                        <div class="timeline-step">
-                            <div class="timeline-dot"></div>
-                            <div><strong>3. Technical Mock & Coding Screen:</strong> Deep-dive into system design and algorithm problem solving.</div>
-                        </div>
-                    </div>
+                <div class="steps">
+                    <div style="font-size: 13px; font-weight: 600; color: #1C1917; margin-bottom: 10px;">What to expect next:</div>
+                    <div class="step-item"><strong>1. Technical Review:</strong> We examine your code repositories, system design background, and project experience (typically within 1–2 business days).</div>
+                    <div class="step-item"><strong>2. Initial Conversation:</strong> If there is a strong mutual fit, a team member will reach out directly to schedule an introductory video call.</div>
+                    <div class="step-item"><strong>3. Technical Deep-Dive:</strong> A collaborative session focusing on real-world engineering challenges and system architecture.</div>
                 </div>
+
+                <p style="margin-top: 24px; margin-bottom: 0;">If you have any updates to share regarding your availability or recent projects, feel free to update your portfolio at any time.</p>
+                <p style="margin-top: 16px; margin-bottom: 0;">Warm regards,<br><strong>The {company} Engineering & Hiring Team</strong></p>
             </div>
             <div class="footer">
-                <p style="margin: 0;">This official dispatch receipt was generated by PrepAI Career Agent.</p>
-                <p style="margin: 4px 0 0 0;">Keep this confirmation tracking ID (<strong>{tracking_id}</strong>) for your interview records.</p>
+                Reference ID: {tracking_id} • Verified Candidate Application Record
             </div>
         </div>
     </body>

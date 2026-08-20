@@ -297,8 +297,8 @@ export default function PerformanceAnalytics({ user }) {
               </span>
             </div>
             
-            <div className="w-full h-56 pt-2">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="w-full h-56 pt-2 min-w-0">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                 <AreaChart
                   data={chartData}
                   margin={{ top: 10, right: 10, left: -25, bottom: 0 }}

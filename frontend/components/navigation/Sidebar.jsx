@@ -1,18 +1,41 @@
 "use client";
 
-import React from "react";
-import { LayoutDashboard, Video, BarChart3, LogOut, Plus, FileText, Mic, Briefcase, X, Code2 } from "lucide-react";
+import React, { useState } from "react";
+import {
+  LayoutDashboard,
+  Video,
+  BarChart3,
+  LogOut,
+  Plus,
+  FileText,
+  Mic,
+  Briefcase,
+  X,
+  Building2,
+  Search,
+  Users,
+  ShieldCheck
+} from "lucide-react";
 
-export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onStartPractice, sidebarOpen, setSidebarOpen }) {
-  const menuItems = [
+export default function Sidebar({ activeTab, setActiveTab, user, onLogout, sidebarOpen, setSidebarOpen }) {
+  const [roleMode, setRoleMode] = useState("candidate"); // 'candidate' | 'recruiter'
+
+  const candidateMenuItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "coding-studio", label: "Live Coding Studio", icon: Code2 },
     { id: "interviews", label: "Interviews", icon: Video },
     { id: "voice-copilot", label: "Voice Copilot", icon: Mic },
     { id: "career-agent", label: "AI Career Agent", icon: Briefcase },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "resume-analyzer", label: "Resume Analyzer", icon: FileText },
   ];
+
+  const recruiterMenuItems = [
+    { id: "recruiter-portal", label: "Talent Radar", icon: Search },
+    { id: "career-agent", label: "Candidate Requisitions", icon: Briefcase },
+    { id: "analytics", label: "Candidate Analytics", icon: BarChart3 },
+  ];
+
+  const menuItems = roleMode === "candidate" ? candidateMenuItems : recruiterMenuItems;
 
   return (
     <>
@@ -28,7 +51,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onSta
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       } lg:static lg:flex shrink-0 select-none`}>
         {/* Top Section */}
-        <div className="p-6 space-y-8">
+        <div className="p-6 space-y-6">
           {/* Brand */}
           <div className="flex items-center justify-between">
             <div>
@@ -36,7 +59,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onSta
                 PrepFlow <span className="text-[#C85A32]">AI</span>
               </h1>
               <p className="text-[10px] font-mono text-[#6E6359]/70 uppercase tracking-widest mt-0.5">
-                Interview Workspace
+                {roleMode === "candidate" ? "Candidate Workspace" : "Founder / Recruiter Portal"}
               </p>
             </div>
             {setSidebarOpen && (
@@ -47,6 +70,37 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onSta
                 <X className="h-4 w-4" />
               </button>
             )}
+          </div>
+
+          {/* Role Switcher Segmented Control */}
+          <div className="bg-[#FAF6F0] p-1 rounded-xl border border-[#DFD5C6] flex items-center gap-1 text-[11px] font-mono font-bold">
+            <button
+              onClick={() => {
+                setRoleMode("candidate");
+                setActiveTab("dashboard");
+              }}
+              className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer text-center ${
+                roleMode === "candidate"
+                  ? "bg-[#262626] text-white shadow-3xs"
+                  : "text-[#6E6359] hover:text-[#262626]"
+              }`}
+            >
+              Candidate
+            </button>
+            <button
+              onClick={() => {
+                setRoleMode("recruiter");
+                setActiveTab("recruiter-portal");
+              }}
+              className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer text-center flex items-center justify-center gap-1 ${
+                roleMode === "recruiter"
+                  ? "bg-[#C85A32] text-white shadow-3xs"
+                  : "text-[#6E6359] hover:text-[#262626]"
+              }`}
+            >
+              <span>Recruiter</span>
+              <span className="text-[9px] px-1 py-0.2 rounded bg-white/20 text-white font-mono">Pro</span>
+            </button>
           </div>
 
           {/* Menu Items */}
@@ -77,17 +131,30 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onSta
 
         {/* Bottom Section */}
         <div className="p-6 space-y-6 border-t border-[#DFD5C6]/60">
-          {/* Start Practice Action */}
-          <button
-            onClick={() => {
-              onStartPractice();
-              if (setSidebarOpen) setSidebarOpen(false);
-            }}
-            className="w-full bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] py-3 px-4 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            Start Practice
-          </button>
+          {/* Action CTA */}
+          {roleMode === "candidate" ? (
+            <button
+              onClick={() => {
+                setActiveTab("interviews");
+                if (setSidebarOpen) setSidebarOpen(false);
+              }}
+              className="w-full bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] py-3 px-4 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              Start Interview
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                setActiveTab("recruiter-portal");
+                if (setSidebarOpen) setSidebarOpen(false);
+              }}
+              className="w-full bg-[#262626] hover:bg-black text-[#FCFAF7] py-3 px-4 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Search className="h-4 w-4 text-[#C85A32]" />
+              Source Talent
+            </button>
+          )}
 
           {/* Profile Card */}
           <div className="flex items-center justify-between">
@@ -118,4 +185,3 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, onSta
     </>
   );
 }
-

@@ -419,19 +419,26 @@ def execute_cpp_code(
         else:
             args_str = val_to_cpp_literal(inp)
             
-        exp_str = val_to_cpp_literal(exp)
-        
+        if exp is None:
+            comparison_snippet = "bool passed = true;"
+        else:
+            exp_str = val_to_cpp_literal(exp)
+            comparison_snippet = f"decltype(actual) expected_val = {exp_str};\n        bool passed = (actual == expected_val);"
+            
         test_invocations.append(f"""    {{
         auto t_start = std::chrono::high_resolution_clock::now();
         auto actual = {entry_point}({args_str});
         auto t_end = std::chrono::high_resolution_clock::now();
         double dur_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
-        bool passed = (actual == decltype(actual){exp_str});
+        {comparison_snippet}
         if (passed) total_passed++;
         std::cout << "        {{\\"test_index\\": " << {idx + 1}
                   << ", \\"description\\": \\"{desc}\\""
                   << ", \\"passed\\": " << (passed ? "true" : "false")
-                  << ", \\"duration_ms\\": " << dur_ms << "}}";
+                  << ", \\"duration_ms\\": " << dur_ms
+                  << ", \\"actual\\": ";
+        print_json_val(actual);
+        std::cout << "}}";
         if ({idx} < {len(test_cases) - 1}) std::cout << ",";
         std::cout << "\\n";
     }}""")
@@ -448,6 +455,30 @@ def execute_cpp_code(
 #include <cmath>
 #include <stack>
 #include <queue>
+
+// --- JSON Serialization Helpers ---
+template<typename T>
+void print_json_val(const T& val) {{
+    std::cout << val;
+}}
+
+inline void print_json_val(const std::string& val) {{
+    std::cout << "\\"" << val << "\\"";
+}}
+
+inline void print_json_val(bool val) {{
+    std::cout << (val ? "true" : "false");
+}}
+
+template<typename T>
+inline void print_json_val(const std::vector<T>& vec) {{
+    std::cout << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {{
+        print_json_val(vec[i]);
+        if (i + 1 < vec.size()) std::cout << ", ";
+    }}
+    std::cout << "]";
+}}
 
 // --- User Solution Code ---
 {code}
@@ -516,7 +547,8 @@ int main() {{
                 if idx < len(test_cases):
                     res["input"] = test_cases[idx].get("input")
                     res["expected"] = test_cases[idx].get("expected")
-                    res["actual"] = test_cases[idx].get("expected") if res.get("passed") else "Failed result"
+                    if "actual" not in res:
+                        res["actual"] = test_cases[idx].get("expected") if res.get("passed") else "Failed result"
 
             return {
                 "success": True,

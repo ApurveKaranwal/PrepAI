@@ -32,35 +32,36 @@ async def onboard_candidate(
     linkedin_pdf: Optional[UploadFile] = File(None),
     interview_mode: str = Form("Mid-Level"),
     language: str = Form("en-IN"),
-    user_id: Optional[str] = Form(None)
+    user_id: Optional[str] = Form(None),
+    email: Optional[str] = Form(None)
 ):
     """
     Onboard candidate: Scrape Resume PDF, LinkedIn, and GitHub.
     Construct Candidate Profile and initialize database session.
     """
-    print(f"Onboarding Voice Copilot. GitHub: {github_url}, LinkedIn URL: {linkedin_url}, Mode: {interview_mode}, User ID: {user_id}")
+    print(f"Onboarding Voice Copilot. GitHub: {github_url}, LinkedIn URL: {linkedin_url}, Mode: {interview_mode}, User ID: {user_id}, Email: {email}")
     
     # 1. Parse Resume PDF
     resume_text = ""
     resume_name = None
     resume_profile = {}
     
-    if user_id and not resume:
+    if (user_id or email) and not resume:
         try:
             import database
-            profile = database.get_candidate_profile(user_id)
+            profile = database.get_candidate_profile(user_id or "", email=email)
             if profile:
                 resume_text = profile.get("resume_text", "")
                 resume_name = profile.get("resume_name", "Saved_Resume.pdf")
-                if not github_url:
+                if not github_url or github_url.strip() == "":
                     github_url = profile.get("github_url", "")
-                if not linkedin_url:
+                if not linkedin_url or linkedin_url.strip() == "":
                     linkedin_url = profile.get("linkedin_url", "")
-                print(f"Loaded stored profile for user {user_id} in Voice Copilot. Resume Length: {len(resume_text)}")
+                print(f"Loaded stored profile for user {user_id or email} in Voice Copilot. Resume Length: {len(resume_text)}")
                 if resume_text:
                     resume_profile = parse_resume_content(resume_text)
         except Exception as profile_err:
-            print(f"Failed to load candidate profile for user {user_id} in Voice Copilot: {profile_err}")
+            print(f"Failed to load candidate profile for user {user_id or email} in Voice Copilot: {profile_err}")
 
     if not github_url:
         github_url = ""
@@ -280,6 +281,10 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
     stt_service = SpeechToTextService()
     tts_service = TextToSpeechService()
     
+    # Retrieve session and language configuration safely upfront
+    session = db.get_voice_session(session_id)
+    lang = session.get("language", "en-IN") if session else "en-IN"
+    
     try:
         agent = InterviewAgent(session_id)
     except Exception as e:
@@ -313,32 +318,34 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                     is_agent_speaking = False
                     await websocket.send_json({"type": "interrupt"})
                     
-                elif msg_type == "silence":
-                    # VAD detected silence. Transcribe the buffered audio and generate answer!
-                    if not audio_buffer:
-                        continue
+                elif msg_type == "user_text" or msg_type == "silence":
+                    user_transcript = ""
+                    
+                    if msg_type == "user_text" and data.get("text"):
+                        user_transcript = data["text"].strip()
+                    elif audio_buffer:
+                        print(f"VAD silence detected. Transcribing {len(audio_buffer)} bytes...")
+                        audio_bytes = bytes(audio_buffer)
+                        audio_buffer.clear()
+                        try:
+                            user_transcript = await asyncio.to_thread(stt_service.transcribe, audio_bytes, language=lang)
+                        except Exception as e_stt:
+                            print(f"STT Error: {e_stt}")
+                            user_transcript = ""
+                    
+                    if not user_transcript or "[Transcription failed]" in user_transcript or "[Error" in user_transcript:
+                        if data.get("text") and len(data.get("text").strip()) > 0:
+                            user_transcript = data.get("text").strip()
+                        else:
+                            # No speech detected from silence/noise. Do NOT advance turn with fake text.
+                            print("No valid speech detected in audio stream. Remaining in listening mode.")
+                            await websocket.send_json({"type": "status", "status": "listening"})
+                            continue
                         
-                    print(f"VAD silence detected. Transcribing {len(audio_buffer)} bytes...")
-                    
-                    # Convert accumulated audio buffer to bytes
-                    audio_bytes = bytes(audio_buffer)
-                    audio_buffer.clear() # Reset buffer for next round
-                    
-                    # 1. Transcribe speech in a separate thread to prevent blocking the async loop
-                    session = db.get_voice_session(session_id)
-                    lang = session.get("language", "en-IN") if session else "en-IN"
-                    user_transcript = await asyncio.to_thread(stt_service.transcribe, audio_bytes, language=lang)
-                    print(f"STT Transcript: {user_transcript}")
-                    
-                    if not user_transcript.strip() or "[Transcription failed]" in user_transcript:
-                        await websocket.send_json({"type": "transcript", "role": "user", "text": "..."})
-                        await websocket.send_json({"type": "status", "status": "listening"})
-                        continue
-                        
-                    # Send STT transcript to frontend
+                    # 1. Send candidate transcript to frontend immediately
                     await websocket.send_json({"type": "transcript", "role": "user", "text": user_transcript})
                     
-                    # Fetch latest questions to perform evaluation
+                    # Fetch latest question to perform background evaluation
                     history = db.get_voice_messages(session_id)
                     last_question = ""
                     for msg in reversed(history):
@@ -346,10 +353,10 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                             last_question = msg["content"]
                             break
                             
-                    # Save user response immediately (WITHOUT evaluation first) to database so it shows in history
+                    # Save user response to database so it shows in history
                     msg_id = db.save_voice_message(session_id, "user", user_transcript)
 
-                    # 2. Run hidden evaluation in the background concurrently!
+                    # 2. Run hidden evaluation in the background concurrently
                     async def run_evaluation_in_background(m_id, last_q, transcript):
                         try:
                             evaluation = await asyncio.to_thread(agent.run_hidden_evaluation, last_q, transcript)
@@ -360,9 +367,14 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
 
                     asyncio.create_task(run_evaluation_in_background(msg_id, last_question, user_transcript))
                     
-                    # 3. Generate Next Question in a thread
+                    # 3. Generate Next Question
                     await websocket.send_json({"type": "status", "status": "thinking"})
-                    next_question = await asyncio.to_thread(agent.generate_next_turn)
+                    try:
+                        next_question = await asyncio.to_thread(agent.generate_next_turn)
+                    except Exception as e_agent:
+                        print(f"Error calling agent generate_next_turn: {e_agent}")
+                        next_question = "How would you handle database indexing and concurrency locks under high write loads?"
+                    
                     print(f"Next Agent Question: {next_question}")
                     
                     # Send transcript of the question
@@ -375,23 +387,25 @@ async def voice_websocket_stream(websocket: WebSocket, session_id: int):
                     await websocket.send_json({"type": "status", "status": "speaking"})
                     is_agent_speaking = True
                     
-                    audio_b64 = await asyncio.to_thread(tts_service.text_to_speech_base64, next_question, lang)
+                    audio_b64 = None
+                    try:
+                        audio_b64 = await asyncio.to_thread(tts_service.text_to_speech_base64, next_question, lang)
+                    except Exception as e_tts:
+                        print(f"TTS generation error: {e_tts}")
+                        
                     if audio_b64 and is_agent_speaking:
-                        # Stream the audio response back in a single chunk or let client play it
-                        await websocket.send_json({"type": "audio", "audio": audio_b64})
+                        await websocket.send_json({"type": "audio", "audio": audio_b64, "text": next_question})
+                    else:
+                        # Send text so client-side speech synthesis plays if backend audio was None
+                        await websocket.send_json({"type": "audio", "audio": None, "text": next_question})
                     
                     # If this was the concluding turn, wait for the audio to finish and send the completed signal!
                     history = db.get_voice_messages(session_id)
                     assistant_turns = len([m for m in history if m["role"] == "assistant"])
                     if assistant_turns >= 6:
-                        # Wait 6 seconds for the conclusion audio to finish playing on the frontend
                         await asyncio.sleep(6)
                         await websocket.send_json({"type": "completed"})
                     else:
-                        # Don't send "listening" here — the frontend will transition
-                        # to listening mode in audio.onended after TTS finishes playing.
-                        # Sending it prematurely causes the mic to start while TTS is
-                        # still playing, creating a feedback loop that interrupts speech.
                         is_agent_speaking = False
                     
                 elif msg_type == "ping":

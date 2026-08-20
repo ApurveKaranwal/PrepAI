@@ -199,26 +199,26 @@ def run_llm_analysis(raw_data: Dict[str, Any]) -> Dict[str, Any]:
             })
         return default_structure
         
-    try:
-        # Truncate large fields to prevent hitting token limits
-        trimmed_data = {
-            "username": raw_data["username"],
-            "name": raw_data["name"],
-            "bio": raw_data["bio"],
-            "top_languages": raw_data["top_languages"],
-            "total_stars": raw_data["total_stars"],
-            "repos": []
-        }
-        for r in raw_data.get("repos", []):
-            trimmed_data["repos"].append({
-                "name": r["name"],
-                "description": r.get("description", ""),
-                "languages": r.get("languages", []),
-                "config_files": r.get("config_files", []),
-                "readme_snippet": r.get("readme_snippet", "")[:500]
-            })
+    # Truncate large fields to prevent hitting token limits
+    trimmed_data = {
+        "username": raw_data["username"],
+        "name": raw_data["name"],
+        "bio": raw_data["bio"],
+        "top_languages": raw_data["top_languages"],
+        "total_stars": raw_data["total_stars"],
+        "repos": []
+    }
+    for r in raw_data.get("repos", []):
+        trimmed_data["repos"].append({
+            "name": r["name"],
+            "description": r.get("description", ""),
+            "languages": r.get("languages", []),
+            "config_files": r.get("config_files", []),
+            "readme_snippet": r.get("readme_snippet", "")[:500]
+        })
 
-        prompt = f"""You are a technical architect. Analyze this GitHub profile data and produce a JSON summary.
+    sarvam_key = os.environ.get("SARVAM_API_KEY")
+    prompt = f"""You are a technical architect. Analyze this GitHub profile data and produce a JSON summary.
 
 Raw Data:
 {json.dumps(trimmed_data, indent=2)}
@@ -243,36 +243,68 @@ Return a JSON object with these exact keys:
 }}
 
 Output ONLY valid JSON."""
+
+    # 1. Try Sarvam AI
+    if sarvam_key:
+        try:
+            import requests
+            resp = requests.post(
+                "https://api.sarvam.ai/v1/chat/completions",
+                headers={"api-subscription-key": sarvam_key, "Content-Type": "application/json"},
+                json={
+                    "model": "sarvam-105b-conversations",
+                    "messages": [
+                        {"role": "system", "content": "You are a JSON-only response bot. You must respond with valid JSON and nothing else."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 1500,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=18
+            )
+            if resp.status_code == 200:
+                raw_json = resp.json()["choices"][0]["message"]["content"].strip()
+                if "```json" in raw_json:
+                    raw_json = raw_json.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw_json:
+                    raw_json = raw_json.split("```")[1].split("```")[0].strip()
+                return json.loads(raw_json)
+        except Exception as err:
+            print(f"Sarvam GitHub analysis error: {err}")
+
+    # 2. Try Groq
+    if client:
+        try:
+            completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are a JSON-only response bot. You must respond with valid JSON and nothing else."},
+                    {"role": "user", "content": prompt}
+                ],
+                model=GROQ_HEAVY_MODEL,
+                temperature=0.1,
+                max_tokens=2048,
+                response_format={"type": "json_object"}
+            )
+            parsed_json = json.loads(completion.choices[0].message.content)
+            return parsed_json
+        except Exception as e:
+            print(f"Error executing GitHub LLM analysis via Groq: {e}")
+
+    # Build manual fallback from repos
+    projects = []
+    for r in raw_data.get("repos", []):
+        techs = r.get("languages", [])
+        if "Dockerfile" in r.get("config_files", []): techs.append("Docker")
+        if "package.json" in r.get("config_files", []): techs.append("NodeJS")
+        if "requirements.txt" in r.get("config_files", []): techs.append("Python")
         
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a JSON-only response bot. You must respond with valid JSON and nothing else."},
-                {"role": "user", "content": prompt}
-            ],
-            model=GROQ_HEAVY_MODEL,
-            temperature=0.1,
-            max_tokens=2048,
-            response_format={"type": "json_object"}
-        )
-        
-        parsed_json = json.loads(completion.choices[0].message.content)
-        return parsed_json
-    except Exception as e:
-        print(f"Error executing GitHub LLM analysis: {e}")
-        # Build manual fallback from repos
-        projects = []
-        for r in raw_data["repos"]:
-            techs = r["languages"]
-            if "Dockerfile" in r["config_files"]: techs.append("Docker")
-            if "package.json" in r["config_files"]: techs.append("NodeJS")
-            if "requirements.txt" in r["config_files"]: techs.append("Python")
-            
-            projects.append({
-                "name": r["name"],
-                "description": r["description"],
-                "technologies": techs,
-                "architecture": "MVC / Layered Pattern",
-                "insights": "Extracted via rule-based fallback."
-            })
-        default_structure["projects"] = projects
-        return default_structure
+        projects.append({
+            "name": r["name"],
+            "description": r.get("description", ""),
+            "technologies": techs,
+            "architecture": "MVC / Layered Pattern",
+            "insights": "Extracted via repository metadata."
+        })
+    default_structure["projects"] = projects
+    return default_structure

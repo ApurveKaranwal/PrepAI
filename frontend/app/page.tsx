@@ -10,7 +10,7 @@ import PerformanceAnalytics from "@/components/analytics/PerformanceAnalytics";
 import ResumeAnalyzer from "@/components/resume/ResumeAnalyzer";
 import VoiceCopilot from "@/components/interview/VoiceCopilot";
 import CareerAgent from "@/components/career/CareerAgent";
-import LiveCodingStudio from "@/components/coding/LiveCodingStudio";
+import RecruiterPortal from "@/components/recruiter/RecruiterPortal";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
 
 interface UserProfile {
@@ -99,10 +99,6 @@ export default function Home() {
     }
   };
 
-  const handleStartPractice = () => {
-    setActiveTab("coding-studio");
-  };
-
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#FAF6F0] flex flex-col items-center justify-center font-sans text-[#262626] select-none">
@@ -129,7 +125,6 @@ export default function Home() {
         setActiveTab={setActiveTab}
         user={user}
         onLogout={handleLogout}
-        onStartPractice={handleStartPractice}
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
       />
@@ -154,21 +149,11 @@ export default function Home() {
 
         {activeTab === "dashboard" && (
           <DashboardHome 
-            onStartPractice={handleStartPractice} 
             onNavigate={(tab: string) => {
               setActiveTab(tab);
               setSidebarOpen(false);
             }} 
             user={user} 
-          />
-        )}
-        {activeTab === "coding-studio" && (
-          <LiveCodingStudio 
-            user={user}
-            onNavigate={(tab: string) => {
-              setActiveTab(tab);
-              setSidebarOpen(false);
-            }}
           />
         )}
         {activeTab === "interviews" && (
@@ -189,6 +174,15 @@ export default function Home() {
           <div className="flex-1 overflow-y-auto bg-[#FAF6F0]">
             <ResumeAnalyzer />
           </div>
+        )}
+        {activeTab === "recruiter-portal" && (
+          <RecruiterPortal 
+            user={user}
+            onNavigate={(tab: string) => {
+              setActiveTab(tab);
+              setSidebarOpen(false);
+            }}
+          />
         )}
       </div>
     </div>

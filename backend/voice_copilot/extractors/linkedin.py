@@ -128,59 +128,88 @@ def parse_linkedin_text(raw_text: str) -> Dict[str, Any]:
     if not raw_text.strip():
         return default_structure
         
-    if not client:
-        return {
-            "headline": "Professional Developer",
-            "experience": [{"company": "N/A", "title": "Developer", "description": "LinkedIn data"}],
-            "skills": [],
-            "projects": [],
-            "education": []
-        }
-        
-    try:
-        prompt = f"""
-        You are a LinkedIn profile parser. Your job is to extract details from raw text and structure it into a clean JSON object matching the following structure:
-        {{
-            "headline": "Job Title / Professional Headline",
-            "experience": [
-                {{
-                    "company": "Company Name",
-                    "title": "Role Title",
-                    "duration": "Duration (e.g. Jan 2021 - Present)",
-                    "description": "Key achievements and responsibilities"
-                }}
-            ],
-            "skills": ["skill1", "skill2"],
-            "projects": [
-                {{
-                    "name": "Project Name",
-                    "description": "Short description of the project"
-                }}
-            ],
-            "education": [
-                {{
-                    "institution": "School/University Name",
-                    "degree": "Degree / Field of Study",
-                    "duration": "Duration (e.g. 2018 - 2022)"
-                }}
-            ]
-        }}
+    sarvam_key = os.environ.get("SARVAM_API_KEY")
+    prompt = f"""
+    You are a LinkedIn profile parser. Your job is to extract details from raw text and structure it into a clean JSON object matching the following structure:
+    {{
+        "headline": "Job Title / Professional Headline",
+        "experience": [
+            {{
+                "company": "Company Name",
+                "title": "Role Title",
+                "duration": "Duration (e.g. Jan 2021 - Present)",
+                "description": "Key achievements and responsibilities"
+            }}
+        ],
+        "skills": ["skill1", "skill2"],
+        "projects": [
+            {{
+                "name": "Project Name",
+                "description": "Short description of the project"
+            }}
+        ],
+        "education": [
+            {{
+                "institution": "School/University Name",
+                "degree": "Degree / Field of Study",
+                "duration": "Duration (e.g. 2018 - 2022)"
+            }}
+        ]
+    }}
 
-        LinkedIn raw text:
-        {raw_text[:12000]}
+    LinkedIn raw text:
+    {raw_text[:12000]}
 
-        Output ONLY valid JSON. Do not include markdown code block syntax (like ```json ... ```) or any extra conversational text.
-        """
-        
-        completion = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=GROQ_LIGHT_MODEL,
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        
-        parsed_json = json.loads(completion.choices[0].message.content)
-        return parsed_json
-    except Exception as e:
-        print(f"Error parsing LinkedIn via Groq: {e}")
-        return default_structure
+    Output ONLY valid JSON.
+    """
+    
+    # 1. Try Sarvam AI
+    if sarvam_key:
+        try:
+            import requests
+            resp = requests.post(
+                "https://api.sarvam.ai/v1/chat/completions",
+                headers={"api-subscription-key": sarvam_key, "Content-Type": "application/json"},
+                json={
+                    "model": "sarvam-105b-conversations",
+                    "messages": [
+                        {"role": "system", "content": "You are a JSON-only response bot. Parse the LinkedIn profile into JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 1500,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=18
+            )
+            if resp.status_code == 200:
+                raw_json = resp.json()["choices"][0]["message"]["content"].strip()
+                if "```json" in raw_json:
+                    raw_json = raw_json.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw_json:
+                    raw_json = raw_json.split("```")[1].split("```")[0].strip()
+                return json.loads(raw_json)
+        except Exception as e:
+            print(f"Sarvam LinkedIn parsing error: {e}")
+
+    # 2. Try Groq
+    if client:
+        try:
+            completion = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model=GROQ_LIGHT_MODEL,
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+            parsed_json = json.loads(completion.choices[0].message.content)
+            return parsed_json
+        except Exception as e:
+            print(f"Error parsing LinkedIn via Groq: {e}")
+            
+    return {
+        "headline": "Professional Developer",
+        "experience": [{"company": "N/A", "title": "Developer", "description": "LinkedIn data"}],
+        "skills": [],
+        "projects": [],
+        "education": []
+    }

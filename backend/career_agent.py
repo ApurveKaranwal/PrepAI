@@ -3,6 +3,8 @@ import json
 import random
 import re
 import time
+import datetime
+import hashlib
 import threading
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -24,12 +26,57 @@ LAST_REFRESH_TIME = 0
 REFRESH_LOCK = threading.Lock()
 REFRESH_INTERVAL = 1800  # Refresh every 30 minutes
 
-# Initialize Groq/Gemini client from env for LLM answer generation
+# Initialize LLM providers
+sarvam_api_key = os.environ.get("SARVAM_API_KEY")
 groq_api_key = os.environ.get("GROQ_API_KEY")
+openai_api_key = os.environ.get("OPENAI_API_KEY")
 client = None
 if groq_api_key:
     from groq import Groq
     client = Groq(api_key=groq_api_key)
+
+def call_career_llm(messages: list, temperature: float = 0.7, max_tokens: int = 1500, json_mode: bool = False) -> Optional[str]:
+    # 1. Primary: Sarvam AI 105B
+    if sarvam_api_key:
+        try:
+            payload = {
+                "model": "sarvam-105b-conversations",
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
+            resp = requests.post(
+                "https://api.sarvam.ai/v1/chat/completions",
+                headers={"api-subscription-key": sarvam_api_key, "Content-Type": "application/json"},
+                json=payload,
+                timeout=20
+            )
+            if resp.status_code == 200:
+                raw = resp.json()["choices"][0]["message"]["content"].strip()
+                if raw:
+                    return raw
+        except Exception as e:
+            print(f"[CareerAgent] Sarvam LLM error: {e}")
+
+    # 2. Secondary: Groq
+    if client:
+        try:
+            kwargs = {
+                "messages": messages,
+                "model": GROQ_HEAVY_MODEL,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            completion = client.chat.completions.create(**kwargs)
+            return completion.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[CareerAgent] Groq LLM error: {e}")
+
+    return None
 
 class OnboardRequest(BaseModel):
     user_id: str
@@ -180,10 +227,10 @@ async def onboard_candidate(
     return {"status": "success", "profile": profile}
 
 @router.get("/profile")
-def get_profile(user_id: str):
-    profile = database.get_candidate_profile(user_id)
+def get_profile(user_id: str = "", email: str = ""):
+    profile = database.get_candidate_profile(user_id, email=email)
     if not profile:
-        raise HTTPException(status_code=404, detail="Candidate profile not found. Complete onboarding first.")
+        return {"status": "not_found", "message": "Candidate profile not found."}
     return profile
 
 # ----------------------------------------------------
@@ -216,6 +263,96 @@ def discover_matched_jobs(user_id: str):
     # Prepare corpus for similarity matching
     candidate_corpus = " ".join(candidate_skills) + " " + profile.get("resume_text", "")
     
+    # 0. Fetch Registered Startup Profile and Recruiter Jobs to Feature at Top
+    startup_jobs = []
+    try:
+        conn = database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM startup_profiles ORDER BY updated_at DESC LIMIT 1")
+        startup_row = cursor.fetchone()
+        
+        cursor.execute("SELECT * FROM recruiter_jobs WHERE status = 'Active' ORDER BY id DESC")
+        rec_jobs = cursor.fetchall()
+        conn.close()
+        
+        startup_name = startup_row["company_name"] if startup_row else "PrepFlow AI Technologies"
+        startup_loc = startup_row["location"] if startup_row else "Bengaluru, India • Remote-First"
+        startup_stage = startup_row["stage"] if startup_row else "Seed Stage"
+        startup_founder = startup_row["founder_name"] if startup_row else "Apurve Karanwal"
+        startup_role = startup_row["founder_role"] if startup_row else "Founder & CTO"
+        startup_stack = startup_row["primary_tech_stack"] if (startup_row and isinstance(startup_row.get("primary_tech_stack"), list)) else (json.loads(startup_row["primary_tech_stack"]) if (startup_row and startup_row.get("primary_tech_stack") and isinstance(startup_row.get("primary_tech_stack"), str)) else ["Python", "FastAPI", "React", "Next.js", "Go", "PostgreSQL"])
+        startup_url = startup_row["website_url"] if startup_row else "https://prepflow.ai"
+        startup_desc = startup_row["about"] if startup_row else "Building next-generation talent assessment engines with cryptographic DevScore verification."
+        
+        if rec_jobs:
+            for rj in rec_jobs:
+                r_skills = json.loads(rj["required_skills"]) if (rj.get("required_skills") and isinstance(rj["required_skills"], str)) else (rj.get("required_skills") or startup_stack)
+                matched_sk = [s for s in r_skills if any(s.lower() in cs.lower() for cs in candidate_skills)]
+                startup_jobs.append({
+                    "id": 900000 + rj["id"],
+                    "title": rj["role_title"],
+                    "company": rj["company_name"] or startup_name,
+                    "location": rj["location"] or startup_loc,
+                    "work_mode": rj["work_mode"] or "Remote",
+                    "salary": rj["salary_range"] or "$130k - $185k / ₹35-50 LPA",
+                    "experience_required": rj["experience_level"] or "2-5 years",
+                    "skills_required": r_skills,
+                    "match_score": 98,
+                    "readiness_score": 95,
+                    "matched_skills": matched_sk,
+                    "missing_skills": [s for s in r_skills if s not in matched_sk][:2],
+                    "reasons": [
+                        "Direct Founder Review",
+                        f"{startup_stage} Requisition",
+                        "Verified DevScore Pipeline"
+                    ],
+                    "url": startup_url,
+                    "ats_type": "PrepFlow Founder Gateway",
+                    "source": "PrepFlow Verified Requisition",
+                    "is_featured_startup": True,
+                    "is_registered_startup": True,
+                    "can_apply_via_agent": True,
+                    "portal_type": "PrepFlow Partner Gateway",
+                    "stage": startup_stage,
+                    "founder_name": startup_founder,
+                    "founder_role": startup_role,
+                    "description": rj["description"] or startup_desc
+                })
+        else:
+            matched_sk = [s for s in startup_stack if any(s.lower() in cs.lower() for cs in candidate_skills)]
+            startup_jobs.append({
+                "id": 999901,
+                "title": "Founding Full-Stack & Systems Engineer",
+                "company": startup_name,
+                "location": startup_loc,
+                "work_mode": "Remote-First",
+                "salary": "$130k - $185k / ₹35-50 LPA",
+                "experience_required": "2-5 years",
+                "skills_required": startup_stack,
+                "match_score": 98,
+                "readiness_score": 96,
+                "matched_skills": matched_sk,
+                "missing_skills": [s for s in startup_stack if s not in matched_sk][:2],
+                "reasons": [
+                    "Direct Founder Review",
+                    f"{startup_stage} Requisition",
+                    "Verified DevScore Pipeline"
+                ],
+                "url": startup_url,
+                "ats_type": "PrepFlow Founder Gateway",
+                "source": "PrepFlow Verified Requisition",
+                "is_featured_startup": True,
+                "is_registered_startup": True,
+                "can_apply_via_agent": True,
+                "portal_type": "PrepFlow Partner Gateway",
+                "stage": startup_stage,
+                "founder_name": startup_founder,
+                "founder_role": startup_role,
+                "description": startup_desc
+            })
+    except Exception as e:
+        print(f"Error compiling featured startup job: {e}")
+
     jobs = database.get_jobs()
     matched_jobs = []
 
@@ -248,9 +385,9 @@ def discover_matched_jobs(user_id: str):
         # Compute reasons list
         reasons_list = []
         for ms in matched_skills[:3]:
-            reasons_list.append(f"✓ {ms} required")
+            reasons_list.append(f"{ms} match")
         for mis in missing_skills[:2]:
-            reasons_list.append(f"✗ {mis} missing")
+            reasons_list.append(f"{mis} gap")
 
         # Basic filtering based on work mode preference
         if profile.get("work_mode") and profile["work_mode"] != "Remote" and job["work_mode"] == "Remote":
@@ -272,12 +409,16 @@ def discover_matched_jobs(user_id: str):
             "reasons": reasons_list,
             "url": job["url"],
             "ats_type": job["ats_type"],
-            "source": job["source"]
+            "source": job["source"],
+            "is_featured_startup": False,
+            "is_registered_startup": False,
+            "can_apply_via_agent": False,
+            "portal_type": "External Internet Listing"
         })
 
-    # Sort matched jobs by match score descending
+    # Sort matched standard jobs by match score descending
     matched_jobs.sort(key=lambda j: j["match_score"], reverse=True)
-    return matched_jobs
+    return startup_jobs + matched_jobs
 
 # ----------------------------------------------------
 # 3. Company-Specific Preparation Roadmap Engine
@@ -419,29 +560,22 @@ async def prepare_application(req: GenerateAnswersRequest):
             else:
                 ai_answers[q_label] = "Yes"
         elif q_type in ["text", "textarea"]:
-            # Use Groq to generate a personalized answer
-            if client:
-                try:
-                    prompt = (
-                        f"Candidate Name: {extracted_details.get('name')}\n"
-                        f"Resume Summary:\n{resume_text[:2000]}\n"
-                        f"GitHub: {extracted_details.get('github_url')}\n"
-                        f"Job Title: {job['title']} at {job['company']}\n"
-                        f"Job Description: {job['description'][:1500]}\n\n"
-                        f"Question: {q_label}\n"
-                        f"Write a professional response (exactly 2-3 sentences). Output ONLY the response text."
-                    )
-                    chat_completion = client.chat.completions.create(
-                        messages=[
-                            {"role": "system", "content": "You are a professional recruitment assistant. Output ONLY the response text."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        model=GROQ_LIGHT_MODEL,
-                        temperature=0.7,
-                    )
-                    ai_answers[q_label] = chat_completion.choices[0].message.content.strip()
-                except Exception as e:
-                    print(f"Failed to generate answer for {q_label}: {e}")
+            # Generate personalized answer via Sarvam AI / Groq
+            prompt = (
+                f"Candidate Name: {extracted_details.get('name')}\n"
+                f"Resume Summary:\n{resume_text[:2000]}\n"
+                f"GitHub: {extracted_details.get('github_url')}\n"
+                f"Job Title: {job['title']} at {job['company']}\n"
+                f"Job Description: {job['description'][:1500]}\n\n"
+                f"Question: {q_label}\n"
+                f"Write a professional response (exactly 2-3 sentences). Output ONLY the response text."
+            )
+            ans = call_career_llm([
+                {"role": "system", "content": "You are a professional recruitment assistant. Output ONLY the response text."},
+                {"role": "user", "content": prompt}
+            ], temperature=0.7, max_tokens=300)
+            if ans:
+                ai_answers[q_label] = ans
             
             # Fallback answers
             if not ai_answers.get(q_label):
@@ -514,9 +648,31 @@ def submit_application(req: SubmitConfirmedApplicationRequest, background_tasks:
     if not candidate_email or candidate_email == "candidate@example.com":
         candidate_email = scraped.get("email") or "apurvekaranwal282@gmail.com"
         
-    company_name = job["company"] if job else "Technology Company"
+    company_name = job["company"] if job else "PrepFlow Partner Company"
     job_title = job["title"] if job else "Software Engineer"
-    ats_type = job.get("ats_type", "Greenhouse") if job else "Greenhouse"
+    ats_type = job.get("ats_type", "PrepFlow Founder Gateway") if job else "PrepFlow Founder Gateway"
+
+    # Enforce: Apply via Agent is only permitted for PrepFlow AI registered partner startups
+    is_registered = False
+    if req.job_id >= 900000:
+        is_registered = True
+    else:
+        try:
+            conn = database.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT company_name FROM startup_profiles WHERE LOWER(company_name) = LOWER(%s)", (company_name,))
+            found_profile = cursor.fetchone()
+            conn.close()
+            if found_profile:
+                is_registered = True
+        except Exception:
+            pass
+
+    if not is_registered:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Apply via Agent is exclusively enabled for PrepFlow AI registered partner startups. For external opportunities like {company_name}, please apply directly on their official career portal or use our AI Prep Roadmap & Cold Outreach generator."
+        )
 
     # Send confirmation email & generate authentic receipt
     confirmation_receipt = send_application_confirmation_email(
@@ -535,9 +691,23 @@ def submit_application(req: SubmitConfirmedApplicationRequest, background_tasks:
         job_id=req.job_id,
         status="Applied",
         custom_responses=req.custom_responses,
-        submission_logs=f"[BrowserAgent] Dispatched to {company_name} ({ats_type}). Ref: {confirmation_receipt['tracking_id']}"
+        submission_logs=f"[BrowserAgent] Dispatched to {company_name} ({ats_type}). Ref: {confirmation_receipt['tracking_id']}",
+        tracking_id=confirmation_receipt['tracking_id']
     )
     
+    # Automatically register into Recruiter Talent Radar & Pipeline if startup or recruiter job
+    try:
+        database.shortlist_candidate({
+            "recruiter_id": "default_recruiter",
+            "candidate_id": str(req.user_id),
+            "candidate_name": candidate_name,
+            "job_id": req.job_id,
+            "stage": "Applied / In Review",
+            "notes": f"Applied via AI Career Agent for {job_title} at {company_name}"
+        })
+    except Exception as e:
+        print(f"Error adding candidate application to recruiter pipeline: {e}")
+
     # Run the playwright script in the background
     background_tasks.add_task(
         run_apply_background,
@@ -551,6 +721,7 @@ def submit_application(req: SubmitConfirmedApplicationRequest, background_tasks:
     return {
         "status": "success",
         "application_id": app_id,
+        "receipt": confirmation_receipt,
         "confirmation_receipt": confirmation_receipt
     }
 
@@ -578,23 +749,83 @@ def get_application_receipt(job_id: int, user_id: str):
     job_title = job["title"] if job else "Software Engineer"
     ats_type = job.get("ats_type", "Greenhouse") if job else "Greenhouse"
 
-    receipt = send_application_confirmation_email(
+    # Check if there is an existing tracking_id in applications table
+    existing_tracking_id = None
+    try:
+        conn = database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT tracking_id, custom_responses FROM applications WHERE user_id = %s AND job_id = %s ORDER BY updated_at DESC LIMIT 1", (str(user_id), job_id))
+        app_row = cursor.fetchone()
+        conn.close()
+        if app_row and app_row.get("tracking_id"):
+            existing_tracking_id = app_row["tracking_id"]
+    except Exception as e:
+        print(f"Error getting existing tracking id: {e}")
+
+    tracking_id = existing_tracking_id or generate_tracking_id(company_name)
+    
+    submission_time = datetime.datetime.now().strftime("%B %d, %Y at %I:%M %p IST")
+    html_content = create_confirmation_html(
         candidate_name=candidate_name,
         candidate_email=candidate_email,
         job_title=job_title,
         company=company_name,
+        tracking_id=tracking_id,
         ats_type=ats_type,
-        resume_name=resume_name
+        resume_name=resume_name,
+        submission_time=submission_time,
+        custom_responses={}
     )
-    return {"receipt": receipt}
+
+    return {
+        "receipt": {
+            "status": "confirmed",
+            "tracking_id": tracking_id,
+            "company": company_name,
+            "job_title": job_title,
+            "candidate_name": candidate_name,
+            "candidate_email": candidate_email,
+            "ats_type": ats_type,
+            "resume_name": resume_name,
+            "submission_time": submission_time,
+            "email_sent": False,
+            "html_preview": html_content
+        }
+    }
 
 # ----------------------------------------------------
-# 6. Application Tracker Dashboard Metrics
+# 6. Application Tracker Dashboard Metrics & Live Sync
 # ----------------------------------------------------
 @router.get("/applications")
 def get_user_applications(user_id: str):
     apps = database.get_applications(user_id)
     
+    # Also fetch live status from candidate_shortlists and takehome_assessments for real-time 2-way sync
+    shortlist_info = None
+    active_assessment = None
+    try:
+        conn = database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM candidate_shortlists WHERE candidate_id = %s ORDER BY created_at DESC LIMIT 1", (str(user_id),))
+        shortlist_info = cursor.fetchone()
+        
+        cursor.execute("SELECT * FROM takehome_assessments WHERE candidate_id = %s ORDER BY created_at DESC LIMIT 1", (str(user_id),))
+        active_assessment = cursor.fetchone()
+        conn.close()
+    except Exception as e:
+        print(f"Error fetching live candidate tracking telemetry: {e}")
+
+    # Synchronize stage and assessment tokens on applications list
+    for app in apps:
+        if shortlist_info:
+            app["live_stage"] = shortlist_info["stage"]
+            app["notes"] = shortlist_info.get("notes", "")
+        if active_assessment:
+            app["takehome_token"] = active_assessment["token"]
+            app["takehome_problem"] = active_assessment["problem_title"]
+            app["takehome_status"] = active_assessment["status"]
+            app["takehome_score"] = active_assessment.get("score", 0)
+
     # Calculate metrics
     sent = len(apps)
     response_rate = 0
@@ -602,9 +833,9 @@ def get_user_applications(user_id: str):
     offer_rate = 0
     
     if sent > 0:
-        interviews = sum(1 for a in apps if a["status"] in ["Interview Scheduled", "Offer Received"])
-        offers = sum(1 for a in apps if a["status"] == "Offer Received")
-        responses = sum(1 for a in apps if a["status"] not in ["Applied"])
+        interviews = sum(1 for a in apps if a.get("live_stage") in ["Shortlisted", "Interview Scheduled"] or a.get("status") in ["Interview Scheduled", "Offer Received"])
+        offers = sum(1 for a in apps if a.get("live_stage") == "Offer Extended" or a["status"] == "Offer Received")
+        responses = sum(1 for a in apps if a.get("live_stage") not in ["Applied", "Applied / In Review"] or a["status"] not in ["Applied"])
         
         response_rate = int((responses / sent) * 100)
         interview_rate = int((interviews / sent) * 100)
@@ -612,6 +843,8 @@ def get_user_applications(user_id: str):
         
     return {
         "applications": apps,
+        "live_shortlist": shortlist_info,
+        "active_assessment": active_assessment,
         "metrics": {
             "sent": sent,
             "response_rate": response_rate,
@@ -642,80 +875,160 @@ def generate_cold_outreach(job_id: int, user_id: str, target_role: str = "Hiring
     candidate_skills = profile.get("tech_stack_preferences", [])
     skills_str = ", ".join(candidate_skills)
     
-    if not client:
-        # Fallback outreach templates if Groq not set up
+    resume_summary = profile.get("resume_text", "")[:10000]
+
+    # Helper function to generate persona-tailored outreach fallback
+    def build_smart_outreach_fallback():
+        greeting = "Hi Hiring Team,"
+        subject_role = target_role
+        if target_role == "Hiring Manager":
+            greeting = f"Hi {job['company']} Engineering Team,"
+            subject = f"Founding Full-Stack & Systems Engineer Inquiry — {candidate_name}"
+            intro = f"I've been following {job['company']}'s work in scalable systems and wanted to reach out regarding the {job['title']} role."
+            closing = f"I'd welcome the chance to discuss how my systems background aligns with your engineering roadmap. Do you have 10 minutes this week for a brief conversation?"
+        elif target_role == "Recruiter":
+            greeting = f"Hi {job['company']} Recruiting Team,"
+            subject = f"Application & Portfolio: {candidate_name} for {job['title']}"
+            intro = f"I am writing to express my strong interest in the {job['title']} opening at {job['company']}."
+            closing = f"My resume and verified DevScore technical portfolio are attached. I am available for an initial screening call at your earliest convenience."
+        else: # Team Peer
+            greeting = f"Hi there,"
+            subject = f"Fellow engineer reaching out regarding {job['title']} at {job['company']}"
+            intro = f"I came across {job['company']}'s technical architecture and was very impressed by your engineering focus. I'm exploring the {job['title']} position."
+            closing = f"Would love to connect and learn more about the team's engineering culture and day-to-day technical challenges if you have a moment to chat!"
+
+        email_body = (
+            f"{greeting}\n\n"
+            f"My name is {candidate_name}, and {intro.lower() if intro.startswith('I ') else intro} "
+            f"With hands-on experience in {skills_str}, I build scalable full-stack applications with high reliability and clean architectural patterns.\n\n"
+            f"Key technical highlights and projects:\n"
+            f"1. Distributed Systems Engine: Built resilient concurrency pipelines with Redis and PostgreSQL (Live: {portfolio_url or 'https://github.com/' + candidate_name.replace(' ', '')})\n"
+            f"2. High-Throughput REST APIs: Architected sub-50ms latency microservices and automated CI/CD workflows in FastAPI/React.\n\n"
+            f"Professional Profiles & Portfolio:\n"
+            f"- GitHub: {github_url or ('https://github.com/' + candidate_name.replace(' ', ''))}\n"
+            f"- Portfolio: {portfolio_url or 'https://' + candidate_name.lower().replace(' ', '') + '.xyz'}\n"
+            f"- LinkedIn: {linkedin_url or ('https://linkedin.com/in/' + candidate_name.lower().replace(' ', ''))}\n"
+            f"- Resume: [Attached: {resume_name}]\n\n"
+            f"{closing}\n\n"
+            f"Warm regards,\n"
+            f"{candidate_name}"
+        )
+
         return {
             "target": target_role,
             "contact_email": f"careers@{company_clean}.com",
-            "subject": f"Exploring Software Engineer Opportunities at {job['company']}",
-            "linkedin_connection": f"Hi, I'm {candidate_name}. I saw your work at {job['company']} and would love to connect about the {job['title']} role!",
-            "email_body": (
-                f"Dear Hiring Team,\n\n"
-                f"My name is {candidate_name}, and I am writing to express my interest in the {job['title']} position at {job['company']}. "
-                f"With my experience in {skills_str}, I am confident in my ability to add value to your team.\n\n"
-                f"Here are a couple of projects I have built:\n"
-                f"1. Distributed Lock System: Optimized concurrent processing using Redis and PostgreSQL. (Live: https://github-lock-system.vercel.app)\n"
-                f"2. Microservice Analytics: Configured real-time metrics capture and reporting pipeline in FastAPI. (Live: https://metrics-core.github.io)\n\n"
-                f"Please find my professional profiles and credentials below:\n"
-                f"- GitHub: {github_url or '[Insert GitHub Link]'}\n"
-                f"- Portfolio: {portfolio_url or '[Insert Portfolio Link]'}\n"
-                f"- LinkedIn: {linkedin_url or '[Insert LinkedIn Link]'}\n"
-                f"- Resume: [Attached: {resume_name}]\n\n"
-                f"Best regards,\n"
-                f"{candidate_name}"
-            ),
-            "follow_up": f"Hi, following up on my previous email regarding the {job['title']} role at {job['company']}. Let me know if you have 5 minutes to chat!",
-            "target": target_role
+            "subject": subject,
+            "linkedin_connection": f"Hi, I'm {candidate_name}. I admire {job['company']}'s engineering standards and would love to connect regarding the {job['title']} opening!",
+            "email_body": email_body,
+            "follow_up": f"Hi, just following up on my previous note regarding the {job['title']} role at {job['company']}. I'd love to share my portfolio and discuss how I can contribute to the team. Thanks for your time!"
         }
+
+    # Attempt LLM generation if client available, otherwise use smart persona fallback
+    if client:
+        prompt = (
+            f"You are an expert career agent and copywriter helping a candidate land a job referral or interview. "
+            f"Generate a personalized networking outreach sequence for a candidate contacting a {target_role} at {job['company']}.\n\n"
+            f"Here is the Target Job description:\n"
+            f"Title: {job['title']}\n"
+            f"Company: {job['company']}\n"
+            f"Skills Required: {json.dumps(job['skills_required'])}\n"
+            f"Description: {job['description'][:1500]}\n\n"
+            f"Here is the Candidate's profile details:\n"
+            f"Name: {candidate_name}\n"
+            f"Skills: {skills_str}\n"
+            f"Resume Excerpt:\n{resume_summary}\n\n"
+            f"Instructions for generating the cold email body ('email_body'):\n"
+            f"1. Make the email highly professional, personalized, and around 150-250 words.\n"
+            f"2. You MUST read the candidate's Resume Excerpt and identify 1-2 major/interesting projects the candidate has built that are relevant to this role.\n"
+            f"3. You MUST mention these projects by name in the email body, write 1-2 specific points summarizing what was built, the tech stack used, and the impact/metrics.\n"
+            f"4. You MUST include a live deployment link for each of these projects. If a deployment link is not found in the resume, generate a realistic deployment URL based on the project name (e.g., https://<project-name>.vercel.app or https://<project-name>.github.io).\n"
+            f"5. You MUST end the email body by clearly listing the candidate's professional links:\n"
+            f"   - GitHub: {github_url if github_url else '[Insert GitHub Link]'}\n"
+            f"   - Portfolio: {portfolio_url if portfolio_url else '[Insert Portfolio Link]'}\n"
+            f"   - LinkedIn: {linkedin_url if linkedin_url else '[Insert LinkedIn Link]'}\n"
+            f"   - Resume: [Attached: {resume_name}]\n\n"
+            f"Do not sound pushy. Also generate a guessable or standard company contact email (e.g. careers@{company_clean}.com or jobs@{company_clean}.com).\n\n"
+            f"You MUST return a JSON response with the following keys and structure:\n"
+            f"{{\n"
+            f"  \"contact_email\": \"<a professional recruitment or engineering contact email for this company, e.g. careers@{company_clean}.com, recruiting@{company_clean}.com, or similar>\",\n"
+            f"  \"subject\": \"<a catchy, professional email subject line>\",\n"
+            f"  \"linkedin_connection\": \"<a highly personalized LinkedIn connection request note, strictly UNDER 300 characters>\",\n"
+            f"  \"email_body\": \"<the personalized cold email pitch adhering to all the instructions above>\",\n"
+            f"  \"follow_up\": \"<a short, polite follow-up message to send 3 days later, around 50 words>\"\n"
+            f"}}\n"
+            f"Verify your output is strictly valid JSON."
+        )
         
-    resume_summary = profile.get("resume_text", "")[:10000] # Read up to 10k characters to capture projects
-    
-    prompt = (
-        f"You are an expert career agent and copywriter helping a candidate land a job referral or interview. "
-        f"Generate a personalized networking outreach sequence for a candidate contacting a {target_role} at {job['company']}.\n\n"
-        f"Here is the Target Job description:\n"
-        f"Title: {job['title']}\n"
-        f"Company: {job['company']}\n"
-        f"Skills Required: {json.dumps(job['skills_required'])}\n"
-        f"Description: {job['description'][:1500]}\n\n"
-        f"Here is the Candidate's profile details:\n"
-        f"Name: {candidate_name}\n"
-        f"Skills: {skills_str}\n"
-        f"Resume Excerpt:\n{resume_summary}\n\n"
-        f"Instructions for generating the cold email body ('email_body'):\n"
-        f"1. Make the email highly professional, personalized, and around 150-250 words.\n"
-        f"2. You MUST read the candidate's Resume Excerpt and identify 1-2 major/interesting projects the candidate has built that are relevant to this role.\n"
-        f"3. You MUST mention these projects by name in the email body, write 1-2 specific points summarizing what was built, the tech stack used, and the impact/metrics.\n"
-        f"4. You MUST include a live deployment link for each of these projects. If a deployment link is not found in the resume, generate a realistic deployment URL based on the project name (e.g., https://<project-name>.vercel.app or https://<project-name>.github.io).\n"
-        f"5. You MUST end the email body by clearly listing the candidate's professional links:\n"
-        f"   - GitHub: {github_url if github_url else '[Insert GitHub Link]'}\n"
-        f"   - Portfolio: {portfolio_url if portfolio_url else '[Insert Portfolio Link]'}\n"
-        f"   - LinkedIn: {linkedin_url if linkedin_url else '[Insert LinkedIn Link]'}\n"
-        f"   - Resume: [Attached: {resume_name}]\n\n"
-        f"Do not sound pushy. Also generate a guessable or standard company contact email (e.g. careers@{company_clean}.com or jobs@{company_clean}.com).\n\n"
-        f"You MUST return a JSON response with the following keys and structure:\n"
-        f"{{\n"
-        f"  \"contact_email\": \"<a professional recruitment or engineering contact email for this company, e.g. careers@{company_clean}.com, recruiting@{company_clean}.com, or similar>\",\n"
-        f"  \"subject\": \"<a catchy, professional email subject line>\",\n"
-        f"  \"linkedin_connection\": \"<a highly personalized LinkedIn connection request note, strictly UNDER 300 characters>\",\n"
-        f"  \"email_body\": \"<the personalized cold email pitch adhering to all the instructions above>\",\n"
-        f"  \"follow_up\": \"<a short, polite follow-up message to send 3 days later, around 50 words>\"\n"
-        f"}}\n"
-        f"Verify your output is strictly valid JSON."
-    )
-    
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[
+        try:
+            response_text = call_career_llm([
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": "Please generate the outreach materials."}
-            ],
-            model=GROQ_HEAVY_MODEL,
-            response_format={"type": "json_object"}
+            ], temperature=0.7, max_tokens=1200, json_mode=True)
+            if response_text:
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0].strip()
+                result = json.loads(response_text)
+                result["target"] = target_role
+                return result
+        except Exception as e:
+            print(f"[CareerAgent] LLM outreach generation error (falling back to smart persona generator): {e}")
+            return build_smart_outreach_fallback()
+
+    return build_smart_outreach_fallback()
+
+# ----------------------------------------------------
+# 6. Official Application Tracking ID Verification
+# ----------------------------------------------------
+@router.get("/verify-tracking/{tracking_id}")
+def verify_application_tracking(tracking_id: str):
+    clean_tid = tracking_id.strip().upper()
+    app = database.get_application_by_tracking_id(clean_tid)
+    if not app:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application tracking reference '{clean_tid}' was not found in the verified registry."
         )
-        response_text = chat_completion.choices[0].message.content
-        result = json.loads(response_text)
-        result["target"] = target_role
-        return result
+
+    # Fetch live stage from candidate_shortlists
+    live_stage = app.get("status", "Applied")
+    notes = ""
+    try:
+        conn = database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT stage, notes FROM candidate_shortlists WHERE candidate_id = %s ORDER BY id DESC LIMIT 1", (str(app["user_id"]),))
+        shortlist_row = cursor.fetchone()
+        conn.close()
+        if shortlist_row:
+            live_stage = shortlist_row["stage"]
+            notes = shortlist_row.get("notes") or ""
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate outreach: {e}")
+        print(f"Error fetching live shortlist for tracking: {e}")
+
+    # Generate deterministic audit verification hash
+    raw_signature = f"{clean_tid}:{app['user_id']}:{app['job_id']}:{app['created_at']}:{app['company']}"
+    audit_hash = hashlib.sha256(raw_signature.encode('utf-8')).hexdigest()
+
+    return {
+        "valid": True,
+        "tracking_id": clean_tid,
+        "application_id": app["id"],
+        "job_id": app["job_id"],
+        "job_title": app["title"],
+        "company": app["company"],
+        "location": app["location"],
+        "work_mode": app["work_mode"],
+        "candidate_name": app["candidate_name"],
+        "candidate_email": app["candidate_email"],
+        "resume_name": app["resume_name"],
+        "devscore": app.get("devscore", 850),
+        "status": app["status"],
+        "live_stage": live_stage,
+        "notes": notes,
+        "submission_timestamp": app["created_at"],
+        "ats_gateway": app.get("ats_type", "PrepFlow Founder Direct Gateway"),
+        "audit_hash": audit_hash,
+        "verification_status": "Cryptographically Verified",
+        "custom_responses": app.get("custom_responses", {})
+    }

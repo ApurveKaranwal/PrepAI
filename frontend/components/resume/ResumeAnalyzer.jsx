@@ -92,13 +92,13 @@ const ResumeAnalyzer = () => {
             date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
           }));
         } catch (e) {
-          console.error("Failed to save resume analysis to localStorage", e);
+          console.warn("Failed to save resume analysis to localStorage", e);
         }
       } else {
         throw new Error('Invalid response format');
       }
     } catch (err) {
-      console.error("Resume analysis error:", err);
+      console.warn("Resume analysis notice:", err);
       setError(err.message || 'An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
@@ -131,7 +131,7 @@ const ResumeAnalyzer = () => {
         throw new Error('Invalid rewrite response format');
       }
     } catch (err) {
-      console.error("Rewrite error:", err);
+      console.warn("Rewrite notice:", err);
       setError(err.message || 'An error occurred while rewriting. Please try again.');
     } finally {
       setRewriting(false);
@@ -313,7 +313,7 @@ return (
             <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-6 shadow-sm flex-1 flex flex-col items-center justify-center">
               <h3 className="text-sm font-semibold text-[#262626] mb-4 w-full text-center font-serif">Score Breakdown</h3>
               <div className="w-full h-[220px]">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                   <RadarChart cx="50%" cy="50%" outerRadius="70%" data={[
                     { subject: 'Skills', A: analysis.sub_scores.skills, fullMark: 100 },
                     { subject: 'Experience', A: analysis.sub_scores.experience, fullMark: 100 },

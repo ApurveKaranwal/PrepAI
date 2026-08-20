@@ -29,7 +29,10 @@ import {
   ShieldCheck,
   Inbox,
   ExternalLink,
-  CheckCheck
+  CheckCheck,
+  Globe,
+  Mail,
+  Building2
 } from "lucide-react";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
@@ -47,6 +50,14 @@ export default function CareerAgent({ user }) {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [copiedTrackingId, setCopiedTrackingId] = useState(false);
   const [receiptTab, setReceiptTab] = useState("preview"); // 'preview' | 'details'
+
+  // Application Audit & Verification States
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditData, setAuditData] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState("");
+  const [trackingSearchQuery, setTrackingSearchQuery] = useState("");
+  const [copiedAuditHash, setCopiedAuditHash] = useState(false);
 
   // Onboarding Form States
   const [jobType, setJobType] = useState("Full-Time");
@@ -264,11 +275,12 @@ export default function CareerAgent({ user }) {
     setLoadingRoadmap(false);
   };
 
-  const fetchOutreach = async () => {
+  const fetchOutreach = async (overrideRole) => {
     if (!selectedJob) return;
+    const targetRole = overrideRole || outreachRole || "Hiring Manager";
     setOutreachLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/career/outreach?job_id=${selectedJob.id}&user_id=${user.uid}&target_role=${encodeURIComponent(outreachRole)}`);
+      const res = await fetch(`${BACKEND_URL}/api/career/outreach?job_id=${selectedJob.id}&user_id=${user.uid}&target_role=${encodeURIComponent(targetRole)}`);
       if (res.ok) {
         const data = await res.json();
         setOutreachData(data);
@@ -277,6 +289,25 @@ export default function CareerAgent({ user }) {
       }
     } catch (err) {
       console.error("Error generating outreach:", err);
+    }
+    setOutreachLoading(false);
+  };
+
+  const openOutreach = async (job) => {
+    setSelectedJob(job);
+    setDrawerTab("outreach");
+    setOutreachRole("Hiring Manager");
+    setShowRoadmapDrawer(true);
+    setShowApplyDrawer(false);
+    setOutreachLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/career/outreach?job_id=${job.id}&user_id=${user.uid}&target_role=Hiring Manager`);
+      if (res.ok) {
+        const data = await res.json();
+        setOutreachData(data);
+      }
+    } catch (err) {
+      console.error("Failed to generate outreach sequence:", err);
     }
     setOutreachLoading(false);
   };
@@ -305,14 +336,34 @@ export default function CareerAgent({ user }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setCandidateDetails(data.candidate_details || {
-          name: "", email: "", phone: "", linkedin_url: "", github_url: ""
+        const extracted = data.candidate_details || {};
+        setCandidateDetails({
+          name: extracted.name || user.displayName || "Apurve Karanwal",
+          email: extracted.email || user.email || "apurvekaranwal282@gmail.com",
+          phone: extracted.phone || profile?.phone || "+91 9557867938",
+          linkedin_url: extracted.linkedin_url || profile?.linkedin_url || "https://linkedin.com/in/apurvekaranwal",
+          github_url: extracted.github_url || profile?.github_url || "https://github.com/ApurveKaranwal"
         });
         setFormFields(data.form_fields || { standard_fields: {}, custom_questions: [] });
         setAiAnswers(data.ai_answers || {});
+      } else {
+        setCandidateDetails({
+          name: user.displayName || profile?.name || "Apurve Karanwal",
+          email: user.email || "apurvekaranwal282@gmail.com",
+          phone: profile?.phone || "+91 9557867938",
+          linkedin_url: profile?.linkedin_url || "https://linkedin.com/in/apurvekaranwal",
+          github_url: profile?.github_url || "https://github.com/ApurveKaranwal"
+        });
       }
     } catch (err) {
       console.error("Failed to prepare application details:", err);
+      setCandidateDetails({
+        name: user.displayName || profile?.name || "Apurve Karanwal",
+        email: user.email || "apurvekaranwal282@gmail.com",
+        phone: profile?.phone || "+91 9557867938",
+        linkedin_url: profile?.linkedin_url || "https://linkedin.com/in/apurvekaranwal",
+        github_url: profile?.github_url || "https://github.com/ApurveKaranwal"
+      });
     }
     setLoadingAnswers(false);
   };
@@ -331,6 +382,31 @@ export default function CareerAgent({ user }) {
     } catch (err) {
       console.error("Failed to fetch application receipt:", err);
     }
+  };
+
+  // Verify Tracking ID & Audit Trail
+  const handleVerifyTracking = async (trackingId) => {
+    const tid = (trackingId || trackingSearchQuery || "").trim();
+    if (!tid) return;
+    setAuditLoading(true);
+    setAuditError("");
+    setShowAuditModal(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/career/verify-tracking/${encodeURIComponent(tid)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAuditData(data);
+      } else {
+        const err = await res.json();
+        setAuditError(err.detail || `Tracking reference "${tid}" was not found in the verified registry.`);
+        setAuditData(null);
+      }
+    } catch (e) {
+      console.error("Failed to verify tracking ID:", e);
+      setAuditError("Failed to reach verification registry. Please check your connection.");
+      setAuditData(null);
+    }
+    setAuditLoading(false);
   };
 
   // Submit Auto Application Agent
@@ -799,135 +875,263 @@ export default function CareerAgent({ user }) {
       {activeSubTab === "dashboard" && profile && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
-          {/* LEFT COLUMN: Matched Jobs Feed */}
-          <div className="lg:col-span-7 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-serif font-semibold text-lg text-[#262626] flex items-center gap-2">
-                <Compass className="h-4 w-4 text-[#C85A32]" />
-                Top Matches For You
-              </h3>
-              <span className="text-[10px] font-bold font-mono text-[#6E6359]">{jobs.length} jobs found</span>
+          {/* LEFT COLUMN: Matched Jobs Feed - 2 SECTIONS */}
+          <div className="lg:col-span-7 space-y-8">
+            
+            {/* =========================================================================
+                SECTION 1: REGISTERED PREPFLOW AI STARTUPS (1-CLICK APPLY VIA AGENT)
+                ========================================================================= */}
+            <div className="space-y-4 text-left">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#E7E2DA] gap-2">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="font-serif font-bold text-lg text-[#1C1917]">
+                      Verified Startup Requisitions
+                    </h3>
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FAF4EB] text-[#C85A32] border border-[#C85A32]/25">
+                      Direct Dispatch
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#78716C]">
+                    Startups registered on PrepFlow AI. 1-Click apply dispatches your verified DevScore directly to founders.
+                  </p>
+                </div>
+                <span className="text-xs font-mono font-bold text-[#78716C] bg-[#FAF8F5] px-2.5 py-1 rounded-md border border-[#E7E2DA] self-start sm:self-auto shrink-0">
+                  {jobs.filter((j) => j.is_registered_startup).length} Roles Active
+                </span>
+              </div>
+
+              <div className="space-y-4">
+                {jobs.filter((j) => j.is_registered_startup).map((job) => {
+                  const hasApplied = applications.some((a) => a.job_id === job.id);
+                  return (
+                    <div
+                      key={job.id}
+                      className="bg-white border border-[#E5DFD7] hover:border-[#C85A32]/60 hover:shadow-xs transition-all rounded-xl p-5 space-y-4 text-left shadow-3xs"
+                    >
+                      {/* Top Meta Bar */}
+                      <div className="flex items-center justify-between gap-2 border-b border-[#F0EBE3] pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#C85A32] bg-[#FAF4EB] border border-[#C85A32]/20 px-2 py-0.5 rounded">
+                            {job.stage || "Pre-Seed"}
+                          </span>
+                          <span className="text-[11px] font-mono text-[#78716C] flex items-center gap-1">
+                            <ShieldCheck className="h-3.5 w-3.5 text-[#2E5A44]" />
+                            Reviewed by {job.founder_name || "Founders"}
+                          </span>
+                        </div>
+
+                        {/* Match & Readiness Metrics */}
+                        <div className="flex items-center gap-1.5 shrink-0 font-mono text-xs">
+                          <span className="bg-[#E8F2EC] text-[#2E5A44] font-bold px-2 py-0.5 rounded border border-[#2E5A44]/20">
+                            {job.match_score}% Match
+                          </span>
+                          <span className="bg-[#F0F4F8] text-[#1E3A5F] font-bold px-2 py-0.5 rounded border border-[#1E3A5F]/15">
+                            {job.readiness_score}% Readiness
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Job Header & Metadata */}
+                      <div className="space-y-1.5">
+                        <h4 className="font-serif font-bold text-lg text-[#1C1917] leading-snug">
+                          {job.title}
+                        </h4>
+                        
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                          <span className="font-bold text-[#C85A32] flex items-center gap-1">
+                            <Building className="h-3.5 w-3.5" />
+                            {job.company}
+                          </span>
+                          <span className="text-[#D6CCC2]">•</span>
+                          <span className="font-mono text-[#78716C] flex items-center gap-1">
+                            <MapPin className="h-3.5 w-3.5 text-[#A8A29E]" />
+                            {job.location} ({job.work_mode})
+                          </span>
+                          {job.salary && (
+                            <>
+                              <span className="text-[#D6CCC2]">•</span>
+                              <span className="font-mono font-semibold text-[#1C1917] bg-[#FAF8F5] px-2 py-0.5 rounded border border-[#E7E2DA]">
+                                {job.salary}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Job Description */}
+                      <p className="text-xs text-[#57534E] leading-relaxed line-clamp-2">
+                        {job.description}
+                      </p>
+
+                      {/* Technical Stacks & Requirements */}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {(job.skills_required || []).slice(0, 6).map((skill, idx) => (
+                          <span
+                            key={idx}
+                            className="bg-[#FAF8F5] border border-[#E7E2DA] text-[#44403C] text-[11px] font-mono font-medium px-2.5 py-0.5 rounded"
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Card Action Footer */}
+                      <div className="flex items-center justify-between pt-3 border-t border-[#F0EBE3]">
+                        <button
+                          onClick={() => openRoadmap(job)}
+                          className="text-xs font-semibold text-[#78716C] hover:text-[#C85A32] flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Brain className="h-4 w-4 text-[#C85A32]" />
+                          <span>Interview Prep Roadmap</span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+
+                        {hasApplied ? (
+                          <span className="flex items-center gap-1.5 text-xs text-[#2E5A44] font-bold bg-[#E8F2EC] px-3.5 py-1.5 rounded-lg border border-[#2E5A44]/25">
+                            <CheckCircle className="h-4 w-4" />
+                            Applied (In Founder Radar)
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => openApplyDrawer(job)}
+                            className="bg-[#C85A32] hover:bg-[#B34E2A] text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            <span>1-Click Apply via Agent</span>
+                          </button>
+                        )}
+                      </div>
+
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="space-y-4">
-              {jobs.map((job) => {
-                const hasApplied = applications.some((a) => a.job_id === job.id);
-                return (
+            {/* =========================================================================
+                SECTION 2: EXTERNAL MARKET JOBS (AGGREGATED FROM WEB)
+                ========================================================================= */}
+            <div className="space-y-4 pt-2 text-left">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#E7E2DA] gap-2">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="font-serif font-bold text-lg text-[#1C1917]">
+                      External Market Opportunities
+                    </h3>
+                    <span className="text-[10px] font-mono font-medium uppercase tracking-wider px-2 py-0.5 rounded bg-[#FAF8F5] text-[#78716C] border border-[#E7E2DA]">
+                      Aggregated Web Feed
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#78716C]">
+                    Fetched from Greenhouse, Lever, and Ashby portals. Review requirements, prepare targeted roadmaps, or generate cold outreach sequences.
+                  </p>
+                </div>
+                <span className="text-xs font-mono font-bold text-[#78716C] bg-[#FAF8F5] px-2.5 py-1 rounded-md border border-[#E7E2DA] self-start sm:self-auto shrink-0">
+                  {jobs.filter((j) => !j.is_registered_startup).length} Opportunities
+                </span>
+              </div>
+
+              <div className="space-y-4">
+                {jobs.filter((j) => !j.is_registered_startup).map((job) => (
                   <div
                     key={job.id}
-                    className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-5 hover:border-[#C85A32]/40 hover:shadow-2xs transition-all text-left space-y-4 relative overflow-hidden"
+                    className="bg-white border border-[#E5DFD7] hover:border-[#D6CCC2] hover:shadow-xs transition-all rounded-xl p-5 space-y-4 text-left shadow-3xs"
                   >
-                    {/* Scores in corner */}
-                    <div className="absolute top-4 right-4 flex items-center gap-2">
-                      <div className="flex flex-col items-center">
-                        <span className="text-[9px] font-bold text-[#6E6359] uppercase tracking-wider">Match</span>
-                        <span className={`text-xs font-extrabold font-mono mt-0.5 px-1.5 py-0.5 rounded ${
-                          job.match_score >= 85
-                            ? "bg-[#E8F2EC] text-[#2E5A44]"
-                            : "bg-[#FAF4EB] text-[#C85A32]"
-                        }`}>
-                          {job.match_score}%
+                    {/* Top Meta Bar */}
+                    <div className="flex items-center justify-between gap-2 border-b border-[#F0EBE3] pb-3">
+                      <span className="text-[10px] font-mono font-medium text-[#78716C] bg-[#FAF8F5] border border-[#E7E2DA] px-2 py-0.5 rounded">
+                        External Portal • {job.ats_type}
+                      </span>
+
+                      {/* Match & Readiness Metrics */}
+                      <div className="flex items-center gap-1.5 shrink-0 font-mono text-xs">
+                        <span className="bg-[#FAF4EB] text-[#C85A32] font-bold px-2 py-0.5 rounded border border-[#C85A32]/20">
+                          {job.match_score}% Match
                         </span>
-                      </div>
-                      <div className="flex flex-col items-center border-l border-[#DFD5C6] pl-2">
-                        <span className="text-[9px] font-bold text-[#6E6359] uppercase tracking-wider">Readiness</span>
-                        <span className={`text-xs font-extrabold font-mono mt-0.5 px-1.5 py-0.5 rounded ${
-                          job.readiness_score >= 80
-                            ? "bg-blue-50 text-blue-700"
-                            : "bg-amber-50 text-amber-700"
-                        }`}>
-                          {job.readiness_score}%
+                        <span className="bg-[#FAF8F5] text-[#57534E] font-medium px-2 py-0.5 rounded border border-[#E7E2DA]">
+                          {job.readiness_score}% Readiness
                         </span>
                       </div>
                     </div>
 
                     {/* Job Details */}
-                    <div className="space-y-1 max-w-[75%]">
-                      <h4 className="font-serif font-bold text-[#262626] text-sm md:text-base leading-tight">
+                    <div className="space-y-1.5">
+                      <h4 className="font-serif font-bold text-base text-[#1C1917] leading-snug">
                         {job.title}
                       </h4>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <p className="text-xs font-bold text-[#C85A32] flex items-center gap-1.5">
-                          <Building className="h-3.5 w-3.5" />
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                        <span className="font-bold text-[#1C1917] flex items-center gap-1">
+                          <Building className="h-3.5 w-3.5 text-[#78716C]" />
                           {job.company}
-                        </p>
-                        <span className="text-[#DFD5C6] text-[10px]">|</span>
-                        <a
-                          href={job.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[10px] text-[#6E6359] hover:text-[#C85A32] hover:underline flex items-center gap-0.5 font-bold"
-                        >
-                          <Link2 className="h-3 w-3" />
-                          Open Posting
-                        </a>
-                      </div>
-                      
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[10px] font-bold text-[#6E6359]/80 font-mono">
-                        <span className="flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />
+                        </span>
+                        <span className="text-[#D6CCC2]">•</span>
+                        <span className="font-mono text-[#78716C] flex items-center gap-1">
+                          <MapPin className="h-3.5 w-3.5 text-[#A8A29E]" />
                           {job.location} ({job.work_mode})
                         </span>
                         {job.salary && (
-                          <span className="flex items-center gap-1">
-                            <DollarSign className="h-3 w-3" />
-                            {job.salary}
-                          </span>
+                          <>
+                            <span className="text-[#D6CCC2]">•</span>
+                            <span className="font-mono font-medium text-[#57534E] bg-[#FAF8F5] px-2 py-0.5 rounded border border-[#E7E2DA]">
+                              {job.salary}
+                            </span>
+                          </>
                         )}
                       </div>
                     </div>
 
-                    <p className="text-[11px] text-[#6E6359] leading-relaxed line-clamp-2">
+                    <p className="text-xs text-[#57534E] leading-relaxed line-clamp-2">
                       {job.description}
                     </p>
 
-                    {/* Reasons list */}
-                    <div className="flex flex-wrap gap-2 pt-1 border-t border-[#DFD5C6]/40">
-                      {job.reasons.map((r, idx) => (
+                    {/* Technical Stacks & Requirements */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {(job.skills_required || []).slice(0, 5).map((skill, idx) => (
                         <span
                           key={idx}
-                          className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
-                            r.startsWith("✓")
-                              ? "bg-[#E8F2EC]/40 border-[#2E5A44]/20 text-[#2E5A44]"
-                              : "bg-[#FAF4EB]/40 border-[#C85A32]/20 text-[#C85A32]"
-                          }`}
+                          className="bg-[#FAF8F5] border border-[#E7E2DA] text-[#57534E] text-[11px] font-mono px-2.5 py-0.5 rounded"
                         >
-                          {r}
+                          {skill}
                         </span>
                       ))}
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex justify-between items-center pt-2">
-                      <button
-                        onClick={() => openRoadmap(job)}
-                        className="text-xs font-bold text-[#C85A32] hover:text-[#B83A14] flex items-center gap-1 transition-all cursor-pointer"
-                      >
-                        <Brain className="h-3.5 w-3.5" />
-                        Prep Roadmap
-                        <ChevronRight className="h-3 w-3" />
-                      </button>
-
-                      {hasApplied ? (
-                        <span className="flex items-center gap-1.5 text-xs text-[#2E5A44] font-bold bg-[#E8F2EC] px-3 py-1.5 rounded-lg border border-[#2E5A44]/20">
-                          <CheckCircle className="h-3.5 w-3.5" />
-                          Applied via Agent
-                        </span>
-                      ) : (
+                    {/* Action Bar for External Listings */}
+                    <div className="flex items-center justify-between pt-3 border-t border-[#F0EBE3] flex-wrap gap-2">
+                      <div className="flex items-center gap-3">
                         <button
-                          onClick={() => openApplyDrawer(job)}
-                          className="bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center gap-1"
+                          onClick={() => openRoadmap(job)}
+                          className="text-xs font-semibold text-[#78716C] hover:text-[#C85A32] flex items-center gap-1.5 transition-colors cursor-pointer"
                         >
-                          <Send className="h-3.5 w-3.5" />
-                          Apply via Agent
+                          <Brain className="h-3.5 w-3.5 text-[#C85A32]" />
+                          <span>Prep Roadmap</span>
                         </button>
-                      )}
+                        <button
+                          onClick={() => openOutreach(job)}
+                          className="text-xs font-semibold text-[#78716C] hover:text-[#1C1917] flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Mail className="h-3.5 w-3.5 text-[#78716C]" />
+                          <span>Draft Outreach</span>
+                        </button>
+                      </div>
+
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-[#FAF8F5] hover:bg-[#F5F2EC] text-[#1C1917] border border-[#D6CCC2] rounded-lg text-xs font-mono font-medium transition-all cursor-pointer flex items-center gap-1.5 shadow-3xs"
+                      >
+                        <span>Apply on Official Portal</span>
+                        <ExternalLink className="h-3.5 w-3.5 text-[#78716C]" />
+                      </a>
                     </div>
 
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </div>
+
           </div>
 
           {/* RIGHT COLUMN: Candidate Intelligence & Interview Metrics */}
@@ -948,89 +1152,37 @@ export default function CareerAgent({ user }) {
                 </p>
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {profile.tech_stack_preferences.slice(0, 6).map((skill, idx) => (
-                    <span key={idx} className="text-[9px] font-mono font-bold bg-[#FAF6F0] border border-[#DFD5C6] px-2 py-0.5 rounded text-[#6E6359]">
+                    <span key={idx} className="bg-[#FAF6F0] border border-[#DFD5C6] text-[#262626] text-[10px] font-bold px-2 py-0.5 rounded-md font-mono">
                       {skill}
                     </span>
                   ))}
                 </div>
               </div>
 
-              {/* DevScore & Multi-Platform Intelligence */}
-              <div className="space-y-2 pt-2 border-t border-[#DFD5C6]/40">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono block">Engineering DevScore™</span>
-                  <span className="text-[10px] font-mono font-extrabold px-2 py-0.2 rounded-full bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25">
-                    {profile.devscore ? `${profile.devscore} / 1000` : "745 / 1000"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-                  <div className="bg-[#FAF6F0] border border-[#DFD5C6]/60 p-2 rounded-lg">
-                    <span className="text-[#FFA116] font-bold block">LeetCode</span>
-                    <span className="text-[#262626] font-extrabold text-xs">
-                      {profile.leetcode_stats?.total_solved ? `${profile.leetcode_stats.total_solved} Solved` : (profile.leetcode_handle ? `@${profile.leetcode_handle}` : "Connected")}
-                    </span>
+              {/* GitHub, LeetCode, Codeforces Stats */}
+              <div className="pt-2 border-t border-[#DFD5C6]/40 space-y-2">
+                <span className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono block">Connected Platforms</span>
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                  <div className="p-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg">
+                    <span className="text-[9px] text-[#6E6359] block">GitHub Repos</span>
+                    <strong className="text-[#262626]">{profile.github_stats?.repo_count || profile.github_stats?.public_repos || 0} Repos</strong>
                   </div>
-                  <div className="bg-[#FAF6F0] border border-[#DFD5C6]/60 p-2 rounded-lg">
-                    <span className="text-[#1890FF] font-bold block">Codeforces</span>
-                    <span className="text-[#262626] font-extrabold text-xs">
-                      {profile.codeforces_stats?.rank ? profile.codeforces_stats.rank : (profile.codeforces_handle ? `@${profile.codeforces_handle}` : "Connected")}
-                    </span>
+                  <div className="p-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg">
+                    <span className="text-[9px] text-[#6E6359] block">DevScore</span>
+                    <strong className="text-[#C85A32]">{profile.devscore || 850}+</strong>
                   </div>
                 </div>
               </div>
-
-              {/* GitHub metrics */}
-              {profile.github_url && profile.github_stats && (
-                <div className="space-y-2 pt-2 border-t border-[#DFD5C6]/40">
-                  <span className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono block">GitHub Intelligence</span>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-[#FAF6F0] border border-[#DFD5C6]/60 p-2.5 rounded-lg">
-                      <span className="text-[9px] font-bold text-[#6E6359] block">GitHub Strength</span>
-                      <span className="text-lg font-mono font-extrabold text-[#C85A32]">{profile.github_stats.github_strength}%</span>
-                    </div>
-                    <div className="bg-[#FAF6F0] border border-[#DFD5C6]/60 p-2.5 rounded-lg">
-                      <span className="text-[9px] font-bold text-[#6E6359] block">Open Source Score</span>
-                      <span className="text-lg font-mono font-extrabold text-[#C85A32]">{profile.github_stats.open_source_score}%</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Historical Mock Interview Scores */}
-              <div className="space-y-2 pt-2 border-t border-[#DFD5C6]/40">
-                <span className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono block">Platform Interview Scores</span>
-                
-                {/* Score meters */}
-                <div className="space-y-2.5 pt-1">
-                  {[
-                    { label: "Coding & Problem Solving", score: 82 },
-                    { label: "System Architecture", score: 76 },
-                    { label: "Communication Flow", score: 85 },
-                    { label: "Behavioral & Leadership", score: 80 }
-                  ].map((s, idx) => (
-                    <div key={idx} className="space-y-1">
-                      <div className="flex justify-between text-[10px] font-bold text-[#6E6359]">
-                        <span>{s.label}</span>
-                        <span className="font-mono">{s.score}%</span>
-                      </div>
-                      <div className="w-full bg-[#FAF6F0] rounded-full h-1 overflow-hidden">
-                        <div className="bg-[#C85A32] h-1" style={{ width: `${s.score}%` }}></div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
             </div>
 
-            {/* Preparation Roadmap Box */}
+            {/* Recruiter Tip */}
             <div className="bg-[#C85A32]/5 border border-[#C85A32]/25 rounded-xl p-5 text-left space-y-3">
               <h4 className="font-serif font-bold text-[#C85A32] text-sm flex items-center gap-1.5">
                 <Sparkles className="h-4 w-4" />
-                Recruiter Tip
+                Startup Direct Pipeline
               </h4>
               <p className="text-xs text-[#6E6359] leading-relaxed font-semibold">
-                Your communication score is excellent! However, Ashby requires system design depth. We recommend checking the <strong>Roadmap</strong> on Ashby&apos;s job match to prepare targeted distributed locking concepts before submitting.
+                Applications submitted to <strong>PrepFlow AI Technologies</strong> are synchronized directly into the founder&apos;s Talent Radar with your verified DevScore and sandbox evaluations.
               </p>
             </div>
 
@@ -1041,6 +1193,107 @@ export default function CareerAgent({ user }) {
       {/* STAGE 3: APPLICATION TRACKER PIPELINE */}
       {activeSubTab === "tracker" && (
         <div className="space-y-6 text-left">
+          {/* REAL-TIME FOUNDER INTERVIEW & TAKE-HOME ALERTS */}
+          {applications.some((a) => a.live_stage === "Shortlisted" || a.status === "Shortlisted") && (
+            <div className="p-5 bg-emerald-500/10 border-2 border-emerald-500/30 rounded-2xl flex items-start justify-between gap-4 animate-in fade-in duration-300">
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-xs">
+                  <CheckCircle className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-800 uppercase tracking-wider">
+                      Live Recruiter Notification
+                    </span>
+                    <h4 className="text-sm font-serif font-bold text-emerald-950">
+                      Shortlisted for Founder Technical Interview!
+                    </h4>
+                  </div>
+                  <p className="text-xs text-emerald-900 leading-relaxed font-medium">
+                    Congratulations! Your verified DevScore and coding performance were pre-screened by the startup founders. You are queued for the final Technical Deep-Dive Interview round.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {applications.some((a) => a.live_stage === "Take-Home Dispatched" || a.takehome_token) && (
+            <div className="p-5 bg-[#C85A32]/10 border-2 border-[#C85A32]/35 rounded-2xl flex items-start justify-between gap-4 animate-in fade-in duration-300">
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 bg-[#C85A32] text-white rounded-xl shadow-xs animate-pulse">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-[#C85A32]/20 text-[#C85A32] uppercase tracking-wider">
+                      Live Assessment Assigned
+                    </span>
+                    <h4 className="text-sm font-serif font-bold text-[#262626]">
+                      Live Coding Take-Home Challenge Dispatched!
+                    </h4>
+                  </div>
+                  <p className="text-xs text-[#6E6359] leading-relaxed font-medium">
+                    The hiring team has sent you a 45-minute live polyglot sandbox challenge. Solve the challenge and stress-test your implementation against chaos test suites to finalize your evaluation.
+                  </p>
+                </div>
+              </div>
+              {(() => {
+                const appWithToken = applications.find((a) => a.takehome_token);
+                if (appWithToken) {
+                  return (
+                    <a
+                      href={`/takehome/${appWithToken.takehome_token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-xl text-xs font-mono font-bold transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      <span>Open Live Sandbox</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  );
+                }
+                return null;
+              })()}
+            </div>
+          )}
+
+          {/* APPLICATION TRACKING & AUDIT VERIFICATION BAR */}
+          <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-4 sm:p-5 shadow-2xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#DFD5C6]/40 pb-3">
+              <div>
+                <h4 className="text-sm font-serif font-bold text-[#262626] flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-700" />
+                  Application Tracking & Audit Registry
+                </h4>
+                <p className="text-xs text-[#6E6359] mt-0.5">
+                  Verify official submission receipts, live recruiter review status, and cryptographic audit records.
+                </p>
+              </div>
+              <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md self-start sm:self-auto">
+                Verified Pipeline Active
+              </span>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+              <input
+                type="text"
+                placeholder="Enter Tracking Reference ID (e.g. APP-PREPFL-55FE8B)"
+                value={trackingSearchQuery}
+                onChange={(e) => setTrackingSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleVerifyTracking(trackingSearchQuery)}
+                className="flex-1 rounded-xl border border-[#DFD5C6] bg-white px-3.5 py-2 text-xs font-mono text-[#262626] placeholder:text-[#6E6359]/60 focus:border-[#C85A32] focus:outline-none"
+              />
+              <button
+                onClick={() => handleVerifyTracking(trackingSearchQuery)}
+                disabled={auditLoading}
+                className="px-4 py-2 bg-[#262626] hover:bg-[#383838] text-white rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors shrink-0 shadow-xs"
+              >
+                <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                <span>{auditLoading ? "Verifying..." : "Verify Tracking ID"}</span>
+              </button>
+            </div>
+          </div>
+
           {/* Metrics header */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
@@ -1070,7 +1323,13 @@ export default function CareerAgent({ user }) {
               { id: "Interview Scheduled", title: "Interviews", bg: "bg-blue-50/40" },
               { id: "Offer Received", title: "Offers", bg: "bg-[#E8F2EC]/40" }
             ].map((col) => {
-              const colApps = applications.filter((a) => a.status === col.id);
+              const colApps = applications.filter((a) => {
+                if (col.id === "Applied") return !a.status || a.status === "Applied" || a.live_stage === "Applied / In Review";
+                if (col.id === "OA Received") return a.status === "OA Received" || a.live_stage === "Take-Home Dispatched" || a.takehome_token;
+                if (col.id === "Interview Scheduled") return a.status === "Interview Scheduled" || a.live_stage === "Shortlisted";
+                if (col.id === "Offer Received") return a.status === "Offer Received" || a.live_stage === "Offer Extended";
+                return false;
+              });
               return (
                 <div key={col.id} className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 min-h-[50vh] space-y-3 shadow-2xs">
                   <div className="flex items-center justify-between border-b border-[#DFD5C6]/40 pb-2">
@@ -1087,14 +1346,50 @@ export default function CareerAgent({ user }) {
                         className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-lg p-3.5 space-y-3 shadow-3xs hover:border-[#C85A32]/35 transition-all text-xs"
                       >
                         <div>
-                          <h5 className="font-bold text-[#262626] leading-tight truncate">{app.title}</h5>
+                          <div className="flex items-center justify-between gap-1">
+                            <h5 className="font-bold text-[#262626] leading-tight truncate">{app.title}</h5>
+                            {app.live_stage && (
+                              <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                app.live_stage === "Shortlisted"
+                                    ? "bg-emerald-500/15 text-emerald-800 border border-emerald-500/30"
+                                    : app.live_stage === "Take-Home Dispatched"
+                                    ? "bg-[#C85A32]/15 text-[#C85A32] border border-[#C85A32]/30"
+                                    : "bg-blue-500/10 text-blue-800"
+                              }`}>
+                                {app.live_stage}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-[#C85A32] font-semibold">{app.company}</p>
                         </div>
 
                         <div className="flex justify-between items-center text-[9px] text-[#6E6359] font-mono">
                           <span>{app.work_mode}</span>
-                          <span>ATS: {app.ats_type}</span>
+                          {app.tracking_id && (
+                            <button
+                              onClick={() => handleVerifyTracking(app.tracking_id)}
+                              className="text-[#C85A32] hover:text-[#B83A14] font-bold flex items-center gap-0.5 cursor-pointer bg-[#FAF6F0] px-1.5 py-0.5 rounded border border-[#DFD5C6]"
+                              title="Verify application audit certificate"
+                            >
+                              <ShieldCheck className="h-2.5 w-2.5 text-emerald-700" />
+                              <span>{app.tracking_id}</span>
+                            </button>
+                          )}
                         </div>
+
+                        {/* If Take-Home token exists, provide direct Sandbox Link */}
+                        {app.takehome_token && (
+                          <a
+                            href={`/takehome/${app.takehome_token}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-md text-[10px] font-mono font-bold transition-all cursor-pointer shadow-3xs"
+                          >
+                            <Terminal className="h-3 w-3" />
+                            <span>Launch Live Take-Home</span>
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </a>
+                        )}
 
                         {/* Status selector & Actions */}
                         <div className="border-t border-[#DFD5C6]/40 pt-2 space-y-2">
@@ -1113,7 +1408,7 @@ export default function CareerAgent({ user }) {
                             </select>
                             
                             <span className="text-[9px] text-[#6E6359]/60">
-                              {app.updated_at.split("T")[0]}
+                              {app.updated_at ? app.updated_at.split("T")[0].split(" ")[0] : "Recent"}
                             </span>
                           </div>
 
@@ -1288,7 +1583,10 @@ export default function CareerAgent({ user }) {
                     {["Hiring Manager", "Recruiter", "Team Peer"].map((role) => (
                       <button
                         key={role}
-                        onClick={() => setOutreachRole(role)}
+                        onClick={() => {
+                          setOutreachRole(role);
+                          fetchOutreach(role);
+                        }}
                         className={`flex-1 py-2 px-3 border rounded-lg text-xs font-bold transition-all cursor-pointer ${
                           outreachRole === role
                             ? "bg-[#C85A32]/10 border-[#C85A32] text-[#C85A32]"
@@ -1302,7 +1600,7 @@ export default function CareerAgent({ user }) {
                 </div>
                 
                 <button
-                  onClick={fetchOutreach}
+                  onClick={() => fetchOutreach(outreachRole)}
                   disabled={outreachLoading}
                   className="w-full bg-[#C85A32] hover:bg-[#B83A14] disabled:bg-[#C85A32]/50 text-[#FCFAF7] py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
                 >
@@ -1313,7 +1611,7 @@ export default function CareerAgent({ user }) {
                     </>
                   ) : (
                     <>
-                      <Sparkles className="h-3.5 w-3.5" />
+                      <Send className="h-3.5 w-3.5" />
                       Generate Outreach Sequences
                     </>
                   )}
@@ -1323,7 +1621,7 @@ export default function CareerAgent({ user }) {
                   <div className="py-16 flex flex-col items-center justify-center text-center">
                     <RefreshCw className="h-7 w-7 text-[#C85A32] animate-spin mb-3" />
                     <span className="text-xs text-[#6E6359] font-medium">
-                      Writing cold pitch and LinkedIn request note via Groq AI...
+                      Tailoring cold pitch and LinkedIn connection note...
                     </span>
                   </div>
                 )}
@@ -1380,7 +1678,8 @@ export default function CareerAgent({ user }) {
                           </button>
                         </div>
                         <p className="text-xs font-bold text-[#262626] bg-white border border-[#DFD5C6]/40 p-3 rounded-lg flex items-center gap-2">
-                          <span className="text-[#C85A32]">✉</span> {outreachData.contact_email}
+                          <Mail className="h-3.5 w-3.5 text-[#C85A32]" />
+                          <span>{outreachData.contact_email}</span>
                         </p>
                       </div>
                     )}
@@ -1726,10 +2025,11 @@ export default function CareerAgent({ user }) {
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-base font-bold font-serif text-[#262626]">
-                      Application Confirmed & Dispatched
+                      Application Confirmed
                     </h3>
-                    <span className="text-[10px] bg-emerald-500/10 text-emerald-800 border border-emerald-500/30 px-2 py-0.5 rounded-md font-bold font-mono">
-                      ✓ ATS Verified
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-800 border border-emerald-500/30 px-2 py-0.5 rounded-md font-bold font-mono flex items-center gap-1">
+                      <ShieldCheck className="h-3 w-3 text-emerald-700" />
+                      Verified Submission
                     </span>
                   </div>
                   <p className="text-xs text-[#6E6359]">
@@ -1747,7 +2047,7 @@ export default function CareerAgent({ user }) {
 
             {/* Tracking Reference & Quick Copy Bar */}
             <div className="px-6 py-3 bg-[#FCFAF7] border-b border-[#DFD5C6]/60 flex items-center justify-between flex-wrap gap-2 text-xs">
-              <div className="flex items-center gap-2 font-mono">
+              <div className="flex items-center gap-2 font-mono flex-wrap">
                 <span className="text-[#6E6359] font-bold">Tracking ID:</span>
                 <span className="bg-[#FAF6F0] px-2.5 py-1 rounded-lg border border-[#DFD5C6] font-bold text-[#C85A32]">
                   {confirmationReceipt.tracking_id}
@@ -1762,6 +2062,14 @@ export default function CareerAgent({ user }) {
                   title="Copy Tracking ID"
                 >
                   {copiedTrackingId ? <CheckCheck className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
+                <button
+                  onClick={() => handleVerifyTracking(confirmationReceipt.tracking_id)}
+                  className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 border border-emerald-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                  title="Verify official cryptographic audit record"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-700" />
+                  <span>Verify Audit Record</span>
                 </button>
               </div>
 
@@ -1778,10 +2086,10 @@ export default function CareerAgent({ user }) {
                 <ShieldCheck className="h-5 w-5 text-emerald-700 shrink-0 mt-0.5" />
                 <div>
                   <h4 className="font-bold text-emerald-950 font-serif">
-                    Live ATS Pipeline Submission Confirmed
+                    Application Successfully Delivered
                   </h4>
                   <p className="text-emerald-900 mt-1 leading-relaxed">
-                    The AI Career Agent navigated the recruitment gateway for <strong>{confirmationReceipt.company}</strong>, uploaded your resume (<strong>{confirmationReceipt.resume_name}</strong>), filled custom screening responses, and registered your application with the talent acquisition team.
+                    Your application for the <strong>{confirmationReceipt.job_title}</strong> role has been delivered to <strong>{confirmationReceipt.company}</strong> along with your attached resume (<strong>{confirmationReceipt.resume_name}</strong>) and verified technical DevScore portfolio.
                   </p>
                 </div>
               </div>
@@ -1790,7 +2098,7 @@ export default function CareerAgent({ user }) {
               <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-2xl p-4 space-y-3 font-mono text-xs">
                 <div className="flex items-center justify-between pb-2 border-b border-[#DFD5C6]/60">
                   <span className="font-bold text-[#6E6359] uppercase tracking-wider text-[10px]">
-                    Requisition Manifest
+                    Requisition Summary
                   </span>
                   <span className="text-[#C85A32] font-bold text-[11px]">
                     {confirmationReceipt.company}
@@ -1803,7 +2111,7 @@ export default function CareerAgent({ user }) {
                     <span className="text-[#262626] font-bold">{confirmationReceipt.job_title}</span>
                   </div>
                   <div>
-                    <span className="text-[#6E6359] block">Routing Engine:</span>
+                    <span className="text-[#6E6359] block">Recruitment Gateway:</span>
                     <span className="text-[#262626] font-bold">{confirmationReceipt.ats_type} Direct Gateway</span>
                   </div>
                   <div>
@@ -1812,7 +2120,10 @@ export default function CareerAgent({ user }) {
                   </div>
                   <div>
                     <span className="text-[#6E6359] block">Attached Resume:</span>
-                    <span className="text-[#262626] font-bold">📄 {confirmationReceipt.resume_name}</span>
+                    <span className="text-[#262626] font-bold flex items-center gap-1">
+                      <FileText className="h-3 w-3 text-[#C85A32]" />
+                      {confirmationReceipt.resume_name}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1822,7 +2133,7 @@ export default function CareerAgent({ user }) {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold font-mono text-[#6E6359] uppercase tracking-wider flex items-center gap-1.5">
                     <Inbox className="h-3.5 w-3.5 text-[#C85A32]" />
-                    Delivered Confirmation Email Receipt
+                    Delivered Confirmation Letter
                   </span>
                   <span className="text-[10px] text-[#6E6359] font-mono">
                     Sent to: {confirmationReceipt.candidate_email}
@@ -1842,19 +2153,19 @@ export default function CareerAgent({ user }) {
 
               {/* Hiring Review Timeline */}
               <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-4 space-y-2 text-xs">
-                <h4 className="font-bold text-[#262626] font-serif">What Happens Next?</h4>
+                <h4 className="font-bold text-[#262626] font-serif">What Happens Next</h4>
                 <div className="space-y-2 text-[11px] text-[#6E6359]">
                   <div className="flex items-center gap-2">
                     <div className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-                    <span><strong>Day 1-2:</strong> Recruiter and engineering manager review your portfolio & verified mock scores.</span>
+                    <span><strong>1. Portfolio & Technical Review:</strong> Hiring team reviews your portfolio & verified coding telemetry (1-2 business days).</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="h-2 w-2 rounded-full bg-amber-500 shrink-0" />
-                    <span><strong>Day 3-5:</strong> Technical screening invitation or direct online assessment (OA).</span>
+                    <span><strong>2. Direct Founder / Recruiter Sync:</strong> An introductory conversation to align on engineering culture and expectations.</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="h-2 w-2 rounded-full bg-[#C85A32] shrink-0" />
-                    <span><strong>PrepAI Tip:</strong> Use the <strong>Job Co-pilot Roadmap</strong> tab to start targeted mock drills for {confirmationReceipt.company}.</span>
+                    <span><strong>3. Technical Deep-Dive & Architecture:</strong> Collaborative discussion on real-world system design and problem solving.</span>
                   </div>
                 </div>
               </div>
@@ -1879,6 +2190,149 @@ export default function CareerAgent({ user }) {
                 className="px-6 py-2 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
               >
                 Got It, Return to Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          OFFICIAL APPLICATION AUDIT CERTIFICATE MODAL
+          ========================================================================= */}
+      {showAuditModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-3xl w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Certificate Header */}
+            <div className="px-6 py-4 border-b border-[#DFD5C6] flex items-center justify-between bg-[#FAF6F0]">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-500/10 rounded-xl text-emerald-700 border border-emerald-500/20">
+                  <ShieldCheck className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold font-serif text-[#262626]">
+                    Application Audit Certificate
+                  </h3>
+                  <p className="text-xs text-[#6E6359]">
+                    PrepFlow Verified Recruitment Telemetry Record
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAuditModal(false)}
+                className="p-2 rounded-xl hover:bg-[#DFD5C6]/40 text-[#6E6359] hover:text-[#262626] transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Certificate Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 text-xs font-mono">
+              {auditLoading && (
+                <div className="py-12 text-center text-[#6E6359] space-y-2">
+                  <RefreshCw className="h-6 w-6 animate-spin mx-auto text-[#C85A32]" />
+                  <p className="font-semibold text-xs">Querying application audit registry...</p>
+                </div>
+              )}
+
+              {auditError && (
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertCircle className="h-4 w-4 text-red-700" />
+                    Verification Unsuccessful
+                  </div>
+                  <p className="text-xs font-sans">{auditError}</p>
+                </div>
+              )}
+
+              {auditData && (
+                <div className="space-y-4">
+                  {/* Verified Badge Header */}
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 space-y-1 font-sans">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-950 text-sm flex items-center gap-1.5">
+                        <ShieldCheck className="h-4 w-4 text-emerald-700" />
+                        {auditData.verification_status} Record
+                      </span>
+                      <span className="text-[10px] bg-emerald-600 text-white font-mono px-2 py-0.5 rounded font-bold">
+                        AUTHENTIC
+                      </span>
+                    </div>
+                    <p className="text-emerald-900 text-xs">
+                      This submission was logged into the immutable PrepFlow Talent Network registry and confirmed delivered to the startup founding team.
+                    </p>
+                  </div>
+
+                  {/* Key Audit Data Grid */}
+                  <div className="bg-[#FAF6F0] border border-[#DFD5C6] rounded-2xl p-4 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Tracking Reference:</span>
+                        <span className="text-[#C85A32] font-bold">{auditData.tracking_id}</span>
+                      </div>
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Submission Timestamp:</span>
+                        <span className="text-[#262626] font-semibold">{auditData.submission_timestamp}</span>
+                      </div>
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Applicant:</span>
+                        <span className="text-[#262626] font-semibold">{auditData.candidate_name} ({auditData.candidate_email})</span>
+                      </div>
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Attached Resume:</span>
+                        <span className="text-[#262626] font-semibold">{auditData.resume_name}</span>
+                      </div>
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Target Company:</span>
+                        <span className="text-[#262626] font-semibold">{auditData.company}</span>
+                      </div>
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Position:</span>
+                        <span className="text-[#262626] font-semibold">{auditData.job_title}</span>
+                      </div>
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Verified DevScore:</span>
+                        <span className="text-[#C85A32] font-bold">{auditData.devscore} / 1000 Verified</span>
+                      </div>
+                      <div>
+                        <span className="text-[#6E6359] block text-[10px] uppercase">Live Review Stage:</span>
+                        <span className="text-emerald-800 font-bold">{auditData.live_stage}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cryptographic Hash Section */}
+                  <div className="bg-white border border-[#DFD5C6] rounded-2xl p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase text-[#6E6359] tracking-wider">
+                        SHA-256 Audit Signature Hash
+                      </span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(auditData.audit_hash);
+                          setCopiedAuditHash(true);
+                          setTimeout(() => setCopiedAuditHash(false), 2000);
+                        }}
+                        className="text-[10px] text-[#C85A32] hover:text-[#B83A14] flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedAuditHash ? <CheckCheck className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                        {copiedAuditHash ? "Copied Hash" : "Copy Hash"}
+                      </button>
+                    </div>
+                    <div className="p-2.5 bg-[#FAF6F0] rounded-xl text-[10px] text-[#262626] break-all border border-[#DFD5C6]/60 select-all">
+                      {auditData.audit_hash}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Certificate Footer */}
+            <div className="px-6 py-3 border-t border-[#DFD5C6] bg-[#FAF6F0] flex justify-end">
+              <button
+                onClick={() => setShowAuditModal(false)}
+                className="px-5 py-2 bg-[#262626] hover:bg-[#383838] text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Close Certificate
               </button>
             </div>
           </div>

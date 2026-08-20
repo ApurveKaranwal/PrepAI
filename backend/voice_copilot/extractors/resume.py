@@ -111,12 +111,9 @@ def parse_resume_content(resume_text: str) -> Dict[str, Any]:
     default_structure["skills"] = fallback_skills if fallback_skills else ["Software Engineering"]
     default_structure["technologies"] = fallback_skills if fallback_skills else ["Python", "JavaScript"]
 
-    if not client:
-        print("Groq API client not set, using rule-based resume parsing fallback.")
-        return default_structure
-
-    try:
-        prompt = f"""Extract resume details from the text below into a JSON object with these keys:
+    # Try multi-provider LLM parsing (Sarvam AI / Groq)
+    sarvam_key = os.environ.get("SARVAM_API_KEY")
+    prompt = f"""Extract resume details from the text below into a JSON object with these keys:
 {{
     "skills": ["skill1", "skill2"],
     "experience": [
@@ -150,22 +147,57 @@ Resume text:
 {resume_text[:8000]}
 
 Output ONLY valid JSON."""
-        
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a JSON-only response bot. Parse the resume and return structured JSON. Do not include any text outside the JSON object."},
-                {"role": "user", "content": prompt}
-            ],
-            model=GROQ_HEAVY_MODEL,
-            temperature=0.1,
-            max_tokens=2048,
-            response_format={"type": "json_object"}
-        )
-        
-        parsed_json = json.loads(completion.choices[0].message.content)
-        if not parsed_json.get("skills") or len(parsed_json.get("skills")) == 0:
-            parsed_json["skills"] = fallback_skills if fallback_skills else ["Software Engineering"]
-        return parsed_json
-    except Exception as e:
-        print(f"Error parsing resume via Groq: {e}. Falling back to rule-based parsed skills.")
-        return default_structure
+
+    # 1. Try Sarvam AI
+    if sarvam_key:
+        try:
+            import requests
+            resp = requests.post(
+                "https://api.sarvam.ai/v1/chat/completions",
+                headers={"api-subscription-key": sarvam_key, "Content-Type": "application/json"},
+                json={
+                    "model": "sarvam-105b-conversations",
+                    "messages": [
+                        {"role": "system", "content": "You are a JSON-only response bot. Parse the resume and return structured JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 1500,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=18
+            )
+            if resp.status_code == 200:
+                raw_json = resp.json()["choices"][0]["message"]["content"].strip()
+                if "```json" in raw_json:
+                    raw_json = raw_json.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw_json:
+                    raw_json = raw_json.split("```")[1].split("```")[0].strip()
+                parsed = json.loads(raw_json)
+                if not parsed.get("skills"):
+                    parsed["skills"] = fallback_skills if fallback_skills else ["Software Engineering"]
+                return parsed
+        except Exception as err:
+            print(f"Sarvam resume parsing error: {err}")
+
+    # 2. Try Groq
+    if client:
+        try:
+            completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are a JSON-only response bot. Parse the resume and return structured JSON. Do not include any text outside the JSON object."},
+                    {"role": "user", "content": prompt}
+                ],
+                model=GROQ_HEAVY_MODEL,
+                temperature=0.1,
+                max_tokens=2048,
+                response_format={"type": "json_object"}
+            )
+            parsed_json = json.loads(completion.choices[0].message.content)
+            if not parsed_json.get("skills") or len(parsed_json.get("skills")) == 0:
+                parsed_json["skills"] = fallback_skills if fallback_skills else ["Software Engineering"]
+            return parsed_json
+        except Exception as e:
+            print(f"Error parsing resume via Groq: {e}. Falling back to rule-based parsed skills.")
+
+    return default_structure

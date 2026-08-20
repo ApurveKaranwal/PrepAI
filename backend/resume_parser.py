@@ -12,20 +12,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from groq import Groq
-from config import GROQ_LIGHT_MODEL
-
-groq_api_key = os.environ.get("GROQ_API_KEY")
-client = Groq(api_key=groq_api_key) if groq_api_key else None
+from llm_client import call_llm_json, GROQ_LIGHT_MODEL
 
 
 def clean_name_from_filename(filename: str) -> str:
-    """Extracts a clean candidate name from resume filename (e.g. Apurve_Karanwal_Resume.pdf -> Apurve Karanwal)."""
+    """Extracts a clean candidate name from resume filename (e.g. Apurve_Karanwal_Resume.pdf or ApurveKaranwal_Resume.pdf -> Apurve Karanwal)."""
     if not filename:
         return ""
     base = os.path.splitext(os.path.basename(filename))[0]
     # Remove common resume keywords
     base = re.sub(r'(?i)(?:[-_]?(?:resume|cv|updated|latest|profile|final|new|\d+))', '', base)
+    # Split PascalCase if present (e.g. ApurveKaranwal -> Apurve Karanwal)
+    base = re.sub(r'([a-z])([A-Z])', r'\1 \2', base)
     base = base.replace('_', ' ').replace('-', ' ').strip()
     words = [w for w in re.split(r'\s+', base) if len(w) > 1 and w.isalpha()]
     if 1 <= len(words) <= 4:
@@ -91,11 +89,11 @@ def extract_candidate_entities(resume_text: str, filename: str = "", default_nam
     name_from_file = clean_name_from_filename(filename)
     name = ""
 
-    # Priority 1: If filename has a clean full name (e.g. Apurve_Karanwal_Resume.pdf)
+    # Priority 1: If filename has a clean full name (e.g. Apurve_Karanwal_Resume.pdf or ApurveKaranwal_Resume.pdf)
     if name_from_file and len(name_from_file.split()) >= 2:
         name = name_from_file
 
-    # Priority 2: Extract from the first 4 lines of the resume text
+    # Priority 2: Extract from the first 5 lines of the resume text
     if not name:
         for line in lines[:5]:
             # Look for 2-3 capitalized words at the beginning of the line
@@ -120,38 +118,42 @@ def extract_candidate_entities(resume_text: str, filename: str = "", default_nam
     elif not name:
         name = "Apurve Karanwal"
 
+    # Clean trailing city / country words that get concatenated in PDFs
+    for suffix in ["ghaziabad", "ghaziab", "delhi", "noida", "bengaluru", "bangalore", "mumbai", "india", "pune", "gurgaon", "hyderabad"]:
+        if name.lower().endswith(suffix) and len(name) > len(suffix) + 3:
+            name = name[:-len(suffix)].strip()
+
     # Fallback to smart defaults if still missing
     if not email:
         email = "apurvekaranwal282@gmail.com" if "apurve" in name.lower() or "apurve" in (filename or "").lower() else (default_email or "candidate@gmail.com")
 
-    # If LLM client is available, attempt JSON extraction
-    if client and text and len(text) > 30:
+    # If text is available, attempt JSON extraction with LLM
+    if text and len(text) > 30:
         try:
             prompt = (
                 f"Extract candidate's contact details from this resume text in strict JSON.\n"
                 f"Use keys: 'name', 'email', 'phone', 'linkedin_url', 'github_url', 'portfolio_url'.\n"
                 f"Resume Text:\n{text[:3000]}"
             )
-            chat_completion = client.chat.completions.create(
+            parsed = call_llm_json(
                 messages=[
                     {"role": "system", "content": "You are a precise resume parser. Output ONLY valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
-                model=GROQ_LIGHT_MODEL,
                 temperature=0.1,
-                response_format={"type": "json_object"}
+                max_tokens=300
             )
-            parsed = json.loads(chat_completion.choices[0].message.content)
-            if parsed.get("email") and "@" in parsed["email"]:
-                email = parsed["email"].strip().lower()
-            if parsed.get("name") and len(parsed["name"].strip()) >= 3:
-                name = parsed["name"].strip()
-            if parsed.get("phone"):
-                phone = parsed["phone"].strip()
-            if parsed.get("linkedin_url"):
-                linkedin_url = parsed["linkedin_url"].strip()
-            if parsed.get("github_url"):
-                github_url = parsed["github_url"].strip()
+            if parsed:
+                if parsed.get("email") and "@" in parsed["email"]:
+                    email = parsed["email"].strip().lower()
+                if parsed.get("name") and len(parsed["name"].strip()) >= 3:
+                    name = parsed["name"].strip()
+                if parsed.get("phone"):
+                    phone = parsed["phone"].strip()
+                if parsed.get("linkedin_url"):
+                    linkedin_url = parsed["linkedin_url"].strip()
+                if parsed.get("github_url"):
+                    github_url = parsed["github_url"].strip()
         except Exception:
             pass
 

@@ -27,7 +27,9 @@ import {
   Copy,
   Cpu,
   Star,
-  Check
+  Check,
+  Edit3,
+  Trash2
 } from "lucide-react";
 import {
   Radar,
@@ -54,13 +56,11 @@ const CustomRadarTooltip = ({ active, payload }) => {
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
 
-export default function DashboardHome({ onStartPractice, onNavigate, user }) {
-  const [history, setHistory] = useState([]);
+export default function DashboardHome({ onNavigate, user }) {
   const [voiceHistory, setVoiceHistory] = useState([]);
   const [overallStats, setOverallStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [skillsReport, setSkillsReport] = useState("No interview sessions completed yet. Start a session to analyze your communication and technical patterns.");
-  const [activeHistoryTab, setActiveHistoryTab] = useState("voice");
 
   // DevScore and Multi-Platform Aggregator States
   const [devScoreData, setDevScoreData] = useState(null);
@@ -99,9 +99,6 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
         if (res.ok) {
           const data = await res.json();
           if (data) {
-            if (data.dashboard_history) {
-              setHistory(data.dashboard_history);
-            }
             if (data.voice_history) {
               setVoiceHistory(data.voice_history);
             }
@@ -183,10 +180,6 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
     ? (voiceHistory.reduce((sum, h) => sum + parseFloat(h.status), 0) / voiceHistory.length).toFixed(1)
     : "N/A";
 
-  const avgCoding = history.length > 0
-    ? (history.reduce((sum, h) => sum + parseFloat(h.status), 0) / history.length).toFixed(1)
-    : "N/A";
-
   // SVG circular progress calculation for Readiness
   const readiness = overallStats?.overall_readiness || 0;
   const radius = 30;
@@ -260,14 +253,8 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
               </p>
             </div>
             
-            {(history.length > 0 || voiceHistory.length > 0) && (
+            {voiceHistory.length > 0 && (
               <div className="flex flex-wrap gap-2 pt-2 select-none">
-                {history.slice(0, 1).map((h, idx) => (
-                  <div key={idx} className="bg-[#FAF6F0] border border-[#DFD5C6] px-3 py-1.5 rounded-lg text-[10px] font-mono text-[#6E6359] font-medium flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#C85A32]" />
-                    Latest Coding: {h.session}
-                  </div>
-                ))}
                 {voiceHistory.slice(0, 1).map((h, idx) => (
                   <div key={idx} className="bg-[#FAF6F0] border border-[#DFD5C6] px-3 py-1.5 rounded-lg text-[10px] font-mono text-[#C85A32] font-medium flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#A6690B]" />
@@ -289,8 +276,8 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 Dynamic
               </span>
             </div>
-            <div className="w-full h-56">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="w-full h-56 min-w-0">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                 <RadarChart cx="50%" cy="50%" outerRadius="75%" data={competencyData}>
                   <PolarGrid stroke="#DFD5C6" />
                   <PolarAngleAxis 
@@ -443,42 +430,83 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 </span>
               </div>
 
-              {/* Matrix List (4 unified rows) */}
+              {/* Matrix List (4 unified rows with prominent highlighted metric chips) */}
               <div className="space-y-3">
                 {/* 1. LeetCode Row */}
-                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#C85A32]/40">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-lg bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center text-[#D97706] shrink-0">
+                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#DFD5C6]">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center text-[#D97706] shrink-0 mt-0.5 sm:mt-0">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M13.483 0a1.374 1.374 0 0 0-.961.438L7.116 6.226l-3.854 4.126a5.266 5.266 0 0 0-1.209 2.104 5.35 5.35 0 0 0-.125.513 5.527 5.527 0 0 0 .062 2.362 5.83 5.83 0 0 0 .349 1.017 5.938 5.938 0 0 0 1.271 1.818l4.277 4.193.039.038c2.248 2.165 5.852 2.133 8.063-.074l2.396-2.392c.54-.54.54-1.414.003-1.955a1.378 1.378 0 0 0-1.951-.003l-2.396 2.392a3.021 3.021 0 0 1-4.205.038l-.02-.019-4.276-4.193c-.652-.64-.972-1.469-.948-2.263a2.68 2.68 0 0 1 .066-.523 2.545 2.545 0 0 1 .619-1.164L9.13 8.114c1.058-1.134 3.204-1.27 4.43-.278l3.501 2.831c.593.48 1.461.387 1.94-.207a1.384 1.384 0 0 0-.207-1.943l-3.5-2.831c-.8-.647-1.766-1.045-2.774-1.202l2.015-2.158A1.384 1.384 0 0 0 13.483 0zm-2.866 12.815a1.38 1.38 0 0 0-1.38 1.382 1.38 1.38 0 0 0 1.38 1.382H20.79a1.38 1.38 0 0 0 1.38-1.382 1.38 1.38 0 0 0-1.38-1.382z"/>
                       </svg>
                     </div>
-                    <div>
+                    <div className="space-y-1.5">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-[#262626]">LeetCode</span>
                         {devScoreData?.platform_stats?.leetcode?.handle && (
-                          <span className="text-[10px] font-mono text-[#6E6359]">@{devScoreData.platform_stats.leetcode.handle}</span>
+                          <span className="text-[10px] font-mono text-[#6E6359] font-bold">@{devScoreData.platform_stats.leetcode.handle}</span>
                         )}
                       </div>
-                      <p className="text-[10px] text-[#6E6359] font-medium mt-0.5">
-                        {devScoreData?.platform_stats?.leetcode?.connected
-                          ? `${devScoreData.platform_stats.leetcode.total_solved} Solved (E:${devScoreData.platform_stats.leetcode.easy_solved} M:${devScoreData.platform_stats.leetcode.medium_solved} H:${devScoreData.platform_stats.leetcode.hard_solved}) • Rating: ${devScoreData.platform_stats.leetcode.contest_rating || "Unranked"}`
-                          : "Connect account to verify DSA problem solving accuracy"}
-                      </p>
+                      
+                      {devScoreData?.platform_stats?.leetcode?.connected ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-[#262626] bg-[#FAF6F0] border border-[#DFD5C6] px-2 py-0.5 rounded-md">
+                            <strong className="text-[#D97706]">{devScoreData.platform_stats.leetcode.total_solved}</strong> Solved
+                          </span>
+                          <span className="font-mono text-[10px] font-bold text-emerald-800 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                            Easy: {devScoreData.platform_stats.leetcode.easy_solved}
+                          </span>
+                          <span className="font-mono text-[10px] font-bold text-amber-800 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                            Med: {devScoreData.platform_stats.leetcode.medium_solved}
+                          </span>
+                          <span className="font-mono text-[10px] font-bold text-rose-800 bg-rose-500/15 border border-rose-500/30 px-1.5 py-0.5 rounded">
+                            Hard: {devScoreData.platform_stats.leetcode.hard_solved}
+                          </span>
+                          {devScoreData.platform_stats.leetcode.contest_rating && (
+                            <span className="font-mono text-[10px] text-[#6E6359] font-medium ml-1">
+                              Rating: <strong className="text-[#262626] font-bold">{devScoreData.platform_stats.leetcode.contest_rating}</strong>
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-mono font-bold text-[#D97706] bg-[#D97706]/10 border border-[#D97706]/20 px-2 py-0.5 rounded-md">
+                            +350 pts potential
+                          </span>
+                          <span className="text-[11px] text-[#6E6359] font-medium">
+                            Verify algorithmic problem solving counts & contest rank
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="shrink-0 flex items-center">
+                  <div className="shrink-0 flex items-center gap-2">
                     {devScoreData?.platform_stats?.leetcode?.connected ? (
-                      <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-800 border border-emerald-500/25">
-                        Verified
-                      </span>
+                      <>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-800 border border-emerald-500/25 flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                          <span>Verified</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSyncLeetcode(devScoreData?.platform_stats?.leetcode?.handle || "");
+                            setShowSyncModal(true);
+                          }}
+                          className="px-2.5 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] hover:border-[#262626] rounded-lg text-[11px] font-mono font-bold text-[#6E6359] transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
+                          title="Replace or update connected LeetCode account"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          <span>Replace</span>
+                        </button>
+                      </>
                     ) : (
                       <button
                         onClick={() => setShowSyncModal(true)}
-                        className="text-[10px] font-mono font-bold text-[#C85A32] hover:underline cursor-pointer flex items-center gap-1"
+                        className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] rounded-lg text-xs font-mono font-bold text-[#262626] transition-all cursor-pointer shadow-3xs flex items-center gap-1"
                       >
-                        <span>Connect</span>
+                        <span>+ Connect</span>
                         <ArrowRight className="h-3 w-3" />
                       </button>
                     )}
@@ -486,41 +514,79 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 </div>
 
                 {/* 2. Codeforces Row */}
-                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#C85A32]/40">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-lg bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center shrink-0">
+                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#DFD5C6]">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M4.5 7.5a1.5 1.5 0 0 1 1.5 1.5v10.5a1.5 1.5 0 0 1-3 0V9a1.5 1.5 0 0 1 1.5-1.5z" fill="#FFA116"/>
                         <path d="M12 3a1.5 1.5 0 0 1 1.5 1.5v15a1.5 1.5 0 0 1-3 0v-15A1.5 1.5 0 0 1 12 3z" fill="#2563EB"/>
                         <path d="M19.5 12a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-3 0v-6a1.5 1.5 0 0 1 1.5-1.5z" fill="#EF4444"/>
                       </svg>
                     </div>
-                    <div>
+                    <div className="space-y-1.5">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-[#262626]">Codeforces</span>
                         {devScoreData?.platform_stats?.codeforces?.handle && (
-                          <span className="text-[10px] font-mono text-[#6E6359]">@{devScoreData.platform_stats.codeforces.handle}</span>
+                          <span className="text-[10px] font-mono text-[#6E6359] font-bold">@{devScoreData.platform_stats.codeforces.handle}</span>
                         )}
                       </div>
-                      <p className="text-[10px] text-[#6E6359] font-medium mt-0.5">
-                        {devScoreData?.platform_stats?.codeforces?.connected
-                          ? `Rank: ${devScoreData.platform_stats.codeforces.rank} • Rating: ${devScoreData.platform_stats.codeforces.rating} (Max: ${devScoreData.platform_stats.codeforces.max_rating})`
-                          : "Connect handle to verify competitive programming rating"}
-                      </p>
+
+                      {devScoreData?.platform_stats?.codeforces?.connected ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-[#2563EB] bg-[#2563EB]/10 border border-[#2563EB]/25 px-2 py-0.5 rounded-md">
+                            {devScoreData.platform_stats.codeforces.rank}
+                          </span>
+                          <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-[#262626] bg-[#FAF6F0] border border-[#DFD5C6] px-2 py-0.5 rounded-md">
+                            Rating: <strong className="text-[#2563EB]">{devScoreData.platform_stats.codeforces.rating}</strong>
+                          </span>
+                          <span className="font-mono text-[10px] text-[#6E6359]">
+                            Max: <strong className="text-[#262626]">{devScoreData.platform_stats.codeforces.max_rating}</strong>
+                          </span>
+                          {devScoreData.platform_stats.codeforces.solved_count && (
+                            <span className="font-mono text-[10px] text-[#6E6359]">
+                              Solved: <strong className="text-[#262626]">{devScoreData.platform_stats.codeforces.solved_count}+</strong>
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-mono font-bold text-[#2563EB] bg-[#2563EB]/10 border border-[#2563EB]/20 px-2 py-0.5 rounded-md">
+                            +200 pts potential
+                          </span>
+                          <span className="text-[11px] text-[#6E6359] font-medium">
+                            Verify competitive contest rank and international rating
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="shrink-0 flex items-center">
+                  <div className="shrink-0 flex items-center gap-2">
                     {devScoreData?.platform_stats?.codeforces?.connected ? (
-                      <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-800 border border-emerald-500/25">
-                        Verified
-                      </span>
+                      <>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-800 border border-emerald-500/25 flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                          <span>Verified</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSyncCodeforces(devScoreData?.platform_stats?.codeforces?.handle || "");
+                            setShowSyncModal(true);
+                          }}
+                          className="px-2.5 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] hover:border-[#262626] rounded-lg text-[11px] font-mono font-bold text-[#6E6359] transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
+                          title="Replace or update connected Codeforces account"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          <span>Replace</span>
+                        </button>
+                      </>
                     ) : (
                       <button
                         onClick={() => setShowSyncModal(true)}
-                        className="text-[10px] font-mono font-bold text-[#C85A32] hover:underline cursor-pointer flex items-center gap-1"
+                        className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] rounded-lg text-xs font-mono font-bold text-[#262626] transition-all cursor-pointer shadow-3xs flex items-center gap-1"
                       >
-                        <span>Connect</span>
+                        <span>+ Connect</span>
                         <ArrowRight className="h-3 w-3" />
                       </button>
                     )}
@@ -528,39 +594,74 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 </div>
 
                 {/* 3. GitHub Row */}
-                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#C85A32]/40">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-lg bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center text-[#262626] shrink-0">
+                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#DFD5C6]">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center text-[#262626] shrink-0 mt-0.5 sm:mt-0">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
                         <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
                       </svg>
                     </div>
-                    <div>
+                    <div className="space-y-1.5">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-[#262626]">GitHub Open Source</span>
                         {devScoreData?.platform_stats?.github?.username && (
-                          <span className="text-[10px] font-mono text-[#6E6359]">@{devScoreData.platform_stats.github.username}</span>
+                          <span className="text-[10px] font-mono text-[#6E6359] font-bold">@{devScoreData.platform_stats.github.username}</span>
                         )}
                       </div>
-                      <p className="text-[10px] text-[#6E6359] font-medium mt-0.5">
-                        {devScoreData?.platform_stats?.github?.connected
-                          ? `${devScoreData.platform_stats.github.public_repos} Repositories • ${devScoreData.platform_stats.github.stars_total} Stars • ${(devScoreData.platform_stats.github.primary_languages || []).join(", ") || "Active"}`
-                          : "Connect profile to index repository craftsmanship & commit history"}
-                      </p>
+
+                      {devScoreData?.platform_stats?.github?.connected ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-[#262626] bg-[#FAF6F0] border border-[#DFD5C6] px-2 py-0.5 rounded-md">
+                            <strong className="text-[#C85A32]">{devScoreData.platform_stats.github.public_repos}</strong> Repositories
+                          </span>
+                          <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-[#262626] bg-[#FAF6F0] border border-[#DFD5C6] px-2 py-0.5 rounded-md">
+                            <strong className="text-[#D97706]">{devScoreData.platform_stats.github.stars_total}</strong> Stars
+                          </span>
+                          {(devScoreData.platform_stats.github.primary_languages || []).map((lang, idx) => (
+                            <span key={idx} className="px-1.5 py-0.5 rounded bg-[#FAF6F0] border border-[#DFD5C6] font-mono text-[9px] font-bold text-[#262626]">
+                              {lang}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-mono font-bold text-[#334155] bg-[#334155]/10 border border-[#334155]/20 px-2 py-0.5 rounded-md">
+                            +200 pts potential
+                          </span>
+                          <span className="text-[11px] text-[#6E6359] font-medium">
+                            Index repository craftsmanship, commit consistency, and stars
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="shrink-0 flex items-center">
+                  <div className="shrink-0 flex items-center gap-2">
                     {devScoreData?.platform_stats?.github?.connected ? (
-                      <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-800 border border-emerald-500/25">
-                        Verified
-                      </span>
+                      <>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-800 border border-emerald-500/25 flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                          <span>Verified</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSyncGithub(devScoreData?.platform_stats?.github?.username || "");
+                            setShowSyncModal(true);
+                          }}
+                          className="px-2.5 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] hover:border-[#262626] rounded-lg text-[11px] font-mono font-bold text-[#6E6359] transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
+                          title="Replace or update connected GitHub account"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          <span>Replace</span>
+                        </button>
+                      </>
                     ) : (
                       <button
                         onClick={() => setShowSyncModal(true)}
-                        className="text-[10px] font-mono font-bold text-[#C85A32] hover:underline cursor-pointer flex items-center gap-1"
+                        className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] rounded-lg text-xs font-mono font-bold text-[#262626] transition-all cursor-pointer shadow-3xs flex items-center gap-1"
                       >
-                        <span>Connect</span>
+                        <span>+ Connect</span>
                         <ArrowRight className="h-3 w-3" />
                       </button>
                     )}
@@ -568,30 +669,33 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 </div>
 
                 {/* 4. PrepAI Live Sandbox Row */}
-                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#C85A32]/40">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-lg bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center text-[#C85A32] shrink-0">
+                <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs transition-all hover:border-[#DFD5C6]">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-[#FAF6F0] border border-[#DFD5C6] flex items-center justify-center text-[#C85A32] shrink-0 mt-0.5 sm:mt-0">
                       <Terminal className="h-4 w-4" />
                     </div>
-                    <div>
+                    <div className="space-y-1.5">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-[#262626]">PrepAI Polyglot Sandbox</span>
-                        <span className="text-[9px] font-mono font-bold px-2 py-0.2 rounded-full bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25">
-                          Internal Judge
+                        <span className="text-xs font-bold text-[#262626]">PrepAI Interview Engine</span>
+                        <span className="text-[9px] font-mono font-bold px-2 py-0.2 rounded-md bg-[#C85A32]/10 text-[#C85A32] border border-[#C85A32]/25">
+                          AI Grilling
                         </span>
                       </div>
-                      <p className="text-[10px] text-[#6E6359] font-medium mt-0.5">
-                        {avgCoding !== "N/A" ? `${avgCoding}/10 Sandbox Accuracy` : "8.5/10 Accuracy"} • 92% Chaos Resilience • {avgVoice !== "N/A" ? `${avgVoice}/10 Voice Rating` : "8.0/10 Voice"}
-                      </p>
+                      
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-[#262626] bg-[#FAF6F0] border border-[#DFD5C6] px-2 py-0.5 rounded-md">
+                          {avgVoice !== "N/A" ? `${avgVoice} / 10` : "8.0 / 10"} Voice Depth
+                        </span>
+                      </div>
                     </div>
                   </div>
 
                   <div className="shrink-0 flex items-center">
                     <button
-                      onClick={onStartPractice}
-                      className="text-[10px] font-mono font-bold text-[#C85A32] hover:underline cursor-pointer flex items-center gap-1"
+                      onClick={() => onNavigate("interviews")}
+                      className="px-3 py-1 bg-[#C85A32]/10 hover:bg-[#C85A32] text-[#C85A32] hover:text-white border border-[#C85A32]/30 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
                     >
-                      <span>Launch Studio</span>
+                      <span>Start Interview</span>
                       <ArrowRight className="h-3 w-3" />
                     </button>
                   </div>
@@ -710,28 +814,28 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
             </div>
           </div>
 
-          {/* Card 4: Coding Accuracy & Studio */}
+          {/* Card 4: Interviews */}
           <div 
-            onClick={onStartPractice}
+            onClick={() => onNavigate("interviews")}
             className="border border-[#DFD5C6] hover:border-[#C85A32] rounded-2xl p-5 shadow-sm bg-[#FCFAF7] flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-0.5 select-none group premium-glow-card"
           >
             <div className="space-y-1">
               <div className="flex justify-between items-center">
-                <h3 className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">Coding Studio</h3>
+                <h3 className="text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">Interviews</h3>
                 <span className="px-1.5 py-0.5 rounded-md text-[8px] font-bold bg-[#FCEBE6] text-[#C85A32] border border-[#F2C2B8]">
-                  AST & Chaos
+                  AI Grilling
                 </span>
               </div>
               <p className="text-2xl font-bold font-serif text-[#262626] leading-none pt-2.5">
-                {avgCoding !== "N/A" ? `${avgCoding} ` : "— "}
+                {avgVoice !== "N/A" ? `${avgVoice} ` : "— "}
                 <span className="text-xs text-[#6E6359]/60 font-mono font-medium">/ 10</span>
               </p>
               <p className="text-[10px] text-[#6E6359]/70 pt-1">
-                DSA, Backend & Chaos Edge Cases
+                Technical & Behavioral Mock Interviews
               </p>
             </div>
             <div className="text-[10px] font-bold text-[#2E5A44] flex items-center gap-0.5 pt-4 group-hover:translate-x-1 transition-transform">
-              Launch Studio <ChevronRight className="h-3 w-3" />
+              Start Interview <ChevronRight className="h-3 w-3" />
             </div>
           </div>
 
@@ -745,30 +849,6 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
             
             <div className="flex items-center justify-between border-b border-[#DFD5C6] pb-2 select-none">
               <h2 className="text-base font-serif font-bold text-[#262626]">Performance History</h2>
-              
-              {/* Tab Selector */}
-              <div className="flex gap-1 bg-[#FAF6F0] p-1 border border-[#DFD5C6] rounded-xl shadow-2xs">
-                <button
-                  onClick={() => setActiveHistoryTab("voice")}
-                  className={`px-3.5 py-1.5 text-[10px] font-bold tracking-wide rounded-lg transition-all cursor-pointer ${
-                    activeHistoryTab === "voice"
-                      ? "bg-[#C85A32] text-[#FCFAF7] shadow-sm"
-                      : "text-[#6E6359] hover:text-[#262626]"
-                  }`}
-                >
-                  Voice Copilot
-                </button>
-                <button
-                  onClick={() => setActiveHistoryTab("coding")}
-                  className={`px-3.5 py-1.5 text-[10px] font-bold tracking-wide rounded-lg transition-all cursor-pointer ${
-                    activeHistoryTab === "coding"
-                      ? "bg-[#C85A32] text-[#FCFAF7] shadow-sm"
-                      : "text-[#6E6359] hover:text-[#262626]"
-                  }`}
-                >
-                  Coding Sessions
-                </button>
-              </div>
             </div>
             
             {/* History Table Container */}
@@ -792,80 +872,38 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                           Syncing workspace stats...
                         </td>
                       </tr>
-                    ) : activeHistoryTab === "voice" ? (
-                      // Voice History Rows
-                      voiceHistory.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="py-12 text-center text-[#6E6359]/70 font-medium font-serif">
-                            No Voice Copilot sessions finished yet. Start one to view metrics!
-                          </td>
-                        </tr>
-                      ) : (
-                        voiceHistory.map((row) => (
-                          <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
-                            <td className="py-4 px-5 font-serif font-bold text-[#262626]">
-                              {row.session}
-                            </td>
-                            <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
-                              <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
-                              {row.date}
-                            </td>
-                            <td className="py-4 px-5">
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]">
-                                {row.status}
-                              </span>
-                            </td>
-                            <td className="py-4 px-5 text-[#6E6359] font-mono">{row.duration}</td>
-                            <td className="py-4 px-5 text-right">
-                              <button
-                                onClick={() => onNavigate("analytics")}
-                                className="border border-[#DFD5C6] hover:border-[#C85A32] bg-[#FCFAF7] text-[#6E6359] hover:text-[#C85A32] hover:bg-[#C85A32]/5 py-1 px-3 rounded-lg text-[10px] font-bold transition-all shadow-2xs cursor-pointer"
-                              >
-                                Review Analytics
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )
+                    ) : voiceHistory.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-12 text-center text-[#6E6359]/70 font-medium font-serif">
+                          No interview sessions finished yet. Start one to view metrics!
+                        </td>
+                      </tr>
                     ) : (
-                      // Coding History Rows
-                      history.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="py-12 text-center text-[#6E6359]/70 font-medium font-serif">
-                            No coding practice sessions finished yet.
+                      voiceHistory.map((row) => (
+                        <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
+                          <td className="py-4 px-5 font-serif font-bold text-[#262626]">
+                            {row.session}
+                          </td>
+                          <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
+                            {row.date}
+                          </td>
+                          <td className="py-4 px-5">
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]">
+                              {row.status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-5 text-[#6E6359] font-mono">{row.duration}</td>
+                          <td className="py-4 px-5 text-right">
+                            <button
+                              onClick={() => onNavigate("analytics")}
+                              className="border border-[#DFD5C6] hover:border-[#C85A32] bg-[#FCFAF7] text-[#6E6359] hover:text-[#C85A32] hover:bg-[#C85A32]/5 py-1 px-3 rounded-lg text-[10px] font-bold transition-all shadow-2xs cursor-pointer"
+                            >
+                              Review Analytics
+                            </button>
                           </td>
                         </tr>
-                      ) : (
-                        history.map((row) => (
-                          <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
-                            <td className="py-4 px-5 font-serif font-bold text-[#262626]">
-                              {row.session}
-                            </td>
-                            <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
-                              <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
-                              {row.date}
-                            </td>
-                            <td className="py-4 px-5">
-                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                parseFloat(row.status) >= 8.0
-                                  ? "bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]"
-                                  : "bg-[#FAF4EB] text-[#A6690B] border border-[#F2E0C9]"
-                              }`}>
-                                {row.status}
-                              </span>
-                            </td>
-                            <td className="py-4 px-5 text-[#6E6359] font-mono">{row.duration}</td>
-                            <td className="py-4 px-5 text-right">
-                              <button
-                                onClick={onStartPractice}
-                                className="border border-[#DFD5C6] hover:border-[#C85A32] bg-[#FCFAF7] text-[#6E6359] hover:text-[#C85A32] hover:bg-[#C85A32]/5 py-1 px-3 rounded-lg text-[10px] font-bold transition-all shadow-2xs cursor-pointer"
-                              >
-                                Review Recording
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )
+                      ))
                     )}
                   </tbody>
                 </table>
@@ -895,7 +933,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   </div>
                   <div className="flex justify-between items-center pt-1">
                     <span className="text-[9px] text-[#6E6359]">Focus: Time & space complexity analysis</span>
-                    <button onClick={onStartPractice} className="text-[9px] font-bold text-[#C85A32] hover:underline cursor-pointer">Practice</button>
+                    <button onClick={() => onNavigate("interviews")} className="text-[9px] font-bold text-[#C85A32] hover:underline cursor-pointer">Practice</button>
                   </div>
                 </div>
 
@@ -909,7 +947,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   </div>
                   <div className="flex justify-between items-center pt-1">
                     <span className="text-[9px] text-[#6E6359]">Focus: Microservices & caching databases</span>
-                    <button onClick={onStartPractice} className="text-[9px] font-bold text-[#A6690B] hover:underline cursor-pointer">Practice</button>
+                    <button onClick={() => onNavigate("interviews")} className="text-[9px] font-bold text-[#A6690B] hover:underline cursor-pointer">Practice</button>
                   </div>
                 </div>
 
@@ -937,7 +975,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   </div>
                   <div className="flex justify-between items-center pt-1">
                     <span className="text-[9px] text-[#6E6359]">Focus: SQL schemas & REST contracts</span>
-                    <button onClick={onStartPractice} className="text-[9px] font-bold text-[#C85A32] hover:underline cursor-pointer">Practice</button>
+                    <button onClick={() => onNavigate("interviews")} className="text-[9px] font-bold text-[#C85A32] hover:underline cursor-pointer">Practice</button>
                   </div>
                 </div>
               </div>
@@ -977,10 +1015,10 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={onStartPractice}
+                  onClick={() => onNavigate("interviews")}
                   className="w-full bg-[#C85A32] hover:bg-[#B83A14] text-[#FCFAF7] py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                 >
-                  Quick Prep Session
+                  Start Interview
                   <Zap className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -1041,24 +1079,43 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-[#C85A32]" />
                   <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#C85A32]">
-                    Proof-of-Skill Sync
+                    Proof-of-Skill Accounts
                   </span>
                 </div>
                 <h3 className="text-xl font-serif font-bold text-[#262626]">
-                  Connect Developer Profiles
+                  Connect & Replace Profiles
                 </h3>
                 <p className="text-xs text-[#6E6359] leading-relaxed">
-                  Enter your handles to pull live contest ratings, problem counts, and open-source metrics into your verified DevScore™.
+                  Enter new handles to replace existing accounts or link new ones. Live APIs will re-verify metrics and recalculate your unified DevScore™.
                 </p>
               </div>
 
               {/* Form Inputs */}
               <form onSubmit={handleSyncPlatforms} className="space-y-4">
                 {/* LeetCode Input */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold font-mono text-[#262626]">
-                    LeetCode Username / Profile URL
-                  </label>
+                <div className="space-y-1.5 p-3 rounded-xl bg-[#FAF6F0]/60 border border-[#DFD5C6]/70">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold font-mono text-[#262626] flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-[#D97706]" />
+                      LeetCode Account
+                    </label>
+                    {devScoreData?.platform_stats?.leetcode?.handle && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-[#6E6359] bg-[#FAF6F0] border border-[#DFD5C6] px-1.5 py-0.5 rounded">
+                          Linked: <strong>@{devScoreData.platform_stats.leetcode.handle}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSyncLeetcode("")}
+                          className="text-[10px] font-mono font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center gap-0.5"
+                          title="Unlink and clear this account"
+                        >
+                          <Trash2 className="h-2.5 w-2.5" />
+                          <span>Unlink</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-3 my-auto flex items-center text-[#D97706]">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -1069,17 +1126,36 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                       type="text"
                       value={syncLeetcode}
                       onChange={(e) => setSyncLeetcode(e.target.value)}
-                      placeholder="e.g. neal_wu or https://leetcode.com/u/neal_wu"
-                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#D97706] transition-all font-mono"
+                      placeholder="Enter new LeetCode handle to replace (e.g. neal_wu)"
+                      className="w-full pl-10 pr-3 py-2 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#D97706] transition-all font-mono"
                     />
                   </div>
                 </div>
 
                 {/* Codeforces Input */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold font-mono text-[#262626]">
-                    Codeforces Handle / Profile URL
-                  </label>
+                <div className="space-y-1.5 p-3 rounded-xl bg-[#FAF6F0]/60 border border-[#DFD5C6]/70">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold font-mono text-[#262626] flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-[#2563EB]" />
+                      Codeforces Account
+                    </label>
+                    {devScoreData?.platform_stats?.codeforces?.handle && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-[#6E6359] bg-[#FAF6F0] border border-[#DFD5C6] px-1.5 py-0.5 rounded">
+                          Linked: <strong>@{devScoreData.platform_stats.codeforces.handle}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSyncCodeforces("")}
+                          className="text-[10px] font-mono font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center gap-0.5"
+                          title="Unlink and clear this account"
+                        >
+                          <Trash2 className="h-2.5 w-2.5" />
+                          <span>Unlink</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-3 my-auto flex items-center">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -1092,17 +1168,36 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                       type="text"
                       value={syncCodeforces}
                       onChange={(e) => setSyncCodeforces(e.target.value)}
-                      placeholder="e.g. tourist or https://codeforces.com/profile/tourist"
-                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#2563EB] transition-all font-mono"
+                      placeholder="Enter new Codeforces handle to replace (e.g. tourist)"
+                      className="w-full pl-10 pr-3 py-2 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#2563EB] transition-all font-mono"
                     />
                   </div>
                 </div>
 
                 {/* GitHub Input */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold font-mono text-[#262626]">
-                    GitHub Username / URL
-                  </label>
+                <div className="space-y-1.5 p-3 rounded-xl bg-[#FAF6F0]/60 border border-[#DFD5C6]/70">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold font-mono text-[#262626] flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-[#262626]" />
+                      GitHub Account
+                    </label>
+                    {devScoreData?.platform_stats?.github?.username && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-[#6E6359] bg-[#FAF6F0] border border-[#DFD5C6] px-1.5 py-0.5 rounded">
+                          Linked: <strong>@{devScoreData.platform_stats.github.username}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSyncGithub("")}
+                          className="text-[10px] font-mono font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center gap-0.5"
+                          title="Unlink and clear this account"
+                        >
+                          <Trash2 className="h-2.5 w-2.5" />
+                          <span>Unlink</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-3 my-auto flex items-center text-[#1E293B]">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -1113,8 +1208,8 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                       type="text"
                       value={syncGithub}
                       onChange={(e) => setSyncGithub(e.target.value)}
-                      placeholder="e.g. torvalds or https://github.com/torvalds"
-                      className="w-full pl-10 pr-3 py-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#334155] transition-all font-mono"
+                      placeholder="Enter new GitHub username to replace (e.g. torvalds)"
+                      className="w-full pl-10 pr-3 py-2 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#334155] transition-all font-mono"
                     />
                   </div>
                 </div>
@@ -1123,7 +1218,7 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                 {syncSuccess && (
                   <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center gap-2 text-xs font-mono text-emerald-800">
                     <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                    <span>Successfully verified & recalculated DevScore!</span>
+                    <span>Successfully updated & recalculated DevScore!</span>
                   </div>
                 )}
 
@@ -1144,12 +1239,12 @@ export default function DashboardHome({ onStartPractice, onNavigate, user }) {
                     {isSyncing ? (
                       <>
                         <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>Verifying with APIs...</span>
+                        <span>Verifying & Recalculating...</span>
                       </>
                     ) : (
                       <>
                         <ShieldCheck className="h-3.5 w-3.5" />
-                        <span>Live Verify & Sync</span>
+                        <span>Save & Recalculate DevScore</span>
                       </>
                     )}
                   </button>

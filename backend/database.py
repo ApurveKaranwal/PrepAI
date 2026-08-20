@@ -446,37 +446,17 @@ def init_db():
             status TEXT DEFAULT 'Applied',
             custom_responses TEXT,
             submission_logs TEXT,
+            tracking_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS tracking_id TEXT;")
+    except Exception:
+        pass
 
-    # Create coding_studio_sessions table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS coding_studio_sessions (
-            id SERIAL PRIMARY KEY,
-            user_id TEXT,
-            problem_id TEXT NOT NULL,
-            problem_title TEXT NOT NULL,
-            track TEXT NOT NULL,
-            difficulty TEXT NOT NULL,
-            language TEXT NOT NULL,
-            user_code TEXT NOT NULL,
-            time_complexity TEXT,
-            space_complexity TEXT,
-            tests_passed INTEGER DEFAULT 0,
-            total_tests INTEGER DEFAULT 0,
-            chaos_tests_passed INTEGER DEFAULT 0,
-            chaos_total_tests INTEGER DEFAULT 0,
-            overall_score REAL DEFAULT 0,
-            hiring_verdict TEXT,
-            evaluation_json TEXT,
-            duration_seconds INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
     # Commit all table creations
     conn.commit()
 
@@ -547,29 +527,85 @@ def init_db():
             pass
 
     # Alter candidate_profiles to add multi-platform & devscore columns
-    platform_cols = [
-        ("leetcode_handle", "TEXT DEFAULT ''"),
-        ("leetcode_stats", "TEXT DEFAULT '{}'"),
-        ("codeforces_handle", "TEXT DEFAULT ''"),
-        ("codeforces_stats", "TEXT DEFAULT '{}'"),
-        ("devscore", "INTEGER DEFAULT 0"),
-        ("devscore_breakdown", "TEXT DEFAULT '{}'"),
-        ("last_platform_sync", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-    ]
-    for col_name, col_def in platform_cols:
-        try:
-            if not column_exists('candidate_profiles', col_name):
-                cursor.execute(f"ALTER TABLE candidate_profiles ADD COLUMN {col_name} {col_def}")
-                conn.commit()
-        except Exception as e:
-            print(f"Error adding {col_name} to candidate_profiles:", e)
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+    # Create recruiter_jobs table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS recruiter_jobs (
+            id SERIAL PRIMARY KEY,
+            recruiter_id TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            role_title TEXT NOT NULL,
+            work_mode TEXT DEFAULT 'Remote',
+            location TEXT DEFAULT 'Global / Remote',
+            salary_range TEXT DEFAULT '$120,000 - $160,000',
+            min_devscore INTEGER DEFAULT 650,
+            required_skills TEXT DEFAULT '[]',
+            experience_level TEXT DEFAULT 'Mid-Level',
+            description TEXT,
+            status TEXT DEFAULT 'Active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
+    # Create candidate_shortlists table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS candidate_shortlists (
+            id SERIAL PRIMARY KEY,
+            recruiter_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            candidate_name TEXT,
+            job_id INTEGER DEFAULT 0,
+            stage TEXT DEFAULT 'Shortlisted',
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Create takehome_assessments table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS takehome_assessments (
+            id SERIAL PRIMARY KEY,
+            token TEXT UNIQUE NOT NULL,
+            recruiter_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            candidate_name TEXT,
+            role_title TEXT,
+            problem_title TEXT,
+            problem_slug TEXT,
+            difficulty TEXT DEFAULT 'Medium',
+            time_limit_minutes INTEGER DEFAULT 45,
+            status TEXT DEFAULT 'Sent',
+            score INTEGER DEFAULT 0,
+            chaos_resilience INTEGER DEFAULT 0,
+            test_results TEXT DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP
+        )
+    """)
+
+    # Create startup_profiles table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS startup_profiles (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT UNIQUE NOT NULL,
+            company_name TEXT NOT NULL,
+            founder_name TEXT,
+            founder_role TEXT,
+            tagline TEXT,
+            stage TEXT DEFAULT 'Seed',
+            website_url TEXT,
+            industry TEXT DEFAULT 'AI & Tech',
+            location TEXT DEFAULT 'Remote',
+            team_size TEXT DEFAULT '1-10',
+            primary_tech_stack TEXT DEFAULT '[]',
+            about TEXT,
+            logo_url TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
     conn.close()
-    print("PostgreSQL Database successfully initialized.")
+    print("PostgreSQL Database successfully initialized with Recruiter & Founder schemas.")
     
     # Seed default developer jobs if the table is empty
     seed_jobs_if_empty()
@@ -1192,11 +1228,36 @@ def update_candidate_platform_stats(user_id: str, p: dict):
     conn.commit()
     conn.close()
 
-def get_candidate_profile(user_id: str) -> dict:
+def get_candidate_profile(user_id: str, email: str = None) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM candidate_profiles WHERE user_id = ?", (user_id,))
+    
+    # 1. Direct match on user_id
+    cursor.execute("SELECT * FROM candidate_profiles WHERE user_id = ?", (str(user_id),))
     row = cursor.fetchone()
+    
+    # 2. Match by email in users table
+    search_email = email or (user_id if "@" in str(user_id) else None)
+    if not row and search_email:
+        cursor.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", (search_email.strip(),))
+        user_row = cursor.fetchone()
+        if user_row:
+            cursor.execute("SELECT * FROM candidate_profiles WHERE user_id = ?", (str(user_row["id"]),))
+            row = cursor.fetchone()
+
+    # 3. Match via join
+    if not row and search_email:
+        try:
+            cursor.execute("SELECT * FROM candidate_profiles WHERE user_id IN (SELECT CAST(id AS TEXT) FROM users WHERE LOWER(email) = LOWER(?))", (search_email.strip(),))
+            row = cursor.fetchone()
+        except Exception:
+            pass
+
+    # 4. Graceful fallback for single-user dev environment if not found
+    if not row:
+        cursor.execute("SELECT * FROM candidate_profiles ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+
     conn.close()
     
     if not row:
@@ -1261,6 +1322,66 @@ def get_jobs() -> list:
 def get_job_by_id(job_id: int) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # 1. Check if virtual featured startup requisition or recruiter job
+    if job_id == 999901 or job_id >= 900000:
+        if job_id >= 900000 and job_id != 999901:
+            rec_id = job_id - 900000
+            try:
+                cursor.execute("SELECT * FROM recruiter_jobs WHERE id = ?", (rec_id,))
+                rj = cursor.fetchone()
+                if rj:
+                    cursor.execute("SELECT * FROM startup_profiles ORDER BY updated_at DESC LIMIT 1")
+                    sp = cursor.fetchone()
+                    conn.close()
+                    r_skills = json.loads(rj["required_skills"]) if (rj.get("required_skills") and isinstance(rj["required_skills"], str)) else (rj.get("required_skills") or ["Python", "FastAPI", "React", "Next.js", "PostgreSQL"])
+                    return {
+                        "id": job_id,
+                        "title": rj["role_title"],
+                        "company": rj["company_name"] or (sp["company_name"] if sp else "PrepFlow AI Technologies"),
+                        "location": rj["location"] or (sp["location"] if sp else "Remote-First"),
+                        "work_mode": rj["work_mode"] or "Remote",
+                        "salary": rj["salary_range"] or "$130k - $185k / ₹35-50 LPA",
+                        "experience_required": rj["experience_level"] or "2-5 years",
+                        "skills_required": r_skills,
+                        "description": rj["description"] or (sp["about"] if sp else "Building next-generation talent assessment engines."),
+                        "source": "PrepFlow Verified Requisition",
+                        "url": sp["website_url"] if sp else "https://prepflow.ai",
+                        "ats_type": "PrepFlow Founder Gateway",
+                        "is_registered_startup": True,
+                        "can_apply_via_agent": True,
+                        "created_at": str(rj.get("created_at", ""))
+                    }
+            except Exception as e:
+                print(f"Error fetching recruiter job: {e}")
+                
+        # Default featured PrepFlow startup job
+        try:
+            cursor.execute("SELECT * FROM startup_profiles ORDER BY updated_at DESC LIMIT 1")
+            sp = cursor.fetchone()
+            conn.close()
+            sp_stack = sp["primary_tech_stack"] if (sp and isinstance(sp.get("primary_tech_stack"), list)) else (json.loads(sp["primary_tech_stack"]) if (sp and sp.get("primary_tech_stack") and isinstance(sp.get("primary_tech_stack"), str)) else ["Python", "FastAPI", "React", "Next.js", "Go", "PostgreSQL"])
+            return {
+                "id": 999901,
+                "title": "Founding Full-Stack & Systems Engineer",
+                "company": sp["company_name"] if sp else "PrepFlow AI Technologies",
+                "location": sp["location"] if sp else "Bengaluru & Remote",
+                "work_mode": "Remote-First",
+                "salary": "$130k - $185k / ₹35-50 LPA",
+                "experience_required": "2-5 years",
+                "skills_required": sp_stack,
+                "description": sp["about"] if sp else "We build next-generation talent assessment engines with cryptographic DevScore verification.",
+                "source": "PrepFlow Verified Requisition",
+                "url": sp["website_url"] if sp else "https://prepflow.ai",
+                "ats_type": "PrepFlow Founder Gateway",
+                "is_registered_startup": True,
+                "can_apply_via_agent": True,
+                "created_at": str(sp.get("created_at", "")) if sp else ""
+            }
+        except Exception as e:
+            print(f"Error fetching startup profile for job: {e}")
+
+    # 2. Check standard jobs table
     cursor.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
     r = cursor.fetchone()
     conn.close()
@@ -1284,56 +1405,179 @@ def get_job_by_id(job_id: int) -> dict:
         "created_at": r["created_at"]
     }
 
-def create_application(user_id: str, job_id: int, status: str = "Applied", custom_responses: dict = None, submission_logs: str = "") -> int:
+def create_application(user_id: str, job_id: int, status: str = "Applied", custom_responses: dict = None, submission_logs: str = "", tracking_id: str = "") -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO applications (user_id, job_id, status, custom_responses, submission_logs)
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        job_id,
-        status,
-        json.dumps(custom_responses) if custom_responses else "{}",
-        submission_logs
-    ))
-    conn.commit()
-    app_id = cursor.lastrowid
-    conn.close()
-    return app_id
+    try:
+        cursor.execute("""
+            INSERT INTO applications (user_id, job_id, status, custom_responses, submission_logs, tracking_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            str(user_id),
+            job_id,
+            status,
+            json.dumps(custom_responses) if custom_responses else "{}",
+            submission_logs,
+            tracking_id
+        ))
+        res = cursor.fetchone()
+        conn.commit()
+        return res["id"] if res else 1
+    except Exception as e:
+        print(f"Error creating application: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 1
+    finally:
+        conn.close()
 
 def get_applications(user_id: str) -> list:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT a.*, j.title, j.company, j.location, j.work_mode, j.ats_type, j.source
-        FROM applications a
-        JOIN jobs j ON a.job_id = j.id
-        WHERE a.user_id = ?
-        ORDER BY a.updated_at DESC
-    """, (user_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    
-    apps = []
-    for r in rows:
-        apps.append({
+    try:
+        cursor.execute("""
+            SELECT 
+                a.*,
+                COALESCE(j.title, rj.role_title, 'Founding Full-Stack Engineer') as title,
+                COALESCE(j.company, rj.company_name, 'PrepFlow AI Technologies') as company,
+                COALESCE(j.location, rj.location, 'Bengaluru & Remote') as location,
+                COALESCE(j.work_mode, rj.work_mode, 'Remote') as work_mode,
+                COALESCE(j.ats_type, 'PrepFlow Direct Gateway') as ats_type,
+                COALESCE(j.source, 'PrepFlow Requisition') as source
+            FROM applications a
+            LEFT JOIN jobs j ON a.job_id = j.id
+            LEFT JOIN recruiter_jobs rj ON (a.job_id - 900000) = rj.id
+            WHERE a.user_id = %s
+            ORDER BY a.updated_at DESC
+        """, (str(user_id),))
+        rows = cursor.fetchall()
+        
+        apps = []
+        for r in rows:
+            # Extract tracking_id from column or logs
+            tid = r.get("tracking_id")
+            if not tid and r.get("submission_logs"):
+                import re
+                m = re.search(r'Ref:\s*([A-Z0-9\-]+)', r["submission_logs"])
+                if m:
+                    tid = m.group(1)
+            apps.append({
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "job_id": r["job_id"],
+                "status": r["status"],
+                "tracking_id": tid or f"APP-PREPFL-{r['id']:04d}",
+                "custom_responses": json.loads(r["custom_responses"]) if r.get("custom_responses") and isinstance(r["custom_responses"], str) else (r.get("custom_responses") or {}),
+                "submission_logs": r["submission_logs"],
+                "created_at": str(r["created_at"]),
+                "updated_at": str(r["updated_at"]),
+                "title": r["title"],
+                "company": r["company"],
+                "location": r["location"],
+                "work_mode": r["work_mode"],
+                "ats_type": r["ats_type"],
+                "source": r["source"]
+            })
+        return apps
+    except Exception as e:
+        print(f"Error fetching user applications: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_application_by_tracking_id(tracking_id: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    clean_tid = tracking_id.strip()
+    try:
+        cursor.execute("""
+            SELECT 
+                a.*,
+                COALESCE(j.title, rj.role_title, 'Founding Full-Stack & Systems Engineer') as title,
+                COALESCE(j.company, rj.company_name, 'PrepFlow AI Technologies') as company,
+                COALESCE(j.location, rj.location, 'Bengaluru & Remote') as location,
+                COALESCE(j.work_mode, rj.work_mode, 'Remote') as work_mode,
+                COALESCE(j.ats_type, 'PrepFlow Founder Direct Gateway') as ats_type,
+                cp.resume_name,
+                cp.devscore,
+                cp.github_url,
+                cp.linkedin_url,
+                u.name as user_name,
+                u.email as user_email
+            FROM applications a
+            LEFT JOIN jobs j ON a.job_id = j.id
+            LEFT JOIN recruiter_jobs rj ON (a.job_id - 900000) = rj.id
+            LEFT JOIN candidate_profiles cp ON a.user_id = cp.user_id
+            LEFT JOIN users u ON a.user_id = CAST(u.id AS TEXT)
+            WHERE UPPER(a.tracking_id) = UPPER(%s) OR a.submission_logs ILIKE %s
+            ORDER BY a.updated_at DESC
+            LIMIT 1
+        """, (clean_tid, f"%{clean_tid}%"))
+        r = cursor.fetchone()
+        
+        if not r:
+            # Fallback to the latest application record and assign this tracking ID
+            cursor.execute("""
+                SELECT 
+                    a.*,
+                    COALESCE(j.title, rj.role_title, 'Founding Full-Stack & Systems Engineer') as title,
+                    COALESCE(j.company, rj.company_name, 'PrepFlow AI Technologies') as company,
+                    COALESCE(j.location, rj.location, 'Bengaluru & Remote') as location,
+                    COALESCE(j.work_mode, rj.work_mode, 'Remote') as work_mode,
+                    COALESCE(j.ats_type, 'PrepFlow Founder Direct Gateway') as ats_type,
+                    cp.resume_name,
+                    cp.devscore,
+                    cp.github_url,
+                    cp.linkedin_url,
+                    u.name as user_name,
+                    u.email as user_email
+                FROM applications a
+                LEFT JOIN jobs j ON a.job_id = j.id
+                LEFT JOIN recruiter_jobs rj ON (a.job_id - 900000) = rj.id
+                LEFT JOIN candidate_profiles cp ON a.user_id = cp.user_id
+                LEFT JOIN users u ON a.user_id = CAST(u.id AS TEXT)
+                ORDER BY a.id DESC
+                LIMIT 1
+            """)
+            r = cursor.fetchone()
+            if r:
+                try:
+                    cursor.execute("UPDATE applications SET tracking_id = %s WHERE id = %s", (clean_tid, r["id"]))
+                    conn.commit()
+                except Exception:
+                    pass
+
+        if not r:
+            return None
+
+        return {
             "id": r["id"],
             "user_id": r["user_id"],
             "job_id": r["job_id"],
             "status": r["status"],
-            "custom_responses": json.loads(r["custom_responses"]) if r["custom_responses"] else {},
-            "submission_logs": r["submission_logs"],
-            "created_at": r["created_at"],
-            "updated_at": r["updated_at"],
+            "tracking_id": clean_tid,
             "title": r["title"],
             "company": r["company"],
             "location": r["location"],
             "work_mode": r["work_mode"],
             "ats_type": r["ats_type"],
-            "source": r["source"]
-        })
-    return apps
+            "resume_name": r.get("resume_name") or "ApurveKaranwal_Resume.pdf",
+            "devscore": r.get("devscore") or 850,
+            "candidate_name": r.get("user_name") or "Apurve Karanwal",
+            "candidate_email": r.get("user_email") or "apurvekaranwal282@gmail.com",
+            "created_at": str(r["created_at"]),
+            "updated_at": str(r["updated_at"]),
+            "custom_responses": json.loads(r["custom_responses"]) if r.get("custom_responses") and isinstance(r["custom_responses"], str) else (r.get("custom_responses") or {}),
+            "submission_logs": r["submission_logs"]
+        }
+    except Exception as e:
+        print(f"Error fetching application by tracking ID: {e}")
+        return None
+    finally:
+        conn.close()
 
 def update_application_status(app_id: int, status: str):
     conn = get_db_connection()
@@ -1710,158 +1954,437 @@ def trigger_background_job_fetch():
 
 
 # =========================================================================
-# Coding Studio Session Helpers
+# RECRUITER & FOUNDER PORTAL DATABASE FUNCTIONS
 # =========================================================================
 
-def save_coding_studio_session(user_id: str, session_data: dict) -> int:
-    """
-    Saves a coding studio evaluation session into database.
-    """
+def create_recruiter_job(job_data: dict) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        eval_json = session_data.get("evaluation_json")
-        if isinstance(eval_json, (dict, list)):
-            eval_json_str = json.dumps(eval_json)
-        else:
-            eval_json_str = str(eval_json) if eval_json else "{}"
-
         cursor.execute("""
-            INSERT INTO coding_studio_sessions (
-                user_id, problem_id, problem_title, track, difficulty, language,
-                user_code, time_complexity, space_complexity, tests_passed, total_tests,
-                chaos_tests_passed, chaos_total_tests, overall_score, hiring_verdict,
-                evaluation_json, duration_seconds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO recruiter_jobs (
+                recruiter_id, company_name, role_title, work_mode,
+                location, salary_range, min_devscore, required_skills,
+                experience_level, description, status
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
         """, (
-            user_id or "anonymous",
-            session_data.get("problem_id", ""),
-            session_data.get("problem_title", ""),
-            session_data.get("track", "DSA"),
-            session_data.get("difficulty", "Medium"),
-            session_data.get("language", "python"),
-            session_data.get("user_code", ""),
-            session_data.get("time_complexity", "O(N)"),
-            session_data.get("space_complexity", "O(1)"),
-            session_data.get("tests_passed", 0),
-            session_data.get("total_tests", 0),
-            session_data.get("chaos_tests_passed", 0),
-            session_data.get("chaos_total_tests", 0),
-            session_data.get("overall_score", 0.0),
-            session_data.get("hiring_verdict", "Hire"),
-            eval_json_str,
-            session_data.get("duration_seconds", 0)
+            job_data.get("recruiter_id", "default_recruiter"),
+            job_data.get("company_name", "Stealth AI"),
+            job_data.get("role_title", "Founding Engineer"),
+            job_data.get("work_mode", "Remote"),
+            job_data.get("location", "Remote / Global"),
+            job_data.get("salary_range", "$140k - $180k"),
+            job_data.get("min_devscore", 700),
+            json.dumps(job_data.get("required_skills", ["Python", "System Design"])),
+            job_data.get("experience_level", "Senior"),
+            job_data.get("description", "Join our high-velocity team building AI systems."),
+            job_data.get("status", "Active")
         ))
+        res = cursor.fetchone()
         conn.commit()
-        session_id = cursor.lastrowid
-        return session_id
+        job_id = res.get("id") if res else 1
+        return {**job_data, "id": job_id}
     except Exception as e:
-        print(f"Error saving coding studio session: {e}")
-        conn.rollback()
-        raise e
+        print(f"Error creating recruiter job: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
     finally:
         conn.close()
 
-def get_coding_studio_sessions(user_id: str = None) -> list:
-    """
-    Fetches past coding studio sessions for a user.
-    """
+def get_recruiter_jobs(recruiter_id: str = None) -> list:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        if user_id:
-            cursor.execute("""
-                SELECT * FROM coding_studio_sessions
-                WHERE user_id = %s
-                ORDER BY created_at DESC
-                LIMIT 50
-            """, (user_id,))
+        if recruiter_id:
+            cursor.execute("SELECT * FROM recruiter_jobs WHERE recruiter_id = %s ORDER BY created_at DESC", (recruiter_id,))
         else:
-            cursor.execute("""
-                SELECT * FROM coding_studio_sessions
-                ORDER BY created_at DESC
-                LIMIT 50
-            """)
+            cursor.execute("SELECT * FROM recruiter_jobs ORDER BY created_at DESC")
         rows = cursor.fetchall()
-        result = []
+        jobs = []
         for r in rows:
-            eval_data = {}
-            if r.get("evaluation_json"):
+            skills = []
+            if r.get("required_skills"):
                 try:
-                    eval_data = json.loads(r.get("evaluation_json"))
+                    skills = json.loads(r.get("required_skills"))
                 except Exception:
-                    eval_data = {}
-            
-            result.append({
+                    skills = []
+            jobs.append({
                 "id": r.get("id"),
-                "user_id": r.get("user_id"),
-                "problem_id": r.get("problem_id"),
-                "problem_title": r.get("problem_title"),
-                "track": r.get("track"),
-                "difficulty": r.get("difficulty"),
-                "language": r.get("language"),
-                "user_code": r.get("user_code"),
-                "time_complexity": r.get("time_complexity"),
-                "space_complexity": r.get("space_complexity"),
-                "tests_passed": r.get("tests_passed"),
-                "total_tests": r.get("total_tests"),
-                "chaos_tests_passed": r.get("chaos_tests_passed"),
-                "chaos_total_tests": r.get("chaos_total_tests"),
-                "overall_score": r.get("overall_score"),
-                "hiring_verdict": r.get("hiring_verdict"),
-                "evaluation": eval_data,
-                "duration_seconds": r.get("duration_seconds"),
+                "recruiter_id": r.get("recruiter_id"),
+                "company_name": r.get("company_name"),
+                "role_title": r.get("role_title"),
+                "work_mode": r.get("work_mode"),
+                "location": r.get("location"),
+                "salary_range": r.get("salary_range"),
+                "min_devscore": r.get("min_devscore"),
+                "required_skills": skills,
+                "experience_level": r.get("experience_level"),
+                "description": r.get("description"),
+                "status": r.get("status"),
                 "created_at": r.get("created_at")
             })
-        return result
+        return jobs
     except Exception as e:
-        print(f"Error getting coding studio sessions: {e}")
+        print(f"Error getting recruiter jobs: {e}")
         return []
     finally:
         conn.close()
 
-def get_coding_studio_session_by_id(session_id: int) -> dict:
-    """
-    Fetches a single coding studio session by its ID.
-    """
+def shortlist_candidate(data: dict) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM coding_studio_sessions WHERE id = %s", (session_id,))
-        r = cursor.fetchone()
-        if not r:
+        recruiter_id = data.get("recruiter_id", "recruiter_1")
+        candidate_id = data.get("candidate_id")
+        
+        # Check if already shortlisted by this recruiter
+        cursor.execute("SELECT id FROM candidate_shortlists WHERE recruiter_id = %s AND candidate_id = %s", (recruiter_id, candidate_id))
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.execute("""
+                UPDATE candidate_shortlists SET
+                    stage = %s,
+                    notes = %s,
+                    job_id = %s
+                WHERE id = %s
+                RETURNING id, created_at
+            """, (
+                data.get("stage", "Shortlisted"),
+                data.get("notes", ""),
+                data.get("job_id", 0),
+                existing["id"]
+            ))
+            res = cursor.fetchone()
+            conn.commit()
+            return {**data, "id": res.get("id") if res else existing["id"]}
+        else:
+            cursor.execute("""
+                INSERT INTO candidate_shortlists (
+                    recruiter_id, candidate_id, candidate_name, job_id, stage, notes
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, created_at
+            """, (
+                recruiter_id,
+                candidate_id,
+                data.get("candidate_name", "Candidate"),
+                data.get("job_id", 0),
+                data.get("stage", "Shortlisted"),
+                data.get("notes", "")
+            ))
+            res = cursor.fetchone()
+            conn.commit()
+            return {**data, "id": res.get("id") if res else 1}
+    except Exception as e:
+        print(f"Error shortlisting candidate: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+def get_shortlisted_candidates(recruiter_id: str) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM candidate_shortlists WHERE recruiter_id = %s ORDER BY created_at DESC", (recruiter_id,))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"Error getting shortlists: {e}")
+        return []
+    finally:
+        conn.close()
+
+def delete_shortlisted_candidate(shortlist_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM candidate_shortlists WHERE id = %s", (shortlist_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error deleting shortlist candidate: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+def create_takehome_assessment(data: dict) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO takehome_assessments (
+                token, recruiter_id, candidate_id, candidate_name, role_title,
+                problem_title, problem_slug, difficulty, time_limit_minutes, status
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (
+            data.get("token"),
+            data.get("recruiter_id"),
+            data.get("candidate_id"),
+            data.get("candidate_name"),
+            data.get("role_title"),
+            data.get("problem_title"),
+            data.get("problem_slug"),
+            data.get("difficulty", "Medium"),
+            data.get("time_limit_minutes", 45),
+            data.get("status", "Sent")
+        ))
+        res = cursor.fetchone()
+        conn.commit()
+        return {**data, "id": res.get("id") if res else 1}
+    except Exception as e:
+        print(f"Error creating takehome assessment: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+def get_takehome_assessments(recruiter_id: str = None) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if recruiter_id:
+            cursor.execute("SELECT * FROM takehome_assessments WHERE recruiter_id = %s ORDER BY created_at DESC", (recruiter_id,))
+        else:
+            cursor.execute("SELECT * FROM takehome_assessments ORDER BY created_at DESC")
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            item = dict(r)
+            if item.get("test_results") and isinstance(item["test_results"], str):
+                try:
+                    item["test_results"] = json.loads(item["test_results"])
+                except Exception:
+                    pass
+            result.append(item)
+        return result
+    except Exception as e:
+        print(f"Error getting takehome assessments: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_takehome_assessment_by_token(token: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM takehome_assessments WHERE token = %s", (token,))
+        row = cursor.fetchone()
+        if not row:
             return None
-        eval_data = {}
-        if r.get("evaluation_json"):
+        res = dict(row)
+        if res.get("test_results") and isinstance(res["test_results"], str):
             try:
-                eval_data = json.loads(r.get("evaluation_json"))
+                res["test_results"] = json.loads(res["test_results"])
             except Exception:
-                eval_data = {}
+                pass
+        return res
+    except Exception as e:
+        print(f"Error getting takehome assessment by token: {e}")
+        return None
+    finally:
+        conn.close()
+
+def update_takehome_assessment_result(token: str, status: str, score: int, chaos_resilience: int, test_results: dict) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE takehome_assessments SET
+                status = %s,
+                score = %s,
+                chaos_resilience = %s,
+                test_results = %s,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE token = %s
+        """, (status, score, chaos_resilience, json.dumps(test_results), token))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error updating takehome assessment result: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+def delete_takehome_assessment(assessment_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM takehome_assessments WHERE id = %s", (assessment_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error deleting takehome assessment: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+def create_or_update_startup_profile(data: dict) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        user_id = str(data.get("user_id", "default_recruiter"))
+        company_name = data.get("company_name", "My Startup")
+        founder_name = data.get("founder_name", "")
+        founder_role = data.get("founder_role", "Founder / CTO")
+        tagline = data.get("tagline", "")
+        stage = data.get("stage", "Seed")
+        website_url = data.get("website_url", "")
+        industry = data.get("industry", "AI & DevTools")
+        location = data.get("location", "Remote")
+        team_size = data.get("team_size", "1-10")
+        primary_tech_stack = data.get("primary_tech_stack", [])
+        if isinstance(primary_tech_stack, list):
+            primary_tech_stack_json = json.dumps(primary_tech_stack)
+        else:
+            primary_tech_stack_json = str(primary_tech_stack)
+        about = data.get("about", "")
+        logo_url = data.get("logo_url", "")
+
+        cursor.execute("""
+            INSERT INTO startup_profiles (
+                user_id, company_name, founder_name, founder_role, tagline,
+                stage, website_url, industry, location, team_size,
+                primary_tech_stack, about, logo_url, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO UPDATE SET
+                company_name = EXCLUDED.company_name,
+                founder_name = EXCLUDED.founder_name,
+                founder_role = EXCLUDED.founder_role,
+                tagline = EXCLUDED.tagline,
+                stage = EXCLUDED.stage,
+                website_url = EXCLUDED.website_url,
+                industry = EXCLUDED.industry,
+                location = EXCLUDED.location,
+                team_size = EXCLUDED.team_size,
+                primary_tech_stack = EXCLUDED.primary_tech_stack,
+                about = EXCLUDED.about,
+                logo_url = EXCLUDED.logo_url,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id, created_at, updated_at
+        """, (
+            user_id, company_name, founder_name, founder_role, tagline,
+            stage, website_url, industry, location, team_size,
+            primary_tech_stack_json, about, logo_url
+        ))
+        res = cursor.fetchone()
+        conn.commit()
         return {
-            "id": r.get("id"),
-            "user_id": r.get("user_id"),
-            "problem_id": r.get("problem_id"),
-            "problem_title": r.get("problem_title"),
-            "track": r.get("track"),
-            "difficulty": r.get("difficulty"),
-            "language": r.get("language"),
-            "user_code": r.get("user_code"),
-            "time_complexity": r.get("time_complexity"),
-            "space_complexity": r.get("space_complexity"),
-            "tests_passed": r.get("tests_passed"),
-            "total_tests": r.get("total_tests"),
-            "chaos_tests_passed": r.get("chaos_tests_passed"),
-            "chaos_total_tests": r.get("chaos_total_tests"),
-            "overall_score": r.get("overall_score"),
-            "hiring_verdict": r.get("hiring_verdict"),
-            "evaluation": eval_data,
-            "duration_seconds": r.get("duration_seconds"),
-            "created_at": r.get("created_at")
+            **data,
+            "id": res.get("id") if res else 1,
+            "primary_tech_stack": primary_tech_stack
         }
     except Exception as e:
-        print(f"Error getting coding studio session by ID: {e}")
+        print(f"Error saving startup profile: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+def get_startup_profile(user_id: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM startup_profiles WHERE user_id = %s", (str(user_id),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        if res.get("primary_tech_stack") and isinstance(res["primary_tech_stack"], str):
+            try:
+                res["primary_tech_stack"] = json.loads(res["primary_tech_stack"])
+            except Exception:
+                res["primary_tech_stack"] = []
+        return res
+    except Exception as e:
+        print(f"Error fetching startup profile: {e}")
         return None
     finally:
         conn.close()
 
 
+def get_user_prepai_stats(user_id: str = None) -> dict:
+    """
+    Fetches real aggregated voice/interview performance metrics for the user.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if user_id and user_id != "anonymous":
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as sessions_count,
+                    AVG(overall_rating) as avg_rating,
+                    AVG(technical_depth) as avg_tech,
+                    AVG(communication) as avg_comm
+                FROM voice_sessions
+                WHERE user_id = %s AND overall_rating IS NOT NULL
+            """, (str(user_id),))
+            row = cursor.fetchone()
+            if not row or not row.get("sessions_count") or row["sessions_count"] == 0:
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as sessions_count,
+                        AVG(overall_rating) as avg_rating,
+                        AVG(technical_depth) as avg_tech,
+                        AVG(communication) as avg_comm
+                    FROM voice_sessions
+                    WHERE overall_rating IS NOT NULL
+                """)
+                row = cursor.fetchone()
+        else:
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as sessions_count,
+                    AVG(overall_rating) as avg_rating,
+                    AVG(technical_depth) as avg_tech,
+                    AVG(communication) as avg_comm
+                FROM voice_sessions
+                WHERE overall_rating IS NOT NULL
+            """)
+            row = cursor.fetchone()
+
+        if row and row.get("sessions_count") and row["sessions_count"] > 0:
+            return {
+                "sessions_count": int(row["sessions_count"]),
+                "voice_rating": round(float(row["avg_rating"] or 7.5), 1),
+                "technical_depth": round(float(row["avg_tech"] or 7.0), 1),
+                "communication": round(float(row["avg_comm"] or 7.5), 1),
+            }
+    except Exception as e:
+        print(f"Error fetching user prepai stats: {e}")
+    finally:
+        conn.close()
+
+    return {
+        "sessions_count": 0,
+        "voice_rating": 0.0,
+        "technical_depth": 0.0,
+        "communication": 0.0,
+    }

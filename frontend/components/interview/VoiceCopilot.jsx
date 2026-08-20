@@ -70,20 +70,47 @@ export default function VoiceCopilot({ user }) {
   const [useSavedProfile, setUseSavedProfile] = useState(false);
 
   useEffect(() => {
-    async function loadSavedProfile() {
-      if (user?.uid) {
+    // 1. Instant cache retrieval from localStorage
+    if (typeof window !== "undefined") {
+      const cached = localStorage.getItem("prepflow_candidate_profile");
+      if (cached) {
         try {
-          const res = await fetch(`${BACKEND_URL}/api/career/profile?user_id=${user.uid}`);
-          if (res.ok) {
-            const data = await res.json();
+          const parsed = JSON.parse(cached);
+          if (parsed && (parsed.github_url || parsed.resume_name)) {
+            setSavedProfile(parsed);
+            setUseSavedProfile(true);
+            if (parsed.github_url) setGithubUrl(parsed.github_url);
+            if (parsed.linkedin_url) setLinkedinUrl(parsed.linkedin_url);
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 2. Fetch fresh profile from backend with user_id and email
+    async function loadSavedProfile() {
+      const uid = user?.uid || user?.id || "";
+      const userEmail = user?.email || "";
+      
+      try {
+        const queryParams = new URLSearchParams();
+        if (uid) queryParams.append("user_id", uid);
+        if (userEmail) queryParams.append("email", userEmail);
+        
+        const res = await fetch(`${BACKEND_URL}/api/career/profile?${queryParams.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && (data.github_url || data.resume_name || data.user_id)) {
             setSavedProfile(data);
             setUseSavedProfile(true); // default to using saved profile
             if (data.github_url) setGithubUrl(data.github_url);
             if (data.linkedin_url) setLinkedinUrl(data.linkedin_url);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("prepflow_candidate_profile", JSON.stringify(data));
+            }
           }
-        } catch (e) {
-          console.error("Failed to load saved profile in Voice Copilot:", e);
         }
+      } catch (e) {
+        console.warn("Could not fetch latest profile from backend:", e);
       }
     }
     loadSavedProfile();
@@ -120,6 +147,7 @@ export default function VoiceCopilot({ user }) {
   const [latestEvaluation, setLatestEvaluation] = useState(null);
   const [micLevel, setMicLevel] = useState(0); // 0 to 100 for live meter
   const [hearOwnVoice, setHearOwnVoice] = useState(false); // Hear your own voice toggle
+  const [liveUserText, setLiveUserText] = useState("");
 
   // Scorecard State
   const [scorecard, setScorecard] = useState(null);
@@ -129,6 +157,8 @@ export default function VoiceCopilot({ user }) {
   const analyserRef = useRef(null);
   const streamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const liveTranscriptRef = useRef("");
   const wsRef = useRef(null);
   const audioPlaybackRef = useRef(null);
   
@@ -140,11 +170,12 @@ export default function VoiceCopilot({ user }) {
   const vadIntervalRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const agentSpeakingRef = useRef(false); // true while TTS audio is playing — blocks mic/VAD
+  const micStartTimerRef = useRef(null); // tracks pending setTimeout for delayed mic start — cancel on stop
 
   // VAD Speech Threshold Settings
-  const speechThreshold = 18; // RMS energy threshold
-  const silenceTimeout = 1500; // ms of silence before stopping and sending
-  const speechBufferCount = 3; // consecutive active frames to trigger speech start
+  const speechThreshold = 42; // RMS energy threshold — higher = less sensitive to background noise
+  const silenceTimeout = 3500; // 3.5s timeout so candidate can pause to think without cut-off
+  const speechBufferCount = 6; // 360ms of sustained speech frames before triggering speech start
 
   // Format Timer
   const formatTime = (secs) => {
@@ -192,8 +223,11 @@ export default function VoiceCopilot({ user }) {
     if (!useSavedProfile && resumeFile) formData.append("resume", resumeFile);
     formData.append("github_url", targetGithubUrl);
     
-    if (user?.uid) {
-      formData.append("user_id", user.uid);
+    if (user?.uid || user?.id) {
+      formData.append("user_id", user?.uid || user?.id);
+    }
+    if (user?.email) {
+      formData.append("email", user.email);
     }
 
     if (useSavedProfile) {
@@ -290,66 +324,126 @@ export default function VoiceCopilot({ user }) {
       // Connect WebSocket
       connectWebSocket(sessionId);
       
-      // Play Welcoming Speech
+      // Play Welcoming Speech or start listening immediately
       if (data.audio_base64) {
-        playTTSAudio(data.audio_base64);
+        playTTSAudio(data.audio_base64, data.question);
       } else {
-        setVoiceStatus("listening");
-        startMicrophoneCapture();
+        playTTSAudio(null, data.question);
       }
       
     } catch (err) {
       console.error("Failed to start session:", err);
-      setVoiceStatus("listening");
+      activateListeningMode();
+    }
+  };
+
+  // Dedicated function to activate listening mode & start microphone
+  const activateListeningMode = (startMicImmediately = true) => {
+    if (audioPlaybackRef.current) {
+      try { audioPlaybackRef.current.pause(); } catch (e) {}
+      audioPlaybackRef.current = null;
+    }
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    agentSpeakingRef.current = false;
+    setVoiceStatus("listening");
+    
+    if (startMicImmediately) {
       startMicrophoneCapture();
     }
   };
 
-  // Play Speech Audio
-  const playTTSAudio = (base64Audio) => {
+  // Play Speech Audio with zero-deadlock fallback
+  const playTTSAudio = (base64Audio, fallbackText = "") => {
     if (audioPlaybackRef.current) {
-      audioPlaybackRef.current.pause();
+      try { audioPlaybackRef.current.pause(); } catch (e) {}
+      audioPlaybackRef.current = null;
     }
     
-    // Stop recording while playing speech to avoid echo feedback
+    // Cancel any pending mic-start timer from a previous cycle
+    if (micStartTimerRef.current) {
+      clearTimeout(micStartTimerRef.current);
+      micStartTimerRef.current = null;
+    }
+    
     stopMicrophoneRecording();
     agentSpeakingRef.current = true;
-    
-    const binaryString = window.atob(base64Audio);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    const audioBlob = new Blob([bytes.buffer], { type: "audio/mp3" });
-    const audioUrl = URL.createObjectURL(audioBlob);
-    
-    const audio = new Audio(audioUrl);
-    audioPlaybackRef.current = audio;
-    
-    audio.onended = () => {
-      agentSpeakingRef.current = false;
-      audioPlaybackRef.current = null;
-      setVoiceStatus("listening");
-      startMicrophoneCapture();
-    };
-    
-    audio.onerror = () => {
-      console.error("TTS audio playback error");
-      agentSpeakingRef.current = false;
-      audioPlaybackRef.current = null;
-      setVoiceStatus("listening");
-      startMicrophoneCapture();
-    };
-    
     setVoiceStatus("speaking");
-    audio.play().catch((err) => {
-      console.error("Playback block:", err);
+    
+    let completed = false;
+    const onAudioDone = () => {
+      if (completed) return;
+      completed = true;
+      // Don't start mic immediately — add a 1.5s stabilization gap
+      // so the user has a clear "AI finished speaking → now it's your turn" transition
       agentSpeakingRef.current = false;
-      audioPlaybackRef.current = null;
       setVoiceStatus("listening");
-      startMicrophoneCapture();
-    });
+      // Use tracked timer so it can be cancelled if user submits or navigates away
+      micStartTimerRef.current = setTimeout(() => {
+        micStartTimerRef.current = null;
+        // Only start mic if still in listening state
+        if (!agentSpeakingRef.current && recordingActiveRef.current === false) {
+          startMicrophoneCapture();
+        }
+      }, 1500);
+    };
+
+    if (!base64Audio) {
+      // Use client-side Web Speech synthesis if backend TTS returned no audio
+      if (typeof window !== "undefined" && window.speechSynthesis && fallbackText) {
+        try {
+          const utterance = new SpeechSynthesisUtterance(fallbackText);
+          utterance.lang = language || "en-IN";
+          utterance.rate = 1.0;
+          
+          const maxDuration = Math.min(25000, Math.max(4000, fallbackText.length * 80));
+          setTimeout(onAudioDone, maxDuration);
+          
+          utterance.onend = onAudioDone;
+          utterance.onerror = onAudioDone;
+          
+          window.speechSynthesis.speak(utterance);
+          return;
+        } catch (e) {
+          console.warn("Client-side synthesis fallback error:", e);
+        }
+      }
+      // No audio and no fallback speech — just wait a moment then open mic
+      setTimeout(onAudioDone, 2000);
+      return;
+    }
+
+    try {
+      const binaryString = window.atob(base64Audio);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const audioBlob = new Blob([bytes.buffer], { type: "audio/mp3" });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      const audio = new Audio(audioUrl);
+      audioPlaybackRef.current = audio;
+      
+      // Safety timer: maximum 20 seconds for question playback, then automatically open mic
+      setTimeout(onAudioDone, 20000);
+      
+      audio.onended = onAudioDone;
+      audio.onerror = () => {
+        console.error("TTS audio playback error. Opening mic.");
+        onAudioDone();
+      };
+      
+      audio.play().catch((err) => {
+        console.warn("Autoplay prevented or playback issue:", err);
+        onAudioDone();
+      });
+    } catch (e) {
+      console.error("Error decoding TTS audio:", e);
+      onAudioDone();
+    }
   };
 
   // WebSocket Connection
@@ -364,19 +458,33 @@ export default function VoiceCopilot({ user }) {
       
       if (data.type === "transcript") {
         setTranscript((prev) => {
-          const last = prev[prev.length - 1];
+          const clean = prev.filter((m) => m.text !== "...");
+          const last = clean[clean.length - 1];
           if (last && last.role === data.role) {
-            return [...prev.slice(0, -1), { role: data.role, text: data.text }];
+            return [...clean.slice(0, -1), { role: data.role, text: data.text }];
           } else {
-            return [...prev, { role: data.role, text: data.text }];
+            return [...clean, { role: data.role, text: data.text }];
           }
         });
       } else if (data.type === "audio") {
-        playTTSAudio(data.audio);
+        playTTSAudio(data.audio, data.text || "");
       } else if (data.type === "status") {
-        setVoiceStatus(data.status);
         if (data.status === "listening") {
-          startMicrophoneCapture();
+          // Set UI to listening but delay mic start to prevent instant re-activation
+          setVoiceStatus("listening");
+          agentSpeakingRef.current = false;
+          // Cancel any existing pending timer first
+          if (micStartTimerRef.current) {
+            clearTimeout(micStartTimerRef.current);
+          }
+          micStartTimerRef.current = setTimeout(() => {
+            micStartTimerRef.current = null;
+            if (!agentSpeakingRef.current && recordingActiveRef.current === false) {
+              startMicrophoneCapture();
+            }
+          }, 1500);
+        } else {
+          setVoiceStatus(data.status);
         }
       } else if (data.type === "evaluation") {
         setLatestEvaluation(data.metrics);
@@ -395,12 +503,60 @@ export default function VoiceCopilot({ user }) {
     ws.onerror = (err) => console.error("WebSocket error:", err);
   };
 
-  // Web Audio decibel-level VAD (Voice Activity Detection)
+  // Web Audio & Speech Recognition Capture
   const startMicrophoneCapture = async () => {
-    if (isMuted) return;
-    // Never start the mic while TTS audio is still playing
-    if (agentSpeakingRef.current) return;
+    if (isMuted || agentSpeakingRef.current) return;
+    
     try {
+      // 1. Start Web Speech Recognition if available for real-time live captions
+      const SpeechRec = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+      if (SpeechRec) {
+        try {
+          if (recognitionRef.current) {
+            recognitionRef.current.abort();
+          }
+          const recognition = new SpeechRec();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = language || "en-IN";
+          
+          recognition.onresult = (event) => {
+            let finalStr = "";
+            let interimStr = "";
+            for (let i = 0; i < event.results.length; i++) {
+              const res = event.results[i];
+              if (res.isFinal) {
+                finalStr += res[0].transcript + " ";
+              } else {
+                interimStr += res[0].transcript;
+              }
+            }
+            const fullText = (finalStr + interimStr).trim();
+            if (fullText) {
+              liveTranscriptRef.current = fullText;
+              setLiveUserText(fullText);
+            }
+          };
+
+          recognition.onerror = (e) => {
+            console.log("Speech recognition event:", e.error);
+          };
+
+          recognition.onend = () => {
+            // Auto restart recognition if recording is still active and agent is not speaking
+            if (recordingActiveRef.current && !agentSpeakingRef.current) {
+              try { recognition.start(); } catch (e) {}
+            }
+          };
+
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch (e) {
+          console.warn("Speech recognition initialization notice:", e);
+        }
+      }
+
+      // 2. Start Audio Stream & Decibel meter / VAD
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
@@ -424,10 +580,9 @@ export default function VoiceCopilot({ user }) {
         feedbackGainRef.current = gainNode;
       }
 
-      // Start raw recording
+      // 3. Start MediaRecorder
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       mediaRecorderRef.current = mediaRecorder;
-      
       chunksRef.current = [];
       
       mediaRecorder.ondataavailable = (e) => {
@@ -436,25 +591,8 @@ export default function VoiceCopilot({ user }) {
         }
       };
       
-      mediaRecorder.onstop = async () => {
-        if (chunksRef.current.length === 0) return;
-        
-        // Package user speech chunks into a valid, single WebM file
-        const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
-        chunksRef.current = [];
-        
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const arrayBuffer = reader.result;
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            // Send entire binary audio payload
-            wsRef.current.send(arrayBuffer);
-            // Trigger server-side transcription and answer generation
-            wsRef.current.send(JSON.stringify({ type: "silence" }));
-          }
-        };
-        reader.readAsArrayBuffer(audioBlob);
-      };
+      mediaRecorder.start(250);
+      recordingActiveRef.current = true;
 
       // Start VAD Loop
       runVADLoop();
@@ -465,18 +603,44 @@ export default function VoiceCopilot({ user }) {
   };
 
   const stopMicrophoneRecording = () => {
-    if (vadIntervalRef.current) clearInterval(vadIntervalRef.current);
+    // Set this FIRST to prevent recognition.onend from auto-restarting
+    recordingActiveRef.current = false;
+    
+    // Cancel any pending delayed mic-start timer
+    if (micStartTimerRef.current) {
+      clearTimeout(micStartTimerRef.current);
+      micStartTimerRef.current = null;
+    }
+    
+    if (vadIntervalRef.current) {
+      clearInterval(vadIntervalRef.current);
+      vadIntervalRef.current = null;
+    }
     setMicLevel(0);
     
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop();
-      recordingActiveRef.current = false;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+      recognitionRef.current = null;
     }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {}
+    }
+    
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
     }
+    
     if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-      audioContextRef.current.close();
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
     }
     
     sourceNodeRef.current = null;
@@ -526,13 +690,6 @@ export default function VoiceCopilot({ user }) {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ type: "start_speaking" }));
           }
-          
-          // Start MediaRecorder if not already recording
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state === "inactive") {
-            chunksRef.current = [];
-            mediaRecorderRef.current.start(250);
-            recordingActiveRef.current = true;
-          }
         }
         silenceStart = null; // Reset silence timer
       } else {
@@ -542,15 +699,8 @@ export default function VoiceCopilot({ user }) {
           
           if (Date.now() - silenceStart > silenceTimeout) {
             isSpeaking = false;
-            setVoiceStatus("thinking");
-            
-            // Stop recorder to trigger binary WebM blob packaging in onstop
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-              mediaRecorderRef.current.stop();
-              recordingActiveRef.current = false;
-            }
-            
-            stopMicrophoneRecording(); // Stop capture while server evaluates
+            // Auto submit answer via VAD silence
+            handleDoneSpeaking();
           }
         }
       }
@@ -559,17 +709,58 @@ export default function VoiceCopilot({ user }) {
 
   // Manual submit answer (Done Speaking)
   const handleDoneSpeaking = () => {
-    if (voiceStatus !== "listening") return;
-    setVoiceStatus("thinking");
+    if (voiceStatus === "thinking") return;
     
-    // Stop recording immediately. This will trigger mediaRecorder.onstop which
-    // packages and sends the entire valid WebM buffer to uvicorn, bypassing VAD delay.
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop();
-      recordingActiveRef.current = false;
+    // Cancel any pending mic-start timer immediately
+    if (micStartTimerRef.current) {
+      clearTimeout(micStartTimerRef.current);
+      micStartTimerRef.current = null;
     }
     
+    const capturedText = (liveTranscriptRef.current || liveUserText || "").trim();
+    const hasAudio = chunksRef.current && chunksRef.current.length > 0;
+    
+    // Guard: If neither recognized words nor audio recording exists, do not submit fake text
+    if (!capturedText && !hasAudio) {
+      console.log("No speech captured to submit. Keeping mic active.");
+      return;
+    }
+
+    setVoiceStatus("thinking");
+    liveTranscriptRef.current = "";
+    setLiveUserText("");
+
+    // Optimistically update transcript preview if speech was recognized
+    if (capturedText) {
+      setTranscript((prev) => {
+        const clean = prev.filter((m) => m.text !== "...");
+        return [...clean, { role: "user", text: capturedText }];
+      });
+    }
+
+    // Package current recorded audio chunks if any
+    const audioBlob = hasAudio ? new Blob(chunksRef.current, { type: "audio/webm" }) : null;
+    chunksRef.current = [];
+
+    // Stop microphone immediately so hardware mic is released
     stopMicrophoneRecording();
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      if (capturedText) {
+        // Send direct high-fidelity transcript captured from speech
+        wsRef.current.send(JSON.stringify({ type: "user_text", text: capturedText }));
+      } else if (audioBlob) {
+        // Fallback to sending audio buffer to Sarvam STT backend
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(reader.result);
+            wsRef.current.send(JSON.stringify({ type: "silence" }));
+          }
+        };
+        reader.readAsArrayBuffer(audioBlob);
+      }
+    }
   };
 
   // Mute microphone
@@ -643,6 +834,14 @@ export default function VoiceCopilot({ user }) {
     
     if (audioPlaybackRef.current) {
       audioPlaybackRef.current.pause();
+      audioPlaybackRef.current = null;
+    }
+
+    if (wsRef.current) {
+      try {
+        wsRef.current.close();
+      } catch (e) {}
+      wsRef.current = null;
     }
     
     try {
@@ -658,10 +857,6 @@ export default function VoiceCopilot({ user }) {
       const data = await res.json();
       setScorecard(data.scorecard);
       setStage("analysis");
-      
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
     } catch (err) {
       console.error("Error closing session:", err);
       alert("Failed to compute performance analysis scorecard.");
@@ -1177,11 +1372,17 @@ export default function VoiceCopilot({ user }) {
 
             {/* Central visualizer: Minimalistic Pulsing Wave rings (SarvamAI style) */}
             <div className="flex-1 flex flex-col items-center justify-center p-4">
-              <div className="relative flex items-center justify-center h-64 w-64">
+              <div
+                onClick={voiceStatus === "speaking" ? activateListeningMode : undefined}
+                className={`relative flex items-center justify-center h-64 w-64 transition-transform active:scale-95 ${
+                  voiceStatus === "speaking" ? "cursor-pointer group" : ""
+                }`}
+                title={voiceStatus === "speaking" ? "Click to start answering immediately" : ""}
+              >
                 
                 {/* Outermost pulsing ring */}
                 <div className={`absolute rounded-full border border-dashed transition-all duration-1000 ${
-                  voiceStatus === "speaking" ? "w-56 h-56 border-[#C85A32]/35 animate-spin duration-10000" :
+                  voiceStatus === "speaking" ? "w-56 h-56 border-[#C85A32]/35 animate-spin duration-10000 group-hover:border-[#C85A32]/60" :
                   voiceStatus === "listening" ? "w-56 h-56 border-[#2E5A44]/35 animate-pulse" :
                   voiceStatus === "thinking" ? "w-52 h-52 border-[#A6690B]/35 animate-spin duration-3000" :
                   "w-48 h-48 border-[#DFD5C6]/40"
@@ -1189,7 +1390,7 @@ export default function VoiceCopilot({ user }) {
 
                 {/* Middle concentric pulsing ring */}
                 <div className={`absolute rounded-full border transition-all duration-700 ${
-                  voiceStatus === "speaking" ? "w-44 h-44 border-[#C85A32]/45 scale-105" :
+                  voiceStatus === "speaking" ? "w-44 h-44 border-[#C85A32]/45 scale-105 group-hover:scale-110" :
                   voiceStatus === "listening" ? "w-44 h-44 border-[#2E5A44]/45 scale-100 animate-ping duration-2000" :
                   voiceStatus === "thinking" ? "w-40 h-40 border-[#A6690B]/45 scale-95" :
                   "w-36 h-36 border-[#DFD5C6]/30"
@@ -1197,7 +1398,7 @@ export default function VoiceCopilot({ user }) {
 
                 {/* Inner solid tracking ring */}
                 <div className={`absolute rounded-full border-2 transition-all duration-500 ${
-                  voiceStatus === "speaking" ? "w-32 h-32 border-[#C85A32]/60 bg-[#C85A32]/5" :
+                  voiceStatus === "speaking" ? "w-32 h-32 border-[#C85A32]/60 bg-[#C85A32]/5 group-hover:bg-[#C85A32]/10" :
                   voiceStatus === "listening" ? "w-32 h-32 border-[#2E5A44]/60 bg-[#2E5A44]/5" :
                   voiceStatus === "thinking" ? "w-28 h-28 border-[#A6690B]/60 bg-[#A6690B]/5" :
                   "w-24 h-24 border-[#DFD5C6]/50 bg-white/40"
@@ -1205,7 +1406,7 @@ export default function VoiceCopilot({ user }) {
 
                 {/* Central Micro Indicator Core */}
                 <div className={`h-16 w-16 rounded-full flex items-center justify-center shadow-sm transition-all duration-500 relative z-10 border ${
-                  voiceStatus === "speaking" ? "bg-[#C85A32] border-[#C85A32] text-white" :
+                  voiceStatus === "speaking" ? "bg-[#C85A32] border-[#C85A32] text-white group-hover:scale-105" :
                   voiceStatus === "listening" ? "bg-[#2E5A44] border-[#2E5A44] text-white" :
                   voiceStatus === "thinking" ? "bg-[#A6690B] border-[#A6690B] text-white" :
                   "bg-white border-[#DFD5C6] text-[#6E6359]"
@@ -1238,21 +1439,31 @@ export default function VoiceCopilot({ user }) {
 
             {/* Bottom Transcript box - Clean minimalist lines */}
             <div className="h-40 bg-[#FCFAF7] border border-[#DFD5C6]/50 rounded-xl p-4 overflow-y-auto shadow-2xs flex flex-col gap-3.5 scrollbar-thin">
-              {transcript.length === 0 ? (
+              {transcript.length === 0 && !liveUserText ? (
                 <div className="flex-1 flex items-center justify-center text-[#6E6359]/50 text-xs font-medium">
                   Transcript stream will initialize once you begin speaking...
                 </div>
               ) : (
-                transcript.map((msg, index) => (
-                  <div key={index} className={`flex gap-3 text-xs leading-relaxed ${msg.role === "assistant" ? "text-[#262626]" : "text-[#C85A32]"}`}>
-                    <span className={`font-bold font-mono shrink-0 uppercase tracking-wider text-[8px] py-0.5 px-2 rounded-md border h-5 flex items-center ${
-                      msg.role === "assistant" ? "bg-[#FAF6F0] border-[#DFD5C6]/60 text-[#6E6359]" : "bg-[#C85A32]/10 border-[#C85A32]/20 text-[#C85A32]"
-                    }`}>
-                      {msg.role === "assistant" ? "AI" : "YOU"}
-                    </span>
-                    <p className="mt-0.5 font-medium leading-relaxed">{msg.text}</p>
-                  </div>
-                ))
+                <>
+                  {transcript.map((msg, index) => (
+                    <div key={index} className={`flex gap-3 text-xs leading-relaxed ${msg.role === "assistant" ? "text-[#262626]" : "text-[#C85A32]"}`}>
+                      <span className={`font-bold font-mono shrink-0 uppercase tracking-wider text-[8px] py-0.5 px-2 rounded-md border h-5 flex items-center ${
+                        msg.role === "assistant" ? "bg-[#FAF6F0] border-[#DFD5C6]/60 text-[#6E6359]" : "bg-[#C85A32]/10 border-[#C85A32]/20 text-[#C85A32]"
+                      }`}>
+                        {msg.role === "assistant" ? "AI" : "YOU"}
+                      </span>
+                      <p className="mt-0.5 font-medium leading-relaxed">{msg.text}</p>
+                    </div>
+                  ))}
+                  {liveUserText && voiceStatus === "listening" && (
+                    <div className="flex gap-3 text-xs leading-relaxed text-[#C85A32] opacity-90 animate-pulse">
+                      <span className="font-bold font-mono shrink-0 uppercase tracking-wider text-[8px] py-0.5 px-2 rounded-md border h-5 flex items-center bg-[#C85A32]/10 border-[#C85A32]/30 text-[#C85A32]">
+                        YOU (SPEAKING)
+                      </span>
+                      <p className="mt-0.5 font-medium leading-relaxed italic">{liveUserText}</p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -1319,6 +1530,17 @@ export default function VoiceCopilot({ user }) {
                   <Volume1 className="h-3.5 w-3.5" />
                   {hearOwnVoice ? "Monitor: Active" : "Monitor Input"}
                 </button>
+
+                {/* Answer Question Now (When Interviewer is speaking) */}
+                {voiceStatus === "speaking" && (
+                  <button
+                    onClick={activateListeningMode}
+                    className="py-2 px-3 rounded-xl bg-[#2E5A44] border border-[#2E5A44] text-white hover:bg-[#234534] text-[11px] sm:text-xs font-semibold transition-all active:scale-[0.98] cursor-pointer flex items-center gap-1.5 shadow-sm animate-pulse"
+                  >
+                    <Mic className="h-3.5 w-3.5 fill-white" />
+                    Answer Question
+                  </button>
+                )}
 
                 {/* Done Speaking (Instant Submit) Button */}
                 {voiceStatus === "listening" && (
@@ -1542,7 +1764,7 @@ export default function VoiceCopilot({ user }) {
                 </span>
               </div>
               <div className="flex-1 flex justify-center items-center h-[280px] w-full text-xs mt-2">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                   <RadarChart cx="50%" cy="50%" outerRadius="68%" data={[
                     { subject: "Tech Depth", value: scorecard.scores.technical_depth },
                     { subject: "Communication", value: scorecard.scores.communication },
@@ -1594,7 +1816,7 @@ export default function VoiceCopilot({ user }) {
                 Technical Dimensions Breakout
               </h3>
               <div className="flex-1 h-[260px] w-full text-xs mt-4">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                   <BarChart data={[
                     { name: "Tech Depth", Score: scorecard.scores.technical_depth },
                     { name: "Communication", Score: scorecard.scores.communication },

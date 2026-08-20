@@ -26,21 +26,47 @@ export default function InterviewPrep({ onEndInterview, user }) {
   const [useSavedProfile, setUseSavedProfile] = useState(false);
 
   useEffect(() => {
-    async function loadSavedProfile() {
-      if (user?.uid) {
+    // 1. Instant cache retrieval from localStorage
+    if (typeof window !== "undefined") {
+      const cached = localStorage.getItem("prepflow_candidate_profile");
+      if (cached) {
         try {
-          const res = await fetch(`${BACKEND_URL}/api/career/profile?user_id=${user.uid}`);
-          if (res.ok) {
-            const data = await res.json();
+          const parsed = JSON.parse(cached);
+          if (parsed && (parsed.github_url || parsed.resume_name)) {
+            setSavedProfile(parsed);
+            setUseSavedProfile(true);
+            if (parsed.github_url) setGithubUrl(parsed.github_url);
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 2. Fetch fresh profile from backend
+    async function loadSavedProfile() {
+      const uid = user?.uid || user?.id || "";
+      const userEmail = user?.email || "";
+      
+      try {
+        const queryParams = new URLSearchParams();
+        if (uid) queryParams.append("user_id", uid);
+        if (userEmail) queryParams.append("email", userEmail);
+        
+        const res = await fetch(`${BACKEND_URL}/api/career/profile?${queryParams.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && (data.github_url || data.resume_name || data.user_id)) {
             setSavedProfile(data);
             setUseSavedProfile(true); // default to using saved profile
             if (data.github_url) {
               setGithubUrl(data.github_url);
             }
+            if (typeof window !== "undefined") {
+              localStorage.setItem("prepflow_candidate_profile", JSON.stringify(data));
+            }
           }
-        } catch (e) {
-          console.error("Failed to load saved profile:", e);
         }
+      } catch (e) {
+        console.warn("Failed to load saved profile:", e);
       }
     }
     loadSavedProfile();
@@ -65,6 +91,7 @@ export default function InterviewPrep({ onEndInterview, user }) {
   const [liveTip, setLiveTip] = useState("");
   const [transcripts, setTranscripts] = useState([]);
   const [ingestError, setIngestError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const transcriptEndRef = useRef(null);
   const totalFramesRef = useRef(0);
@@ -262,16 +289,23 @@ export default function InterviewPrep({ onEndInterview, user }) {
 
   // 2. Answer Submission to FastAPI
   const handleSubmitAnswer = async () => {
-    if (!answerText.trim()) return;
+    if (!answerText.trim() || isSubmitting) return;
 
     const timestamp = formatTime(secondsElapsed);
     const submissionText = answerText.trim();
     setAnswerText("");
+    setIsSubmitting(true);
 
     // Append user answer to transcript
     setTranscripts((prev) => [
       ...prev,
       { sender: "You", time: timestamp, text: submissionText }
+    ]);
+
+    // Show thinking indicator
+    setTranscripts((prev) => [
+      ...prev,
+      { sender: "Interviewer", time: "", text: "...", isThinking: true }
     ]);
 
     try {
@@ -280,14 +314,31 @@ export default function InterviewPrep({ onEndInterview, user }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          question_id: 1, // dummy value since it's now stateful
+          question_id: 1,
           answer: submissionText
         })
       });
 
+      // Remove thinking indicator
+      setTranscripts((prev) => prev.filter((t) => !t.isThinking));
+
       if (res.ok) {
         const data = await res.json();
         const nextTurn = data.next_turn;
+        
+        // Guard against empty or malformed response
+        if (!nextTurn || !nextTurn.question) {
+          setTranscripts((prev) => [
+            ...prev,
+            {
+              sender: "Interviewer",
+              time: formatTime(secondsElapsed),
+              text: "Let me think about that... Could you elaborate on your approach?",
+            }
+          ]);
+          setIsSubmitting(false);
+          return;
+        }
         
         if (nextTurn.is_final) {
           setLiveTip("The interview has concluded. See your scorecard.");
@@ -322,9 +373,31 @@ export default function InterviewPrep({ onEndInterview, user }) {
             ]);
           }, 600);
         }
+      } else {
+        // HTTP error — show a fallback response
+        setTranscripts((prev) => [
+          ...prev,
+          {
+            sender: "Interviewer",
+            time: formatTime(secondsElapsed),
+            text: "I had trouble processing that. Could you try rephrasing your answer?",
+          }
+        ]);
       }
     } catch (err) {
       console.warn("FastAPI backend not active on answer submit:", err);
+      // Remove thinking indicator on error
+      setTranscripts((prev) => prev.filter((t) => !t.isThinking));
+      setTranscripts((prev) => [
+        ...prev,
+        {
+          sender: "Interviewer",
+          time: formatTime(secondsElapsed),
+          text: "Connection interrupted. Please try submitting your answer again.",
+        }
+      ]);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

@@ -12,12 +12,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from groq import Groq
-from config import GROQ_HEAVY_MODEL
+from llm_client import call_llm_json, GROQ_HEAVY_MODEL
 from code_studio.runner import run_code_sandbox
-
-groq_api_key = os.environ.get("GROQ_API_KEY")
-client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 # Deterministic Knowledge Base of High-Stress Production Chaos Cases
 KNOWN_CHAOS_SUITES: Dict[str, List[Dict[str, Any]]] = {
@@ -173,22 +169,18 @@ Return a STRICT JSON object:
 }}
 Return ONLY valid JSON.
 """
-        try:
-            response = client.chat.completions.create(
-                model=GROQ_HEAVY_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are an automated Chaos QA Engineer. Output ONLY valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"}
-            )
-            parsed = json.loads(response.choices[0].message.content)
+        parsed = call_llm_json(
+            messages=[
+                {"role": "system", "content": "You are an automated Chaos QA Engineer. Output ONLY valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=1000
+        )
+        if parsed:
             cases = parsed.get("chaos_cases", [])
             if cases and len(cases) >= 2:
                 return cases
-        except Exception as e:
-            print(f"[ChaosEngine] Groq generation error: {e}")
 
     # Fallback to smart mutated cases from standard cases
     if standard_test_cases and len(standard_test_cases) > 0:
