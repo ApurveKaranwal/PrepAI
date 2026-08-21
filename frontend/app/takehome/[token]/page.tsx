@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Play,
@@ -21,8 +21,44 @@ import {
   FileCode2,
   ChevronRight,
   Cpu,
-  ArrowLeft
+  ArrowLeft,
+  Maximize,
+  AlertTriangle,
+  ShieldAlert,
+  Lock,
+  AlertOctagon
 } from "lucide-react";
+
+// Fullscreen API Helper functions
+function isDocumentFullscreen(): boolean {
+  if (typeof document === "undefined") return false;
+  return !!(
+    document.fullscreenElement ||
+    (document as any).webkitFullscreenElement ||
+    (document as any).mozFullScreenElement ||
+    (document as any).msFullscreenElement
+  );
+}
+
+async function requestFullscreenElement(): Promise<boolean> {
+  if (typeof document === "undefined") return false;
+  try {
+    const el = document.documentElement as any;
+    if (el.requestFullscreen) {
+      await el.requestFullscreen();
+    } else if (el.webkitRequestFullscreen) {
+      await el.webkitRequestFullscreen();
+    } else if (el.mozRequestFullScreen) {
+      await el.mozRequestFullScreen();
+    } else if (el.msRequestFullscreen) {
+      await el.msRequestFullscreen();
+    }
+    return true;
+  } catch (err) {
+    console.warn("Fullscreen request was rejected or failed:", err);
+    return false;
+  }
+}
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -150,21 +186,146 @@ export default function TakeHomeAssessmentPage() {
   const [language, setLanguage] = useState("python");
   const [code, setCode] = useState("");
   const [timeLeft, setTimeLeft] = useState(45 * 60); // 45 minutes in seconds
-  
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  // Proctoring & Fullscreen state
+  const [sessionStarted, setSessionStarted] = useState(false);
+  const [isInFullscreen, setIsInFullscreen] = useState(false);
+  const [warningsCount, setWarningsCount] = useState(0);
+  const [violationModalOpen, setViolationModalOpen] = useState(false);
+  const [violationSecondsLeft, setViolationSecondsLeft] = useState(10);
+  const [autoSubmitReason, setAutoSubmitReason] = useState<string | null>(null);
+
   // Execution states
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [runResult, setRunResult] = useState<any>(null);
   const [submissionResult, setSubmissionResult] = useState<any>(null);
   const [activeConsoleTab, setActiveConsoleTab] = useState<"tests" | "stdout">("tests");
-  const [selectedTestCaseIdx, setSelectedTestCaseIdx] = useState(0);
   const [copiedCode, setCopiedCode] = useState(false);
-  const [fontSize, setFontSize] = useState<"sm" | "base">("sm");
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const violationTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch assessment & problem definition
+  // Synchronized state references to avoid stale closure issues in asynchronous callbacks/intervals
+  const codeRef = useRef(code);
+  const languageRef = useRef(language);
+  const problemRef = useRef(problem);
+  const submittingRef = useRef(submitting);
+  const submissionResultRef = useRef(submissionResult);
+  const sessionStartedRef = useRef(sessionStarted);
+  const warningsCountRef = useRef(warningsCount);
+  const violationModalOpenRef = useRef(violationModalOpen);
+
+  useEffect(() => { codeRef.current = code; }, [code]);
+  useEffect(() => { languageRef.current = language; }, [language]);
+  useEffect(() => { problemRef.current = problem; }, [problem]);
+  useEffect(() => { submittingRef.current = submitting; }, [submitting]);
+  useEffect(() => { submissionResultRef.current = submissionResult; }, [submissionResult]);
+  useEffect(() => { sessionStartedRef.current = sessionStarted; }, [sessionStarted]);
+  useEffect(() => { warningsCountRef.current = warningsCount; }, [warningsCount]);
+  useEffect(() => { violationModalOpenRef.current = violationModalOpen; }, [violationModalOpen]);
+
+  // Final Submit Assessment Function
+  const handleSubmitAssessment = useCallback(async (reason: string = "manual") => {
+    if (!token || submittingRef.current || submissionResultRef.current) return;
+    setShowSubmitConfirm(false);
+    setViolationModalOpen(false);
+
+    if (violationTimerRef.current) {
+      clearInterval(violationTimerRef.current);
+      violationTimerRef.current = null;
+    }
+
+    setSubmitting(true);
+    setAutoSubmitReason(reason);
+
+    const currentCode = codeRef.current;
+    const currentLang = languageRef.current;
+    const currentProblem = problemRef.current;
+    const warnings = warningsCountRef.current;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/takehome/${token}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: currentCode,
+          language: currentLang,
+          entry_point: currentProblem?.entry_point || "solution",
+          submission_reason: reason,
+          warnings_count: warnings
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSubmissionResult(data);
+        localStorage.setItem(`prepai_takehome_completed_${token}`, JSON.stringify(data));
+
+        // Exit fullscreen smoothly if active
+        if (typeof document !== "undefined" && document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error("Error submitting assessment:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [token]);
+
+  // Proctoring Violation Trigger Function (Escape / Exit Fullscreen / Tab Switch)
+  const triggerProctoringViolation = useCallback(() => {
+    if (submittingRef.current || submissionResultRef.current || !sessionStartedRef.current) {
+      return;
+    }
+
+    // If violation modal is already active and running countdown, do not duplicate
+    if (violationModalOpenRef.current) {
+      return;
+    }
+
+    const currentWarnings = warningsCountRef.current;
+    const newWarnings = currentWarnings + 1;
+    setWarningsCount(newWarnings);
+    warningsCountRef.current = newWarnings;
+    localStorage.setItem(`prepai_takehome_warnings_${token}`, newWarnings.toString());
+
+    if (newWarnings > 3) {
+      // 4th violation -> Auto-submit immediately!
+      setAutoSubmitReason("proctoring_violations");
+      handleSubmitAssessment("proctoring_violations");
+      return;
+    }
+
+    // Open warning modal and begin 10-second countdown
+    setViolationModalOpen(true);
+    setViolationSecondsLeft(10);
+
+    if (violationTimerRef.current) {
+      clearInterval(violationTimerRef.current);
+      violationTimerRef.current = null;
+    }
+
+    let remaining = 10;
+    violationTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      setViolationSecondsLeft(remaining);
+
+      if (remaining <= 0) {
+        if (violationTimerRef.current) {
+          clearInterval(violationTimerRef.current);
+          violationTimerRef.current = null;
+        }
+        setViolationModalOpen(false);
+        setAutoSubmitReason("warning_timeout");
+        handleSubmitAssessment("warning_timeout");
+      }
+    }, 1000);
+  }, [token, handleSubmitAssessment]);
+
+  // Fetch assessment & initialize persistent state
   useEffect(() => {
     if (!token) return;
 
@@ -177,12 +338,80 @@ export default function TakeHomeAssessmentPage() {
           setAssessment(data.assessment);
           setProblem(data.problem);
 
-          const starter = data.problem?.starter_code?.[language] || data.problem?.starter_code?.python || "# Write your implementation here\n";
-          setCode(starter);
-
-          if (data.assessment?.time_limit_minutes) {
-            setTimeLeft(data.assessment.time_limit_minutes * 60);
+          // Check if previously completed
+          const savedCompletion = localStorage.getItem(`prepai_takehome_completed_${token}`);
+          if (savedCompletion) {
+            try {
+              setSubmissionResult(JSON.parse(savedCompletion));
+              setSessionStarted(true);
+              setLoading(false);
+              return;
+            } catch (e) {}
+          } else if (data.assessment?.status === "Completed" || data.assessment?.status?.startsWith("Disqualified") || data.assessment?.status?.startsWith("Auto-Submitted")) {
+            setSubmissionResult({
+              score: data.assessment.score || 0,
+              chaos_resilience: data.assessment.chaos_resilience || 0,
+              verdict: data.assessment.score >= 650 ? "Passed & Verified" : "Under Review",
+              submission_reason: data.assessment.status
+            });
+            setSessionStarted(true);
+            setLoading(false);
+            return;
           }
+
+          // Restore Language
+          const savedLang = localStorage.getItem(`prepai_takehome_lang_${token}`) || "python";
+          setLanguage(savedLang);
+
+          // Restore Code (or use problem starter code)
+          const savedCode = localStorage.getItem(`prepai_takehome_code_${token}_${savedLang}`);
+          if (savedCode) {
+            setCode(savedCode);
+          } else {
+            const starter = data.problem?.starter_code?.[savedLang] || data.problem?.starter_code?.python || "# Write your implementation here\n";
+            setCode(starter);
+          }
+
+          // Restore Warnings Count
+          const savedWarnings = localStorage.getItem(`prepai_takehome_warnings_${token}`);
+          if (savedWarnings) {
+            const count = parseInt(savedWarnings, 10);
+            if (!isNaN(count)) {
+              setWarningsCount(count);
+              warningsCountRef.current = count;
+            }
+          }
+
+          // Restore Session Started state
+          const wasStarted = localStorage.getItem(`prepai_takehome_started_${token}`) === "true";
+          if (wasStarted) {
+            setSessionStarted(true);
+            sessionStartedRef.current = true;
+          }
+
+          // Persistent Timer Initialization
+          const totalMinutes = data.assessment?.time_limit_minutes || 45;
+          const savedEndTime = localStorage.getItem(`prepai_takehome_endtime_${token}`);
+
+          if (savedEndTime) {
+            const targetEnd = Number(savedEndTime);
+            const remaining = Math.max(0, Math.floor((targetEnd - Date.now()) / 1000));
+            setTimeLeft(remaining);
+
+            if (remaining <= 0) {
+              // Time ran out while away
+              setAutoSubmitReason("time_expired");
+              handleSubmitAssessment("time_expired");
+            }
+          } else if (wasStarted) {
+            const targetEnd = Date.now() + totalMinutes * 60 * 1000;
+            localStorage.setItem(`prepai_takehome_endtime_${token}`, targetEnd.toString());
+            setTimeLeft(totalMinutes * 60);
+          } else {
+            setTimeLeft(totalMinutes * 60);
+          }
+
+          setHasInitialized(true);
         }
       } catch (err) {
         console.error("Error fetching take-home assessment:", err);
@@ -192,21 +421,135 @@ export default function TakeHomeAssessmentPage() {
     }
 
     fetchChallenge();
-  }, [token]);
+  }, [token, handleSubmitAssessment]);
 
-  // Countdown timer
+  // Code & Language autosave to localStorage
   useEffect(() => {
-    if (submissionResult || timeLeft <= 0) return;
+    if (!token || !hasInitialized || submissionResult) return;
+    try {
+      localStorage.setItem(`prepai_takehome_code_${token}_${language}`, code);
+      localStorage.setItem(`prepai_takehome_lang_${token}`, language);
+    } catch (e) {
+      console.error("Autosave error:", e);
+    }
+  }, [code, language, token, hasInitialized, submissionResult]);
+
+  // Countdown timer interval
+  useEffect(() => {
+    if (!sessionStarted || submissionResult || timeLeft <= 0) return;
+
     const timer = setInterval(() => {
-      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
+      const savedEndTime = localStorage.getItem(`prepai_takehome_endtime_${token}`);
+      if (savedEndTime) {
+        const remaining = Math.max(0, Math.floor((Number(savedEndTime) - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        if (remaining <= 0) {
+          clearInterval(timer);
+          setAutoSubmitReason("time_expired");
+          handleSubmitAssessment("time_expired");
+        }
+      } else {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setAutoSubmitReason("time_expired");
+            handleSubmitAssessment("time_expired");
+            return 0;
+          }
+          return prev - 1;
+        });
+      }
     }, 1000);
+
     return () => clearInterval(timer);
-  }, [submissionResult, timeLeft]);
+  }, [sessionStarted, submissionResult, timeLeft, token, handleSubmitAssessment]);
+
+  // Fullscreen & Visibility Event Listeners for Proctoring
+  useEffect(() => {
+    if (!sessionStarted || submissionResult) return;
+
+    const handleFullscreenChange = () => {
+      const isFull = isDocumentFullscreen();
+      setIsInFullscreen(isFull);
+      if (!isFull && sessionStartedRef.current && !submittingRef.current && !submissionResultRef.current) {
+        triggerProctoringViolation();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden" && sessionStartedRef.current && !submittingRef.current && !submissionResultRef.current) {
+        triggerProctoringViolation();
+      }
+    };
+
+    const handleWindowBlur = () => {
+      if (sessionStartedRef.current && !submittingRef.current && !submissionResultRef.current) {
+        triggerProctoringViolation();
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [sessionStarted, submissionResult, triggerProctoringViolation]);
+
+  // Start or Resume assessment session in Fullscreen
+  const handleStartOrResumeSession = async () => {
+    await requestFullscreenElement();
+    setIsInFullscreen(true);
+    setSessionStarted(true);
+    sessionStartedRef.current = true;
+    localStorage.setItem(`prepai_takehome_started_${token}`, "true");
+
+    // Initialize timer end time if not yet set
+    const existingEndTime = localStorage.getItem(`prepai_takehome_endtime_${token}`);
+    if (!existingEndTime) {
+      const totalMinutes = assessment?.time_limit_minutes || 45;
+      const targetEnd = Date.now() + totalMinutes * 60 * 1000;
+      localStorage.setItem(`prepai_takehome_endtime_${token}`, targetEnd.toString());
+      setTimeLeft(totalMinutes * 60);
+    }
+
+    setViolationModalOpen(false);
+    if (violationTimerRef.current) {
+      clearInterval(violationTimerRef.current);
+      violationTimerRef.current = null;
+    }
+  };
+
+  // Return to fullscreen from warning modal within 10-second grace period
+  const handleReturnToFullscreen = async () => {
+    const success = await requestFullscreenElement();
+    if (success || isDocumentFullscreen()) {
+      setIsInFullscreen(true);
+      if (violationTimerRef.current) {
+        clearInterval(violationTimerRef.current);
+        violationTimerRef.current = null;
+      }
+      setViolationModalOpen(false);
+      setViolationSecondsLeft(10);
+    }
+  };
 
   // Switch starter code when language changes
   const handleLanguageChange = (newLang: string) => {
     setLanguage(newLang);
-    if (problem?.starter_code?.[newLang]) {
+    const saved = localStorage.getItem(`prepai_takehome_code_${token}_${newLang}`);
+    if (saved) {
+      setCode(saved);
+    } else if (problem?.starter_code?.[newLang]) {
       setCode(problem.starter_code[newLang]);
     }
   };
@@ -280,32 +623,6 @@ export default function TakeHomeAssessmentPage() {
     }
   };
 
-  // Final Submit & Chaos Stress Test
-  const handleSubmitAssessment = async () => {
-    if (!token || submitting) return;
-    setShowSubmitConfirm(false);
-    setSubmitting(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/takehome/${token}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          language,
-          entry_point: problem?.entry_point || "solution"
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSubmissionResult(data);
-      }
-    } catch (err) {
-      console.error("Error submitting assessment:", err);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
@@ -338,9 +655,9 @@ export default function TakeHomeAssessmentPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF6F0] text-[#262626] flex flex-col font-sans select-none">
+    <div className="min-h-screen bg-[#FAF6F0] text-[#262626] flex flex-col font-sans select-none relative">
       {/* =========================================================================
-          TOP HEADER BAR WITH CANDIDATE, ROLE, TIMER & SUBMIT ACTION
+          TOP HEADER BAR WITH CANDIDATE, ROLE, PROCTORING STATUS, TIMER & SUBMIT
           ========================================================================= */}
       <header className="border-b border-[#DFD5C6] bg-[#FCFAF7] px-6 py-3 flex items-center justify-between shadow-2xs z-20">
         <div className="flex items-center gap-3">
@@ -363,8 +680,19 @@ export default function TakeHomeAssessmentPage() {
           </div>
         </div>
 
-        {/* Timer & Submit Assessment Button */}
+        {/* Proctoring Warnings Indicator, Timer & Submit Button */}
         <div className="flex items-center gap-3">
+          {sessionStarted && !submissionResult && (
+            <div className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono font-bold ${
+              warningsCount > 0
+                ? "bg-amber-500/10 border-amber-500/30 text-amber-800"
+                : "bg-emerald-500/10 border-emerald-500/20 text-emerald-800"
+            }`}>
+              <ShieldAlert className="h-3.5 w-3.5" />
+              <span>Warnings: {warningsCount} / 3</span>
+            </div>
+          )}
+
           <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold transition-all ${
             timeLeft < 300
               ? "bg-rose-500/10 border-rose-500/30 text-rose-700 animate-pulse"
@@ -375,7 +703,7 @@ export default function TakeHomeAssessmentPage() {
           </div>
 
           <button
-            disabled={submitting || !!submissionResult}
+            disabled={submitting || !!submissionResult || !sessionStarted}
             onClick={() => setShowSubmitConfirm(true)}
             className="px-4 py-1.5 bg-[#C85A32] hover:bg-[#B83A14] disabled:opacity-50 text-white rounded-lg text-xs font-mono font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
           >
@@ -501,7 +829,7 @@ export default function TakeHomeAssessmentPage() {
               <div className="h-4 w-px bg-[#3F3F46]" />
 
               <button
-                disabled={running || !!submissionResult}
+                disabled={running || !!submissionResult || !sessionStarted}
                 onClick={handleRunTests}
                 title="Run sandboxed test cases (Ctrl + Enter)"
                 className="px-3.5 py-1 bg-[#C85A32] hover:bg-[#B83A14] disabled:opacity-50 text-white rounded-md text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
@@ -515,7 +843,7 @@ export default function TakeHomeAssessmentPage() {
           {/* IDE Editor with Synchronized Line Numbers */}
           <div className="flex-1 relative flex bg-[#18181B] text-[#FCFAF7] overflow-hidden">
             {/* Gutter Line Numbers */}
-            <div className="w-12 py-4 bg-[#141417] border-r border-[#27272A] text-right pr-3 font-mono text-[11px] text-[#52525B] select-none select-none overflow-hidden">
+            <div className="w-12 py-4 bg-[#141417] border-r border-[#27272A] text-right pr-3 font-mono text-[11px] text-[#52525B] select-none overflow-hidden">
               {lineNumbers.map((num) => (
                 <div key={num} className="leading-5">{num}</div>
               ))}
@@ -528,7 +856,7 @@ export default function TakeHomeAssessmentPage() {
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 onKeyDown={handleKeyDown}
-                disabled={!!submissionResult}
+                disabled={!!submissionResult || !sessionStarted}
                 spellCheck={false}
                 className="w-full h-full py-4 px-4 bg-transparent text-[#F4F4F5] resize-none focus:outline-none font-mono text-xs leading-5 select-text overflow-y-auto"
                 placeholder="// Write your production algorithmic implementation here..."
@@ -638,6 +966,127 @@ export default function TakeHomeAssessmentPage() {
       </div>
 
       {/* =========================================================================
+          PROCTORING GATEWAY: START OR RESUME IN FULLSCREEN MODAL
+          ========================================================================= */}
+      {(!sessionStarted || (!isInFullscreen && !violationModalOpen && !submissionResult)) && !submissionResult && (
+        <div className="fixed inset-0 bg-[#18181B]/85 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="bg-[#FCFAF7] border-2 border-[#DFD5C6] rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl space-y-6 text-center">
+            <div className="h-16 w-16 rounded-2xl bg-[#C85A32]/10 border border-[#C85A32]/30 text-[#C85A32] flex items-center justify-center mx-auto shadow-inner">
+              <Lock className="h-8 w-8" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-[10px] font-mono font-bold px-3 py-1 rounded-full bg-[#C85A32]/15 text-[#C85A32] uppercase tracking-wider">
+                Proctored Sandbox Assessment
+              </span>
+              <h2 className="text-2xl font-serif font-black text-[#262626]">
+                {sessionStarted ? "Assessment in Progress" : "Live Coding Benchmark"}
+              </h2>
+              <p className="text-xs text-[#6E6359] leading-relaxed">
+                {sessionStarted
+                  ? "Your session and timer are actively running. Please re-enter full-screen mode to resume coding."
+                  : "This benchmark evaluates production algorithms under rigorous security and proctoring protocols."}
+              </p>
+            </div>
+
+            {/* Proctoring Rules Checklist */}
+            <div className="bg-[#FAF6F0] border border-[#DFD5C6] p-4 rounded-2xl text-left space-y-2.5 text-xs text-[#262626] font-mono">
+              <div className="flex items-start gap-2.5">
+                <Maximize className="h-4 w-4 text-[#C85A32] shrink-0 mt-0.5" />
+                <span>
+                  <strong>Full Screen Enforced:</strong> The assessment runs strictly in full-screen mode.
+                </span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>3 Warning Escape Limit:</strong> Pressing Escape or switching windows triggers a warning (3 maximum allowed).
+                </span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <Clock className="h-4 w-4 text-[#2E5A44] shrink-0 mt-0.5" />
+                <span>
+                  <strong>10-Second Grace Window:</strong> Each warning gives 10 seconds to return to full-screen before auto-submission.
+                </span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <RefreshCw className="h-4 w-4 text-[#6E6359] shrink-0 mt-0.5" />
+                <span>
+                  <strong>Persistent Timer & Autosave:</strong> Refreshing the page preserves your timer and written code.
+                </span>
+              </div>
+            </div>
+
+            {sessionStarted && (
+              <div className="flex items-center justify-between px-4 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs font-mono text-amber-900 font-bold">
+                <span>Time Remaining: {formatTime(timeLeft)}</span>
+                <span>Warnings Incurred: {warningsCount} / 3</span>
+              </div>
+            )}
+
+            <button
+              onClick={handleStartOrResumeSession}
+              className="w-full py-3.5 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-2xl text-sm font-mono font-bold cursor-pointer transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+            >
+              <Maximize className="h-4 w-4" />
+              <span>{sessionStarted ? "Re-enter Full Screen & Resume" : "Enter Full Screen & Start Assessment"}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          URGENT PROCTORING VIOLATION MODAL WITH 10-SECOND COUNTDOWN
+          ========================================================================= */}
+      {violationModalOpen && !submissionResult && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg z-50 flex items-center justify-center p-4 animate-in zoom-in-95 duration-200">
+          <div className="bg-[#1C1917] border-2 border-rose-500 rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-[0_0_50px_rgba(244,63,94,0.35)] space-y-6 text-center text-white">
+            <div className="relative mx-auto w-20 h-20 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-rose-500/20 animate-ping" />
+              <div className="h-16 w-16 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg relative z-10">
+                <AlertOctagon className="h-9 w-9" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-400 text-xs font-mono font-bold uppercase tracking-wider">
+                {warningsCount >= 3 ? "FINAL WARNING (3 / 3)" : `Warning ${warningsCount} of 3`}
+              </div>
+              <h2 className="text-2xl font-serif font-black text-white">
+                Fullscreen Violation Detected!
+              </h2>
+              <p className="text-xs text-stone-400 leading-relaxed font-sans">
+                You have pressed Escape or left full-screen mode. You must return to full-screen immediately or your test will be auto-submitted.
+              </p>
+            </div>
+
+            {/* High-visibility Countdown Box */}
+            <div className="bg-rose-950/40 border border-rose-800/60 p-4 rounded-2xl space-y-1">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-rose-300">
+                Auto-Submitting in:
+              </span>
+              <div className="text-4xl font-mono font-black text-rose-500 tracking-tight animate-pulse">
+                00:{violationSecondsLeft.toString().padStart(2, "0")}
+              </div>
+              <p className="text-[10px] font-mono text-stone-400">
+                {warningsCount >= 3
+                  ? "Notice: This is your 3rd warning. Any subsequent violation will terminate the assessment immediately."
+                  : `You have ${3 - warningsCount} warning(s) remaining after this.`}
+              </p>
+            </div>
+
+            <button
+              onClick={handleReturnToFullscreen}
+              className="w-full py-3.5 bg-rose-600 hover:bg-rose-500 text-white rounded-2xl text-sm font-mono font-bold cursor-pointer transition-all shadow-lg hover:shadow-rose-600/30 flex items-center justify-center gap-2"
+            >
+              <Maximize className="h-4 w-4" />
+              <span>Return to Full Screen Now</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
           CONFIRMATION MODAL: BEFORE SUBMITTING ASSESSMENT
           ========================================================================= */}
       {showSubmitConfirm && (
@@ -664,7 +1113,7 @@ export default function TakeHomeAssessmentPage() {
                 Continue Editing
               </button>
               <button
-                onClick={handleSubmitAssessment}
+                onClick={() => handleSubmitAssessment("manual")}
                 className="flex-1 py-2 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-xl text-xs font-mono font-bold cursor-pointer shadow-sm"
               >
                 Confirm & Submit
@@ -678,18 +1127,53 @@ export default function TakeHomeAssessmentPage() {
           FINAL SUBMISSION MODAL & VERIFIED DEVSCORE RECORD
           ========================================================================= */}
       {submissionResult && (
-        <div className="fixed inset-0 bg-[#262626]/70 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl max-w-md w-full p-6 sm:p-8 shadow-2xl space-y-6 text-center">
-            <div className="h-14 w-14 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 flex items-center justify-center mx-auto">
-              <CheckCircle2 className="h-8 w-8" />
+        <div className="fixed inset-0 bg-[#262626]/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl space-y-6 text-center">
+            <div className={`h-16 w-16 rounded-2xl flex items-center justify-center mx-auto ${
+              autoSubmitReason === "proctoring_violations" || submissionResult.submission_reason === "proctoring_violations"
+                ? "bg-rose-500/10 border border-rose-500/30 text-rose-600"
+                : "bg-emerald-500/10 border border-emerald-500/30 text-emerald-700"
+            }`}>
+              {autoSubmitReason === "proctoring_violations" || submissionResult.submission_reason === "proctoring_violations" ? (
+                <ShieldAlert className="h-8 w-8" />
+              ) : (
+                <CheckCircle2 className="h-8 w-8" />
+              )}
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1.5">
+              {autoSubmitReason === "warning_timeout" && (
+                <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded bg-rose-500/15 text-rose-700 uppercase">
+                  Auto-Submitted (10s Grace Expired)
+                </span>
+              )}
+              {autoSubmitReason === "proctoring_violations" && (
+                <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded bg-rose-500/15 text-rose-700 uppercase">
+                  Disqualified (3 Warnings Exceeded)
+                </span>
+              )}
+              {autoSubmitReason === "time_expired" && (
+                <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded bg-amber-500/15 text-amber-700 uppercase">
+                  Auto-Submitted (Time Limit Expired)
+                </span>
+              )}
+              {(!autoSubmitReason || autoSubmitReason === "manual") && (
+                <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 uppercase">
+                  Standard Final Submission
+                </span>
+              )}
+
               <h3 className="text-2xl font-serif font-bold text-[#262626]">
-                Assessment Submitted!
+                {autoSubmitReason === "proctoring_violations" ? "Assessment Terminated" : "Assessment Submitted!"}
               </h3>
               <p className="text-xs text-[#6E6359] font-medium leading-relaxed">
-                Your code and adversarial stress test telemetry have been cryptographically verified and recorded to the hiring team.
+                {autoSubmitReason === "proctoring_violations"
+                  ? "The assessment was auto-submitted because the maximum allowed fullscreen violations (3 warnings) were exceeded."
+                  : autoSubmitReason === "warning_timeout"
+                  ? "The assessment was auto-submitted because you did not return to full-screen mode within the 10-second grace window."
+                  : autoSubmitReason === "time_expired"
+                  ? "The assessment was auto-submitted because the total time limit expired."
+                  : "Your code and adversarial stress test telemetry have been cryptographically verified and recorded for the hiring team."}
               </p>
             </div>
 

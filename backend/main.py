@@ -1123,6 +1123,9 @@ class TakeHomeSubmitRequest(BaseModel):
     code: str
     language: str = "python"
     entry_point: Optional[str] = "solution"
+    submission_reason: Optional[str] = "manual"
+    warnings_count: Optional[int] = 0
+    time_taken_seconds: Optional[int] = None
 
 @app.get("/api/takehome/{token}")
 def get_takehome_challenge_details(token: str):
@@ -1273,13 +1276,24 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         "chaos_passed": chaos_passed,
         "chaos_total": chaos_total,
         "overall_score": overall_score,
-        "chaos_resilience": resilience_pct
+        "chaos_resilience": resilience_pct,
+        "submission_reason": req.submission_reason or "manual",
+        "warnings_count": req.warnings_count or 0,
+        "time_taken_seconds": req.time_taken_seconds
     }
     
     # 4. Save to Database
+    final_status = "Completed"
+    if req.submission_reason == "proctoring_violations":
+        final_status = "Disqualified (Violations)"
+    elif req.submission_reason == "warning_timeout":
+        final_status = "Auto-Submitted (Timeout)"
+    elif req.submission_reason == "time_expired":
+        final_status = "Auto-Submitted (Time Limit)"
+
     database.update_takehome_assessment_result(
         token=token,
-        status="Completed",
+        status=final_status,
         score=overall_score,
         chaos_resilience=resilience_pct,
         test_results=test_results_payload
@@ -1292,6 +1306,8 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         "tests_passed": tests_passed,
         "total_tests": total_tests,
         "verdict": "Passed & Verified" if overall_score >= 650 else "Under Review",
+        "submission_reason": req.submission_reason or "manual",
+        "warnings_count": req.warnings_count or 0,
         "completed_at": datetime.utcnow().isoformat()
     }
 
