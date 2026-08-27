@@ -50,7 +50,10 @@ app.include_router(career_agent_router, prefix="/api/career")
 # internet make credentialed calls against this API on a signed-in user's behalf.
 # Set ALLOWED_ORIGINS in the environment for deployed frontends.
 # ---------------------------------------------------------------------------
-_DEFAULT_ORIGINS = "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
+_DEFAULT_ORIGINS = (
+    "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,"
+    "https://prepai.apurve.xyz"
+)
 ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()
 ]
@@ -1907,4 +1910,4 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         "completed_at": datetime.now(timezone.utc).isoformat()
     }
 
-
+
