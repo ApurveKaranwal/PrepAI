@@ -3,6 +3,7 @@ import os
 import hashlib
 import re
 import datetime
+import secrets
 import threading
 import html
 import urllib.request
@@ -55,6 +56,10 @@ class PgCursorWrapper:
     def __init__(self, pg_cursor):
         self._cursor = pg_cursor
         self._lastrowid = None
+        # Row consumed by execute() to populate lastrowid, held so the caller's
+        # own fetchone() still sees it. See execute() for why.
+        self._pending_row = None
+        self._pending_keys = None
 
     def __enter__(self):
         return self
@@ -66,54 +71,77 @@ class PgCursorWrapper:
     def execute(self, query, params=None):
         converted_query = self._convert_query(query)
         is_insert = converted_query.strip().upper().startswith("INSERT")
-        
+
         if is_insert and "RETURNING" not in converted_query.upper():
             tbl_match = re.search(r'(?i)\bINTO\s+(\w+)', converted_query)
             if tbl_match:
                 table_name = tbl_match.group(1).lower()
                 if table_name != "candidate_profiles":
                     converted_query += " RETURNING id"
-        
+
         if params is not None and not isinstance(params, (tuple, list, dict)):
             params = tuple(params)
-            
+
+        self._pending_row = None
+        self._pending_keys = None
+        # Reset per execute: an INSERT ... ON CONFLICT DO NOTHING returns no row,
+        # and a caller reading lastrowid after one must not get the id from the
+        # previous statement.
+        self._lastrowid = None
         self._cursor.execute(converted_query, params)
-        
+
         if is_insert:
             try:
-                if "RETURNING id" in converted_query:
+                if "RETURNING" in converted_query.upper():
+                    # Reading the row here is what makes `cursor.lastrowid` work,
+                    # but it also consumes it — so an INSERT ... RETURNING whose
+                    # caller does its own fetchone() used to silently get None.
+                    # The row is stashed and replayed instead.
                     row = self._cursor.fetchone()
-                    if row:
-                        if isinstance(row, dict):
-                            self._lastrowid = row.get("id")
-                        elif hasattr(row, "get"):
+                    if row is not None:
+                        self._pending_row = row
+                        self._pending_keys = [desc[0] for desc in self._cursor.description]
+                        if hasattr(row, "get"):
                             self._lastrowid = row.get("id")
                         else:
-                            self._lastrowid = row[0]
+                            try:
+                                self._lastrowid = row[self._pending_keys.index("id")]
+                            except ValueError:
+                                self._lastrowid = row[0]
             except Exception:
                 self._lastrowid = None
-        else:
-            self._lastrowid = None
-            
+
         return self
 
     def executemany(self, query, params_list):
         converted_query = self._convert_query(query)
+        self._pending_row = None
+        self._pending_keys = None
         self._cursor.executemany(converted_query, params_list)
         return self
 
     def fetchone(self):
+        if self._pending_row is not None:
+            row, keys = self._pending_row, self._pending_keys
+            self._pending_row = None
+            self._pending_keys = None
+            return DictRowWrapper(row, keys)
         row = self._cursor.fetchone()
         if row is None:
             return None
         return DictRowWrapper(row, [desc[0] for desc in self._cursor.description])
 
     def fetchall(self):
+        replayed = []
+        if self._pending_row is not None:
+            replayed = [DictRowWrapper(self._pending_row, self._pending_keys)]
+            self._pending_row = None
+            self._pending_keys = None
         rows = self._cursor.fetchall()
         if not rows:
-            return []
+            return replayed
         keys = [desc[0] for desc in self._cursor.description]
-        return [DictRowWrapper(row, keys) for row in rows]
+        return replayed + [DictRowWrapper(row, keys) for row in rows]
 
     @property
     def lastrowid(self):
@@ -265,6 +293,35 @@ def verify_password(stored_password_hex: str, provided_password: str) -> bool:
         return stored_hash == new_hash
     except Exception:
         return False
+
+
+# =========================================================================
+# SLUG / TOKEN HELPERS
+# =========================================================================
+
+def slugify(value: str) -> str:
+    """Lowercase, hyphen-separated, alphanumeric slug."""
+    cleaned = re.sub(r'[^a-z0-9]+', '-', (value or "").strip().lower()).strip('-')
+    return cleaned[:48] or "org"
+
+
+def _unique_org_slug(cursor, name: str) -> str:
+    """Returns a slug that is not yet taken in the organizations table."""
+    base = slugify(name)
+    candidate = base
+    suffix = 2
+    while True:
+        cursor.execute("SELECT 1 FROM organizations WHERE slug = %s", (candidate,))
+        if cursor.fetchone() is None:
+            return candidate
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+
+
+def hash_token(raw_token: str) -> str:
+    """One-way digest for anything token-shaped that we persist."""
+    return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
+
 
 def init_db():
     conn = get_db_connection()
@@ -527,6 +584,66 @@ def init_db():
             pass
 
     # Alter candidate_profiles to add multi-platform & devscore columns
+
+    # ─── External-jobs freshness columns ───────────────────────────────────
+    # `fetched_at` is set every time a job is seen in a provider feed.
+    # `is_live` is False once a job has been absent from a feed for more than
+    # the staleness threshold. The `get_jobs()` query filters to live rows, so
+    # an old closing is automatically removed from candidate-facing feeds.
+    try:
+        if not column_exists('jobs', 'fetched_at'):
+            cursor.execute("ALTER TABLE jobs ADD COLUMN fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            conn.commit()
+    except Exception as e:
+        print("Error adding fetched_at to jobs:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    try:
+        if not column_exists('jobs', 'is_live'):
+            cursor.execute("ALTER TABLE jobs ADD COLUMN is_live BOOLEAN DEFAULT TRUE")
+            conn.commit()
+    except Exception as e:
+        print("Error adding is_live to jobs:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    try:
+        if not column_exists('jobs', 'closed_at'):
+            cursor.execute("ALTER TABLE jobs ADD COLUMN closed_at TIMESTAMP")
+            conn.commit()
+    except Exception as e:
+        print("Error adding closed_at to jobs:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    try:
+        if not column_exists('jobs', 'provider'):
+            cursor.execute("ALTER TABLE jobs ADD COLUMN provider TEXT DEFAULT 'unknown'")
+            conn.commit()
+    except Exception as e:
+        print("Error adding provider to jobs:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    try:
+        if not column_exists('jobs', 'listed_at'):
+            # When the upstream job was originally published, as best we can
+            # tell. Providers don't always expose this, so it falls back to
+            # fetched_at for jobs that don't carry their own timestamp.
+            cursor.execute("ALTER TABLE jobs ADD COLUMN listed_at TIMESTAMP")
+            conn.commit()
+    except Exception as e:
+        print("Error adding listed_at to jobs:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     # Create recruiter_jobs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS recruiter_jobs (
@@ -603,7 +720,214 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # -------------------------------------------------------------------------
+    # AUTHENTICATION SESSIONS
+    # Opaque bearer tokens. Only the SHA-256 digest is persisted, so a database
+    # leak cannot be replayed as a live session.
+    # -------------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            id SERIAL PRIMARY KEY,
+            token_hash TEXT UNIQUE NOT NULL,
+            user_id TEXT NOT NULL,
+            user_agent TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            revoked_at TIMESTAMP
+        )
+    """)
+
+    # -------------------------------------------------------------------------
+    # ORGANIZATIONS & TEAM SEATS
+    # A hiring company is an organization. Every recruiter artifact is scoped to
+    # org_id, never to a client-supplied identifier.
+    # -------------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS organizations (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE NOT NULL,
+            website_url TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            founder_user_id TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS org_members (
+            id SERIAL PRIMARY KEY,
+            org_id INTEGER NOT NULL,
+            user_id TEXT NOT NULL,
+            role TEXT DEFAULT 'member',
+            invited_by TEXT DEFAULT '',
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uniq_org_member UNIQUE (org_id, user_id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS org_invites (
+            id SERIAL PRIMARY KEY,
+            org_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            role TEXT DEFAULT 'member',
+            token_hash TEXT UNIQUE NOT NULL,
+            invited_by TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            accepted_at TIMESTAMP
+        )
+    """)
+
+    # -------------------------------------------------------------------------
+    # CANDIDATE CONSENT
+    # A recruiter may only see contact details once the candidate has accepted
+    # that specific organization's outreach.
+    # -------------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS recruiter_outreach (
+            id SERIAL PRIMARY KEY,
+            org_id INTEGER NOT NULL,
+            candidate_user_id TEXT NOT NULL,
+            job_id INTEGER DEFAULT 0,
+            message TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            sent_by TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            responded_at TIMESTAMP,
+            CONSTRAINT uniq_org_candidate_job UNIQUE (org_id, candidate_user_id, job_id)
+        )
+    """)
+
+    # Audit trail for pipeline stage transitions
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shortlist_events (
+            id SERIAL PRIMARY KEY,
+            shortlist_id INTEGER NOT NULL,
+            org_id INTEGER NOT NULL,
+            actor_user_id TEXT DEFAULT '',
+            from_stage TEXT DEFAULT '',
+            to_stage TEXT DEFAULT '',
+            note TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
+
+    # -------------------------------------------------------------------------
+    # ADDITIVE COLUMN MIGRATIONS (idempotent)
+    # -------------------------------------------------------------------------
+    _MIGRATIONS = [
+        # Organization scoping for every recruiter-owned artifact
+        ("recruiter_jobs", "org_id", "INTEGER"),
+        ("recruiter_jobs", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ("candidate_shortlists", "org_id", "INTEGER"),
+        ("candidate_shortlists", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ("takehome_assessments", "org_id", "INTEGER"),
+        # Take-home lifecycle
+        ("takehome_assessments", "expires_at", "TIMESTAMP"),
+        ("takehome_assessments", "started_at", "TIMESTAMP"),
+        ("takehome_assessments", "submitted_at", "TIMESTAMP"),
+        ("takehome_assessments", "attempt_count", "INTEGER DEFAULT 0"),
+        ("takehome_assessments", "candidate_email", "TEXT DEFAULT ''"),
+        ("takehome_assessments", "job_id", "INTEGER DEFAULT 0"),
+        ("takehome_assessments", "invite_sent_at", "TIMESTAMP"),
+        # Candidate sourcing opt-in
+        ("candidate_profiles", "open_to_opportunities", "BOOLEAN DEFAULT FALSE"),
+        ("candidate_profiles", "opportunity_preferences", "TEXT DEFAULT ''"),
+        ("candidate_profiles", "opted_in_at", "TIMESTAMP"),
+    ]
+    for _table, _column, _ddl in _MIGRATIONS:
+        try:
+            if not column_exists(_table, _column):
+                cursor.execute(f"ALTER TABLE {_table} ADD COLUMN {_column} {_ddl}")
+                conn.commit()
+        except Exception as e:
+            print(f"Error adding {_column} to {_table}: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    # -------------------------------------------------------------------------
+    # INDEXES — recruiter search and tenant lookups were doing full table scans
+    # -------------------------------------------------------------------------
+    _INDEXES = [
+        "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions (user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members (user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members (org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_recruiter_jobs_org ON recruiter_jobs (org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_shortlists_org ON candidate_shortlists (org_id, candidate_id)",
+        "CREATE INDEX IF NOT EXISTS idx_assessments_org ON takehome_assessments (org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_assessments_token ON takehome_assessments (token)",
+        "CREATE INDEX IF NOT EXISTS idx_outreach_candidate ON recruiter_outreach (candidate_user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_outreach_org ON recruiter_outreach (org_id, candidate_user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_shortlist_events_shortlist ON shortlist_events (shortlist_id)",
+        "CREATE INDEX IF NOT EXISTS idx_profiles_sourceable ON candidate_profiles (open_to_opportunities, devscore DESC)",
+    ]
+    for _idx_sql in _INDEXES:
+        try:
+            cursor.execute(_idx_sql)
+            conn.commit()
+        except Exception as e:
+            print(f"Error creating index: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    # -------------------------------------------------------------------------
+    # BACKFILL: promote each legacy startup_profile into an organization and
+    # attach its orphaned recruiter rows. Idempotent — skips users that already
+    # own an org. Rows with no resolvable owner keep org_id NULL and are
+    # excluded from every read rather than leaking to the wrong tenant.
+    # -------------------------------------------------------------------------
+    try:
+        cursor.execute("SELECT user_id, company_name, website_url, about FROM startup_profiles")
+        legacy_profiles = cursor.fetchall()
+        for prof in legacy_profiles:
+            owner_id = str(prof.get("user_id") or "").strip()
+            if not owner_id:
+                continue
+            cursor.execute(
+                "SELECT org_id FROM org_members WHERE user_id = %s AND role = 'owner' LIMIT 1",
+                (owner_id,)
+            )
+            existing = cursor.fetchone()
+            if existing:
+                org_id = existing["org_id"]
+            else:
+                org_name = prof.get("company_name") or f"Organization {owner_id}"
+                slug = _unique_org_slug(cursor, org_name)
+                cursor.execute("""
+                    INSERT INTO organizations (name, slug, website_url, description, founder_user_id)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id
+                """, (org_name, slug, prof.get("website_url") or "", prof.get("about") or "", owner_id))
+                org_id = cursor.fetchone()["id"]
+                cursor.execute("""
+                    INSERT INTO org_members (org_id, user_id, role, invited_by)
+                    VALUES (%s, %s, 'owner', %s)
+                    ON CONFLICT (org_id, user_id) DO NOTHING
+                """, (org_id, owner_id, owner_id))
+
+            for legacy_table in ("recruiter_jobs", "candidate_shortlists", "takehome_assessments"):
+                cursor.execute(
+                    f"UPDATE {legacy_table} SET org_id = %s WHERE org_id IS NULL AND recruiter_id = %s",
+                    (org_id, owner_id)
+                )
+            conn.commit()
+    except Exception as e:
+        print(f"Error backfilling organizations: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
     conn.close()
     print("PostgreSQL Database successfully initialized with Recruiter & Founder schemas.")
     
@@ -701,6 +1025,442 @@ def get_user_by_id(user_id: str) -> dict:
     finally:
         conn.close()
     return None
+
+
+def get_user_by_email(email: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, email, name FROM users WHERE email = %s", (email.strip().lower(),))
+        row = cursor.fetchone()
+        if row:
+            return {"id": str(row["id"]), "email": row["email"], "name": row["name"]}
+    except Exception as e:
+        print(f"Error looking up user by email: {e}")
+    finally:
+        conn.close()
+    return None
+
+
+# =========================================================================
+# AUTHENTICATION SESSIONS (opaque bearer tokens)
+# =========================================================================
+
+AUTH_SESSION_TTL_DAYS = 30
+
+
+def create_auth_session(user_id: str, user_agent: str = "") -> dict:
+    """
+    Mints a cryptographically random bearer token for the user. Only the digest
+    is stored, so the raw token is returned exactly once and never recoverable.
+    """
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=AUTH_SESSION_TTL_DAYS)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO auth_sessions (token_hash, user_id, user_agent, expires_at)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (hash_token(raw_token), str(user_id), (user_agent or "")[:255], expires_at))
+        conn.commit()
+        return {"session_token": raw_token, "expires_at": expires_at.isoformat()}
+    except Exception as e:
+        print(f"Error creating auth session: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+
+def get_auth_session_user(raw_token: str) -> dict:
+    """
+    Resolves a bearer token to its user, rejecting expired and revoked sessions.
+    Touches last_seen_at in the same round trip.
+    """
+    if not raw_token:
+        return None
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            WITH touched AS (
+                UPDATE auth_sessions
+                SET last_seen_at = CURRENT_TIMESTAMP
+                WHERE token_hash = %s
+                  AND revoked_at IS NULL
+                  AND expires_at > CURRENT_TIMESTAMP
+                RETURNING user_id, expires_at
+            )
+            SELECT u.id, u.email, u.name, t.expires_at
+            FROM touched t
+            JOIN users u ON CAST(u.id AS TEXT) = t.user_id
+        """, (hash_token(raw_token),))
+        row = cursor.fetchone()
+        conn.commit()
+        if not row:
+            return None
+        return {
+            "uid": str(row["id"]),
+            "id": str(row["id"]),
+            "email": row["email"],
+            "name": row["name"],
+            "expires_at": row["expires_at"],
+        }
+    except Exception as e:
+        print(f"Error resolving auth session: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+
+def revoke_auth_session(raw_token: str) -> bool:
+    if not raw_token:
+        return False
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+            WHERE token_hash = %s AND revoked_at IS NULL
+        """, (hash_token(raw_token),))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error revoking auth session: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+# =========================================================================
+# ORGANIZATIONS & TEAM SEATS
+# =========================================================================
+
+ORG_ROLES = ("owner", "admin", "member")
+_ROLE_RANK = {"member": 1, "admin": 2, "owner": 3}
+
+
+def role_at_least(role: str, minimum: str) -> bool:
+    return _ROLE_RANK.get(role or "", 0) >= _ROLE_RANK.get(minimum, 99)
+
+
+def create_organization(name: str, founder_user_id: str, website_url: str = "", description: str = "") -> dict:
+    """Creates an organization and seats the creator as its owner."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        slug = _unique_org_slug(cursor, name)
+        cursor.execute("""
+            INSERT INTO organizations (name, slug, website_url, description, founder_user_id)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (name.strip(), slug, (website_url or "").strip(), (description or "").strip(), str(founder_user_id)))
+        res = cursor.fetchone()
+        org_id = res["id"]
+        cursor.execute("""
+            INSERT INTO org_members (org_id, user_id, role, invited_by)
+            VALUES (%s, %s, 'owner', %s)
+            ON CONFLICT (org_id, user_id) DO NOTHING
+        """, (org_id, str(founder_user_id), str(founder_user_id)))
+        conn.commit()
+        return {
+            "id": org_id,
+            "name": name.strip(),
+            "slug": slug,
+            "website_url": website_url or "",
+            "description": description or "",
+            "founder_user_id": str(founder_user_id),
+            "role": "owner",
+        }
+    except Exception as e:
+        print(f"Error creating organization: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def get_user_org(user_id: str) -> dict:
+    """
+    Returns the organization the user belongs to along with their role, or None.
+    This is the single source of truth for recruiter tenancy — never trust an
+    org_id or recruiter_id supplied by the client.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT o.id, o.name, o.slug, o.website_url, o.description,
+                   o.founder_user_id, o.created_at, m.role, m.joined_at
+            FROM org_members m
+            JOIN organizations o ON o.id = m.org_id
+            WHERE m.user_id = %s
+            ORDER BY m.joined_at ASC
+            LIMIT 1
+        """, (str(user_id),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "slug": row["slug"],
+            "website_url": row["website_url"] or "",
+            "description": row["description"] or "",
+            "founder_user_id": row["founder_user_id"],
+            "created_at": row["created_at"],
+            "role": row["role"],
+            "joined_at": row["joined_at"],
+        }
+    except Exception as e:
+        print(f"Error fetching user organization: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def update_organization(org_id: int, fields: dict) -> dict:
+    allowed = ("name", "website_url", "description")
+    updates = {k: v for k, v in (fields or {}).items() if k in allowed and v is not None}
+    if not updates:
+        return get_organization(org_id)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cursor.execute(
+            f"UPDATE organizations SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (*updates.values(), org_id)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"Error updating organization: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+    return get_organization(org_id)
+
+
+def get_organization(org_id: int) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM organizations WHERE id = %s", (org_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"Error fetching organization: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_org_members(org_id: int) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT m.user_id, m.role, m.joined_at, u.name, u.email
+            FROM org_members m
+            LEFT JOIN users u ON CAST(u.id AS TEXT) = m.user_id
+            WHERE m.org_id = %s
+            ORDER BY m.joined_at ASC
+        """, (org_id,))
+        return [
+            {
+                "user_id": r["user_id"],
+                "role": r["role"],
+                "joined_at": r["joined_at"],
+                "name": r["name"] or "Pending",
+                "email": r["email"] or "",
+            }
+            for r in cursor.fetchall()
+        ]
+    except Exception as e:
+        print(f"Error fetching org members: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def create_org_invite(org_id: int, email: str, role: str, invited_by: str, ttl_days: int = 14) -> dict:
+    """Creates a single-use invite token. Only the digest is persisted."""
+    if role not in ORG_ROLES or role == "owner":
+        role = "member"
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=ttl_days)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Supersede any outstanding invite for the same address
+        cursor.execute("""
+            UPDATE org_invites SET status = 'superseded'
+            WHERE org_id = %s AND LOWER(email) = %s AND status = 'pending'
+        """, (org_id, email.strip().lower()))
+        cursor.execute("""
+            INSERT INTO org_invites (org_id, email, role, token_hash, invited_by, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (org_id, email.strip().lower(), role, hash_token(raw_token), str(invited_by), expires_at))
+        res = cursor.fetchone()
+        conn.commit()
+        return {
+            "id": res["id"],
+            "email": email.strip().lower(),
+            "role": role,
+            "invite_token": raw_token,
+            "expires_at": expires_at.isoformat(),
+        }
+    except Exception as e:
+        print(f"Error creating org invite: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+
+def accept_org_invite(raw_token: str, user_id: str, user_email: str) -> dict:
+    """
+    Consumes an invite. Returns {"error": reason} rather than raising so the
+    caller can map it onto a precise HTTP status.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT i.id, i.org_id, i.email, i.role, i.status, i.expires_at, o.name
+            FROM org_invites i
+            JOIN organizations o ON o.id = i.org_id
+            WHERE i.token_hash = %s
+        """, (hash_token(raw_token),))
+        invite = cursor.fetchone()
+        if not invite:
+            return {"error": "invalid"}
+        if invite["status"] != "pending":
+            return {"error": "used"}
+
+        expires_at = invite["expires_at"]
+        if isinstance(expires_at, str):
+            try:
+                expires_at = datetime.datetime.fromisoformat(expires_at)
+            except Exception:
+                expires_at = None
+        if expires_at and expires_at.replace(tzinfo=None) < datetime.datetime.utcnow():
+            return {"error": "expired"}
+
+        if (invite["email"] or "").lower() != (user_email or "").strip().lower():
+            return {"error": "email_mismatch"}
+
+        cursor.execute("SELECT 1 FROM org_members WHERE user_id = %s", (str(user_id),))
+        if cursor.fetchone():
+            return {"error": "already_member"}
+
+        cursor.execute("""
+            INSERT INTO org_members (org_id, user_id, role, invited_by)
+            VALUES (%s, %s, %s, '')
+            ON CONFLICT (org_id, user_id) DO NOTHING
+        """, (invite["org_id"], str(user_id), invite["role"]))
+        cursor.execute("""
+            UPDATE org_invites SET status = 'accepted', accepted_at = CURRENT_TIMESTAMP WHERE id = %s
+        """, (invite["id"],))
+        conn.commit()
+        return {"org_id": invite["org_id"], "org_name": invite["name"], "role": invite["role"]}
+    except Exception as e:
+        print(f"Error accepting org invite: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"error": "server"}
+    finally:
+        conn.close()
+
+
+def get_pending_org_invites(org_id: int) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT id, email, role, created_at, expires_at
+            FROM org_invites
+            WHERE org_id = %s AND status = 'pending'
+            ORDER BY created_at DESC
+        """, (org_id,))
+        return [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error fetching pending invites: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def update_org_member_role(org_id: int, user_id: str, role: str) -> bool:
+    if role not in ORG_ROLES:
+        return False
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE org_members SET role = %s WHERE org_id = %s AND user_id = %s",
+            (role, org_id, str(user_id))
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception as e:
+        print(f"Error updating member role: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def remove_org_member(org_id: int, user_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM org_members WHERE org_id = %s AND user_id = %s AND role <> 'owner'",
+            (org_id, str(user_id))
+        )
+        removed = cursor.rowcount
+        conn.commit()
+        return removed > 0
+    except Exception as e:
+        print(f"Error removing org member: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
 
 # Session logic
 def create_session(github_url: str, resume_name: str = None, resume_text: str = None, role: str = "Software Engineer") -> int:
@@ -1294,14 +2054,40 @@ def get_candidate_profile(user_id: str, email: str = None) -> dict:
     }
 
 def get_jobs() -> list:
+    """
+    Live, currently-listed external jobs. Only rows the freshness tracker
+    still considers live are returned — a job whose URL has dropped off the
+    upstream provider feed for > `JOB_LIVE_WINDOW_DAYS` is treated as closed
+    and excluded here. This is the only way to keep the candidate-facing feed
+    honest as time passes.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM jobs ORDER BY id DESC")
+    # `listed_at` is the upstream publish date. Jobs with no upstream timestamp
+    # fall back to created_at. We also filter out rows where fetched_at is NULL —
+    # those are pre-migration seed rows that were never refreshed by the new
+    # engine, so they can never carry a real upstream date and would always
+    # appear as "just now" regardless of age.
+    cursor.execute("""
+        SELECT * FROM jobs
+        WHERE is_live = TRUE
+          AND closed_at IS NULL
+          AND fetched_at IS NOT NULL
+        ORDER BY listed_at DESC NULLS LAST,
+                 fetched_at DESC,
+                 id DESC
+    """)
     rows = cursor.fetchall()
     conn.close()
-    
+
     jobs_list = []
     for r in rows:
+        # `listed_at` is when the provider says the job was originally posted.
+        # `fetched_at` is when we last saw it. For the "X days ago" badge we
+        # want the upstream publish date, falling back to the local row's
+        # created_at when no upstream timestamp is available — never to
+        # fetched_at, which would under-report a job's age.
+        listed_at = r.get("listed_at") or r["created_at"]
         jobs_list.append({
             "id": r["id"],
             "title": r["title"],
@@ -1315,6 +2101,9 @@ def get_jobs() -> list:
             "source": r["source"],
             "url": r["url"],
             "ats_type": r["ats_type"],
+            "provider": r.get("provider", r.get("ats_type", "unknown")),
+            "fetched_at": r.get("fetched_at"),
+            "listed_at": listed_at,
             "created_at": r["created_at"]
         })
     return jobs_list
@@ -1564,10 +2353,10 @@ def get_application_by_tracking_id(tracking_id: str) -> dict:
             "location": r["location"],
             "work_mode": r["work_mode"],
             "ats_type": r["ats_type"],
-            "resume_name": r.get("resume_name") or "ApurveKaranwal_Resume.pdf",
-            "devscore": r.get("devscore") or 850,
-            "candidate_name": r.get("user_name") or "Apurve Karanwal",
-            "candidate_email": r.get("user_email") or "apurvekaranwal282@gmail.com",
+            "resume_name": r.get("resume_name") or "",
+            "devscore": r.get("devscore") or 0,
+            "candidate_name": r.get("user_name") or "",
+            "candidate_email": r.get("user_email") or "",
             "created_at": str(r["created_at"]),
             "updated_at": str(r["updated_at"]),
             "custom_responses": json.loads(r["custom_responses"]) if r.get("custom_responses") and isinstance(r["custom_responses"], str) else (r.get("custom_responses") or {}),
@@ -1602,124 +2391,649 @@ def update_application_logs(app_id: int, logs: str):
     conn.close()
 
 def seed_jobs_if_empty():
+    """
+    No more hand-written fake data. The job feed is now sourced exclusively
+    from the public ATS / job-board APIs below. We still call
+    `trigger_background_job_fetch()` on first boot so a fresh deployment has
+    a live feed within a few seconds rather than a few minutes.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Check if jobs already seeded
     cursor.execute("SELECT count(*) FROM jobs")
     count = cursor.fetchone()[0]
-    if count > 0:
-        conn.close()
-        return
-        
-    jobs_to_seed = [
-        {
-            "title": "Design Engineer",
-            "company": "Vercel",
-            "location": "Remote, US",
-            "work_mode": "Remote",
-            "salary": "$160,000 - $210,000",
-            "experience_required": "3+ years",
-            "skills_required": ["TypeScript", "React", "Next.js", "CSS", "Tailwind", "Git"],
-            "description": "Vercel is looking for a Design Engineer to help build beautiful, highly interactive frontend applications and frameworks. In this role, you will bridge the gap between design and engineering, constructing reusable components and polished web animations. Experience with React, Next.js, and CSS layout engines is essential.",
-            "source": "Vercel Careers",
-            "url": "https://job-boards.greenhouse.io/vercel/jobs/5709080004",
-            "ats_type": "Greenhouse"
-        },
-        {
-            "title": "AI Applied Scientist",
-            "company": "Figma",
-            "location": "San Francisco, CA",
-            "work_mode": "Onsite",
-            "salary": "$200,000 - $260,000",
-            "experience_required": "5+ years",
-            "skills_required": ["Python", "FastAPI", "TypeScript", "Machine Learning", "AI", "LLM", "Docker"],
-            "description": "Join the AI group at Figma to build intelligent design assistants, generative UI copilots, and advanced model integrations. You will train, fine-tune, and deploy models that understand vector design structures. Strong background in Python, PyTorch, LLMs, and API engineering is required.",
-            "source": "Figma Careers",
-            "url": "https://boards.greenhouse.io/figma/jobs/6014642004?gh_jid=6014642004",
-            "ats_type": "Greenhouse"
-        },
-        {
-            "title": "Fullstack Software Engineer",
-            "company": "Reddit",
-            "location": "Remote, USA",
-            "work_mode": "Remote",
-            "salary": "$140,000 - $190,000",
-            "experience_required": "3+ years",
-            "skills_required": ["Python", "Go", "TypeScript", "React", "Node.js", "PostgreSQL", "Redis"],
-            "description": "Reddit is seeking a Fullstack Engineer for the Notifications Lifecycle team. You will build high-throughput messaging channels, configure real-time notification dispatchers in Python and Go, and build notification management tools in React and TypeScript. Experience scaling distributed databases like PostgreSQL and Redis is highly preferred.",
-            "source": "Reddit Careers",
-            "url": "https://job-boards.greenhouse.io/reddit/jobs/7792848",
-            "ats_type": "Greenhouse"
-        },
-        {
-            "title": "AI Engineer",
-            "company": "Samsara",
-            "location": "San Francisco, CA (Hybrid)",
-            "work_mode": "Hybrid",
-            "salary": "$150,000 - $200,000",
-            "experience_required": "3+ years",
-            "skills_required": ["Python", "Go", "Docker", "AWS", "Machine Learning", "AI", "LLM"],
-            "description": "As an AI Engineer at Samsara, you will design and implement intelligent computer vision and NLP models to improve physical operations. You will develop backend APIs in Go/Python, dockerize ML model pipelines, and run large-scale inference tasks on AWS. Experience with real-world sensor data or video analytics is a plus.",
-            "source": "Samsara Careers",
-            "url": "https://www.samsara.com/company/careers/roles/7589442?gh_jid=7589442",
-            "ats_type": "Greenhouse"
-        },
-        {
-            "title": "Software Engineer, Frontend",
-            "company": "Ramp",
-            "location": "New York, NY",
-            "work_mode": "Hybrid",
-            "salary": "$140,000 - $180,000",
-            "experience_required": "3+ years",
-            "skills_required": ["TypeScript", "JavaScript", "React", "Next.js", "CSS", "Git"],
-            "description": "Ramp is looking for a Frontend Engineer to construct premium credit card management products and corporate payment interfaces. You will develop highly responsive React frontends, optimize client-side bundle performance, and design secure dashboard states. Proficiency in TypeScript and CSS is required.",
-            "source": "Ramp Careers",
-            "url": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
-            "ats_type": "Ashby"
-        },
-        {
-            "title": "Site Reliability Engineer",
-            "company": "WorkOS",
-            "location": "Remote, US & Canada",
-            "work_mode": "Remote",
-            "salary": "$150,000 - $200,000",
-            "experience_required": "5+ years",
-            "skills_required": ["Go", "Docker", "Kubernetes", "AWS", "Terraform", "PostgreSQL", "Redis"],
-            "description": "WorkOS is searching for a Site Reliability Engineer to manage global infrastructure for developer APIs. You will manage multi-region Kubernetes clusters, optimize PostgreSQL and Redis datastores, write infrastructure-as-code using Terraform, and implement containerized deployment pipelines. Deep Go, AWS, and networking knowledge is required.",
-            "source": "Workos Careers",
-            "url": "https://jobs.ashbyhq.com/workos/cff5a16f-fd1c-4b64-9b66-8a8321122375",
-            "ats_type": "Ashby"
-        }
-    ]
-    
-    for job in jobs_to_seed:
-        cursor.execute("""
-            INSERT INTO jobs (title, company, location, work_mode, salary, experience_required, skills_required, description, source, url, ats_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            job["title"],
-            job["company"],
-            job["location"],
-            job["work_mode"],
-            job["salary"],
-            job["experience_required"],
-            json.dumps(job["skills_required"]),
-            job["description"],
-            job["source"],
-            job["url"],
-            job["ats_type"]
-        ))
-        
-    conn.commit()
     conn.close()
-    print("Jobs successfully seeded in database. Launching background fetch for additional real jobs...")
+    if count > 0:
+        return
     trigger_background_job_fetch()
 
 
-# ----------------------------------------------------
+# =========================================================================
 # Real Job Scraper & Background Fetch Engine
-# ----------------------------------------------------
+# =========================================================================
+# Every job that appears in the candidate-facing feed comes from one of the
+# providers below. None of them is invented in code. A job is only "live"
+# while we are actively seeing it in a feed; once a provider stops returning
+# its URL for longer than `JOB_LIVE_WINDOW_DAYS` we mark it closed and stop
+# showing it.
+#
+# Providers we hit (all have public, no-auth JSON endpoints):
+#   - Greenhouse:  public job-board API per company
+#   - Ashby:       public posting API per company
+#   - Lever:       public postings API per company
+#   - SmartRecruiters: public postings API per company
+#   - RemoteOK:    aggregated remote-only public job board
+#   - Arbeitnow:   aggregated public job board
+# =========================================================================
+
+JOB_LIVE_WINDOW_DAYS = 7  # how recent a confirmation must be to keep showing a row
+
+# Per-provider company slugs. These are stable, public identifiers each
+# company publishes its job board under — there is no signup or API key
+# required to read them.
+GREENHOUSE_COMPANIES = [
+    'stripe', 'mongodb', 'vercel', 'figma', 'reddit', 'samsara',
+    'cloudflare', 'databricks', 'doordash', 'hubspot', 'pinterest',
+    'lyft', 'airbnb', 'dropbox', 'instacart', 'plaid', 'brex',
+    'okta', 'twilio', 'shopify',
+]
+
+ASHBY_COMPANIES = [
+    'ramp', 'workos', 'supabase', 'replicate', 'pinecone',
+    'clerk', 'resend', 'linear', 'tldraw', 'modal',
+    'anysphere', 'posthog', 'browser-use', 'cursor', 'dust',
+]
+
+LEVER_COMPANIES = [
+    'netflix', 'github', 'figma', 'shopify', 'stripe',
+    'twitch', 'dropbox', 'grammarly', 'postman', 'asana',
+    'atlassian', 'slack', 'mongodb', 'n26', 'onetrust',
+]
+
+SMARTRECRUITERS_COMPANIES = [
+    'microsoft', 'amazon', 'tesla', 'visa', 'bosch',
+    'redbull', 'ikea', 'nokia', 'vodafone', 'cisco',
+    'oracle', 'sap', 'salesforce', 'uber', 'airbnb',
+]
+
+
+def _http_get_json(url: str, timeout: int = 6):
+    """
+    Tiny urllib wrapper. Returns parsed JSON or None on any failure — callers
+    skip the job and move on. A bad provider must never poison the whole run.
+    """
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "PrepFlowAI/1.0 (job-aggregator; +https://prepflow.ai)",
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="ignore"))
+    except Exception as e:
+        print(f"[JobsFeed] GET {url} failed: {e}")
+        return None
+
+
+def _parse_iso_to_dt(s):
+    """
+    Best-effort ISO 8601 / epoch → datetime. Returns None on failure — caller
+    falls back to fetched_at for the "X days ago" display. We never want to
+    show a job as "today" when we don't actually know when it was posted.
+    """
+    if s is None or s == "":
+        return None
+    try:
+        if isinstance(s, (int, float)):
+            return dt_class.utcfromtimestamp(float(s))
+        s = str(s).strip()
+        # '2025-08-20T13:45:00Z' or '2025-08-20T13:45:00.000-04:00'
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return dt_class.fromisoformat(s).replace(tzinfo=None)
+    except Exception:
+        try:
+            return dt_class.utcfromtimestamp(float(s))
+        except Exception:
+            return None
+
+
+def clean_html(raw_html):
+    if not raw_html:
+        return ""
+    clean_text = re.sub(r'<[^<]+?>', ' ', raw_html)
+    return html.unescape(clean_text).strip()
+
+
+def parse_work_mode(title, location, desc, workplace_type=None):
+    text = f"{title} {location} {desc}".lower()
+    if workplace_type:
+        wp_type = str(workplace_type).lower()
+        if "remote" in wp_type:
+            return "Remote"
+        elif "hybrid" in wp_type:
+            return "Hybrid"
+        elif "onsite" in wp_type or "on-site" in wp_type or "office" in wp_type:
+            return "Onsite"
+    if "remote" in text or "telecommute" in text or "work from home" in text or "anywhere" in text:
+        return "Remote"
+    elif "hybrid" in text:
+        return "Hybrid"
+    return "Onsite"
+
+
+def parse_salary(desc, title):
+    pattern = r'\$\d{2,3}(?:,\d{3})*(?:\s*k)?(?:\s*-\s*\$\d{2,3}(?:,\d{3})*(?:\s*k)?)?'
+    matches = re.findall(pattern, desc, re.IGNORECASE)
+    if matches:
+        return matches[0]
+    t_lower = title.lower()
+    if "senior" in t_lower or "lead" in t_lower or "staff" in t_lower or "principal" in t_lower:
+        return "$140,000 - $190,000"
+    elif "junior" in t_lower or "intern" in t_lower:
+        return "$70,000 - $100,000"
+    return "$100,000 - $150,000"
+
+
+def parse_experience(title, desc):
+    pattern = r'(\b\d+\+?\s*(?:-\s*\d+)?\s*(?:years?|yrs?)\b)'
+    matches = re.findall(pattern, desc, re.IGNORECASE)
+    if matches:
+        return matches[0]
+    t_lower = title.lower()
+    if "senior" in t_lower or "staff" in t_lower or "principal" in t_lower:
+        return "5+ years"
+    elif "lead" in t_lower or "manager" in t_lower:
+        return "6+ years"
+    elif "junior" in t_lower or "associate" in t_lower or "intern" in t_lower:
+        return "0-2 years"
+    return "3+ years"
+
+
+def extract_skills(title, desc):
+    text = f"{title} {desc}".lower()
+    matched = []
+    for skill in TECH_SKILLS:
+        pattern = r'\b' + re.escape(skill.lower()) + r'\b'
+        if skill.lower() in ["c++", "c#", "next.js", "node.js"]:
+            pattern = re.escape(skill.lower())
+        if re.search(pattern, text):
+            matched.append(skill)
+    return matched if matched else ["Software Engineering"]
+
+
+def _company_display_name(slug: str) -> str:
+    """Render a board slug back to a brand-looking name (e.g. 'workos' -> 'WorkOS')."""
+    overrides = {
+        "workos": "WorkOS", "supabase": "Supabase", "openai": "OpenAI",
+        "stripe": "Stripe", "vercel": "Vercel", "mongodb": "MongoDB",
+        "figma": "Figma", "lyft": "Lyft", "atlassian": "Atlassian",
+        "slack": "Slack", "github": "GitHub", "postman": "Postman",
+        "asana": "Asana", "tesla": "Tesla", "ikea": "IKEA", "nokia": "Nokia",
+        "cisco": "Cisco", "oracle": "Oracle", "sap": "SAP", "uber": "Uber",
+        "salesforce": "Salesforce", "vodafone": "Vodafone", "redbull": "Red Bull",
+    }
+    if slug.lower() in overrides:
+        return overrides[slug.lower()]
+    return slug.replace("-", " ").title()
+
+
+# ─── Provider fetchers ────────────────────────────────────────────────────────
+# Each function returns a list of dicts in the unified job shape:
+#   {title, company, location, work_mode, salary, experience_required,
+#    skills_required, description, source, url, ats_type, provider}
+#
+# Failures are caught and logged; a provider that returns nothing is fine,
+# the candidate feed simply won't include its jobs this run.
+
+def fetch_greenhouse_jobs(company, per_company_cap=5):
+    jobs_list = []
+    data = _http_get_json(f'https://boards-api.greenhouse.io/v1/boards/{company}/jobs')
+    if not data:
+        return jobs_list
+    jobs = data.get("jobs", [])
+    dev_jobs = [
+        j for j in jobs
+        if any(kw in j.get('title', '').lower() for kw in
+               ['engineer', 'developer', 'programmer', 'architect', 'tech lead', 'scientist', 'sre', 'devops'])
+    ]
+    for j in dev_jobs[:per_company_cap]:
+        job_id = j.get('id')
+        if not job_id:
+            continue
+        detail = _http_get_json(f'https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}?questions=true')
+        if not detail:
+            continue
+        title = detail.get("title", "")
+        raw_desc = detail.get("content", "")
+        desc = clean_html(raw_desc)
+        if not title or not desc:
+            continue
+        location = detail.get("location", {}).get("name", "Remote")
+        work_mode = parse_work_mode(title, location, desc)
+        salary = parse_salary(desc, title)
+        exp = parse_experience(title, desc)
+        skills = extract_skills(title, desc)
+        url = detail.get("absolute_url")
+        if not url:
+            continue
+        # Greenhouse doesn't expose an original `created_at` on the public
+        # board API. `updated_at` is the closest signal we have; if absent,
+        # we leave listed_at None and the DB will fall back to created_at.
+        listed_at = _parse_iso_to_dt(detail.get("updated_at") or detail.get("created_at"))
+        jobs_list.append({
+            "title": title,
+            "company": _company_display_name(company),
+            "location": location,
+            "work_mode": work_mode,
+            "salary": salary,
+            "experience_required": exp,
+            "skills_required": skills,
+            "description": desc[:3000],
+            "source": f"{_company_display_name(company)} Careers",
+            "url": url,
+            "ats_type": "Greenhouse",
+            "provider": "greenhouse",
+            "listed_at": listed_at,
+        })
+    return jobs_list
+
+
+def fetch_ashby_jobs(company, per_company_cap=5):
+    jobs_list = []
+    data = _http_get_json(f'https://api.ashbyhq.com/posting-api/job-board/{company}')
+    if not data:
+        return jobs_list
+    jobs = data.get("jobs", [])
+    dev_jobs = [
+        j for j in jobs
+        if any(kw in j.get('title', '').lower() for kw in
+               ['engineer', 'developer', 'programmer', 'architect', 'tech lead', 'scientist', 'sre', 'devops'])
+    ]
+    for j in dev_jobs[:per_company_cap]:
+        title = j.get("title", "")
+        raw_desc = j.get("descriptionHtml", "")
+        desc = clean_html(raw_desc) or j.get("descriptionPlain", "")
+        if not title or not desc:
+            continue
+        location = j.get("location", "Remote")
+        workplace_type = j.get("workplaceType", "Remote")
+        work_mode = parse_work_mode(title, location, desc, workplace_type)
+        salary = parse_salary(desc, title)
+        exp = parse_experience(title, desc)
+        skills = extract_skills(title, desc)
+        url = j.get("jobUrl")
+        if not url:
+            continue
+        # Ashby exposes publishedAt and createdAt on each listing object.
+        listed_at = _parse_iso_to_dt(
+            j.get("publishedAt") or j.get("createdAt")
+        )
+        jobs_list.append({
+            "title": title,
+            "company": _company_display_name(company),
+            "location": location,
+            "work_mode": work_mode,
+            "salary": salary,
+            "experience_required": exp,
+            "skills_required": skills,
+            "description": desc[:3000],
+            "source": f"{_company_display_name(company)} Careers",
+            "url": url,
+            "ats_type": "Ashby",
+            "provider": "ashby",
+            "listed_at": listed_at,
+        })
+    return jobs_list
+
+
+def fetch_lever_jobs(company, per_company_cap=5):
+    jobs_list = []
+    data = _http_get_json(f'https://api.lever.co/v0/postings/{company}?mode=json')
+    if not data:
+        return jobs_list
+    if not isinstance(data, list):
+        return jobs_list
+    dev_jobs = [
+        j for j in data
+        if any(kw in j.get('text', '').lower() for kw in
+               ['engineer', 'developer', 'programmer', 'architect', 'tech lead', 'scientist', 'sre', 'devops'])
+    ]
+    for j in dev_jobs[:per_company_cap]:
+        title = j.get("text", "")
+        if not title:
+            continue
+        plain = j.get("descriptionPlain") or clean_html(j.get("description", ""))
+        if not plain:
+            continue
+        location = j.get("categories", {}).get("location", "Remote") or "Remote"
+        work_mode = j.get("workplaceType", "")
+        if not work_mode:
+            work_mode = parse_work_mode(title, location, plain)
+        else:
+            work_mode = parse_work_mode(title, location, plain, work_mode)
+        salary = parse_salary(plain, title)
+        exp = parse_experience(title, plain)
+        skills = extract_skills(title, plain)
+        url = j.get("hostedUrl") or j.get("applyUrl")
+        if not url:
+            continue
+        # Lever's public posting JSON doesn't include a publish date, so
+        # listed_at stays None and the DB falls back to created_at (which is
+        # the first time *we* saw the row, not the upstream publish date).
+        jobs_list.append({
+            "title": title,
+            "company": _company_display_name(company),
+            "location": location,
+            "work_mode": work_mode,
+            "salary": salary,
+            "experience_required": exp,
+            "skills_required": skills,
+            "description": plain[:3000],
+            "source": f"{_company_display_name(company)} Careers",
+            "url": url,
+            "ats_type": "Lever",
+            "provider": "lever",
+            "listed_at": None,
+        })
+    return jobs_list
+
+
+def fetch_smartrecruiters_jobs(company, per_company_cap=5):
+    jobs_list = []
+    data = _http_get_json(f'https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=50')
+    if not data:
+        return jobs_list
+    content = data.get("content", [])
+    dev_jobs = [
+        j for j in content
+        if any(kw in (j.get('name') or '').lower() for kw in
+               ['engineer', 'developer', 'programmer', 'architect', 'tech lead', 'scientist', 'sre', 'devops'])
+    ]
+    for j in dev_jobs[:per_company_cap]:
+        title = j.get("name", "")
+        if not title:
+            continue
+        job_id = j.get("id")
+        if not job_id:
+            continue
+        detail = _http_get_json(f'https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}')
+        if not detail:
+            continue
+        raw_desc = detail.get("jobAd", {}).get("sections", {}).get("jobDescription", {}).get("text", "")
+        if not raw_desc:
+            continue
+        desc = clean_html(raw_desc)
+        loc_obj = detail.get("location") or {}
+        location = loc_obj.get("city") or loc_obj.get("region") or "Remote"
+        work_mode = parse_work_mode(title, location, desc)
+        salary = parse_salary(desc, title)
+        exp = parse_experience(title, desc)
+        skills = extract_skills(title, desc)
+        url = f"https://jobs.smartrecruiters.com/{company}/{job_id}"
+        # SmartRecruiters exposes `createdOn` as ISO timestamp.
+        listed_at = _parse_iso_to_dt(detail.get("createdOn"))
+        jobs_list.append({
+            "title": title,
+            "company": _company_display_name(company),
+            "location": location,
+            "work_mode": work_mode,
+            "salary": salary,
+            "experience_required": exp,
+            "skills_required": skills,
+            "description": desc[:3000],
+            "source": f"{_company_display_name(company)} Careers",
+            "url": url,
+            "ats_type": "SmartRecruiters",
+            "provider": "smartrecruiters",
+            "listed_at": listed_at,
+        })
+    return jobs_list
+
+
+def fetch_remoteok_jobs(per_run_cap=30):
+    """Aggregated remote-only feed. Public JSON, no auth."""
+    jobs_list = []
+    data = _http_get_json('https://remoteok.com/api?tags=python,golang,rust,typescript,react,node,aws,kubernetes')
+    if not data or not isinstance(data, list):
+        return jobs_list
+    for raw in data:
+        if not isinstance(raw, dict):
+            continue
+        url = raw.get("url")
+        title = raw.get("position") or raw.get("title")
+        company = raw.get("company")
+        if not url or not title or not company:
+            continue
+        desc = clean_html(raw.get("description", "")) or (raw.get("description") or "")
+        location = (raw.get("location") or "Remote") + " (Remote)"
+        work_mode = "Remote"
+        salary = ""
+        if raw.get("salary_min") and raw.get("salary_max"):
+            salary = f"${int(raw['salary_min']):,} - ${int(raw['salary_max']):,}"
+        else:
+            salary = parse_salary(desc, title)
+        exp = parse_experience(title, desc)
+        skills = extract_skills(title, desc)
+        if not desc:
+            continue
+        # RemoteOK's `date` field is a Unix epoch in seconds.
+        listed_at = _parse_iso_to_dt(raw.get("date") or raw.get("created_at"))
+        jobs_list.append({
+            "title": title,
+            "company": company,
+            "location": location,
+            "work_mode": work_mode,
+            "salary": salary,
+            "experience_required": exp,
+            "skills_required": skills,
+            "description": desc[:3000],
+            "source": "RemoteOK",
+            "url": url,
+            "ats_type": "RemoteOK",
+            "provider": "remoteok",
+            "listed_at": listed_at,
+        })
+        if len(jobs_list) >= per_run_cap:
+            break
+    return jobs_list
+
+
+def fetch_arbeitnow_jobs(per_run_cap=30):
+    """Aggregated public job board, focuses on Europe. Public JSON, no auth."""
+    jobs_list = []
+    data = _http_get_json('https://www.arbeitnow.com/api/job-board-api?search=engineer&remote=true')
+    if not data:
+        return jobs_list
+    rows = data.get("data", [])
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        url = raw.get("url")
+        title = raw.get("title")
+        company = raw.get("company_name")
+        if not url or not title or not company:
+            continue
+        desc = clean_html(raw.get("description", ""))
+        location = raw.get("location") or "Remote"
+        work_mode = "Remote" if raw.get("remote") else parse_work_mode(title, location, desc)
+        salary = parse_salary(desc, title)
+        exp = parse_experience(title, desc)
+        skills = extract_skills(title, desc)
+        if not desc:
+            continue
+        # Arbeitnow's `created_at` is a Unix epoch in seconds.
+        listed_at = _parse_iso_to_dt(raw.get("created_at") or raw.get("date"))
+        jobs_list.append({
+            "title": title,
+            "company": company,
+            "location": location,
+            "work_mode": work_mode,
+            "salary": salary,
+            "experience_required": exp,
+            "skills_required": skills,
+            "description": desc[:3000],
+            "source": "Arbeitnow",
+            "url": url,
+            "ats_type": "Arbeitnow",
+            "provider": "arbeitnow",
+            "listed_at": listed_at,
+        })
+        if len(jobs_list) >= per_run_cap:
+            break
+    return jobs_list
+
+
+def run_jobs_fetch(_companies_limit=None):
+    """
+    Refresh the live external job feed. Called from `trigger_background_job_fetch`,
+    which schedules this on a thread. We always hit every provider — sampling
+    two random companies and hoping one of them has fresh jobs is what produced
+    the stale and duplicated listings you saw before. The total per-run cost
+    is bounded by `per_company_cap` in each provider function.
+    """
+    print("[JobsFeed] Starting job feed refresh...")
+
+    seen_urls: set = set()
+    all_jobs: list = []
+
+    # Greenhouse — ~20 boards × 5 jobs
+    for company in GREENHOUSE_COMPANIES:
+        try:
+            for j in fetch_greenhouse_jobs(company):
+                if j["url"] not in seen_urls:
+                    seen_urls.add(j["url"])
+                    all_jobs.append(j)
+        except Exception as e:
+            print(f"[JobsFeed] Greenhouse {company} crashed: {e}")
+
+    # Ashby — ~15 boards × 5 jobs
+    for company in ASHBY_COMPANIES:
+        try:
+            for j in fetch_ashby_jobs(company):
+                if j["url"] not in seen_urls:
+                    seen_urls.add(j["url"])
+                    all_jobs.append(j)
+        except Exception as e:
+            print(f"[JobsFeed] Ashby {company} crashed: {e}")
+
+    # Lever — ~15 boards × 5 jobs
+    for company in LEVER_COMPANIES:
+        try:
+            for j in fetch_lever_jobs(company):
+                if j["url"] not in seen_urls:
+                    seen_urls.add(j["url"])
+                    all_jobs.append(j)
+        except Exception as e:
+            print(f"[JobsFeed] Lever {company} crashed: {e}")
+
+    # SmartRecruiters — ~15 boards × 5 jobs
+    for company in SMARTRECRUITERS_COMPANIES:
+        try:
+            for j in fetch_smartrecruiters_jobs(company):
+                if j["url"] not in seen_urls:
+                    seen_urls.add(j["url"])
+                    all_jobs.append(j)
+        except Exception as e:
+            print(f"[JobsFeed] SmartRecruiters {company} crashed: {e}")
+
+    # Aggregators — no per-company loop, just one feed call each
+    for j in fetch_remoteok_jobs():
+        if j["url"] not in seen_urls:
+            seen_urls.add(j["url"])
+            all_jobs.append(j)
+    for j in fetch_arbeitnow_jobs():
+        if j["url"] not in seen_urls:
+            seen_urls.add(j["url"])
+            all_jobs.append(j)
+
+    print(f"[JobsFeed] Fetched {len(all_jobs)} unique live jobs from upstream providers.")
+
+    if not all_jobs:
+        # No providers responded this run. Don't touch existing data — the
+        # last-good feed stays. We only do staleness sweeps after a successful
+        # fetch so a transient outage doesn't empty the portal.
+        print("[JobsFeed] No jobs fetched this run; leaving previous feed intact.")
+        return
+
+    # Upsert: insert new URLs, refresh metadata on existing ones, mark
+    # everything in the live set as confirmed-seen.
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    inserted = 0
+    refreshed = 0
+    for job in all_jobs:
+        try:
+            # `listed_at` is whatever the provider said about the original
+            # publish date. If the provider didn't expose one, we leave it
+            # NULL on insert and the SELECT-side fallback in `get_jobs()`
+            # uses `created_at`. We only overwrite listed_at when the
+            # incoming value is non-null — a later run that lost the
+            # timestamp must not erase a previously-captured one.
+            listed_at_dt = job.get("listed_at")
+            cursor.execute("""
+                INSERT INTO jobs (title, company, location, work_mode, salary,
+                                  experience_required, skills_required, description,
+                                  source, url, ats_type, provider, fetched_at,
+                                  is_live, closed_at, listed_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        CURRENT_TIMESTAMP, TRUE, NULL, %s)
+                ON CONFLICT (url) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    company = EXCLUDED.company,
+                    location = EXCLUDED.location,
+                    work_mode = EXCLUDED.work_mode,
+                    salary = EXCLUDED.salary,
+                    experience_required = EXCLUDED.experience_required,
+                    skills_required = EXCLUDED.skills_required,
+                    description = EXCLUDED.description,
+                    source = EXCLUDED.source,
+                    ats_type = EXCLUDED.ats_type,
+                    provider = EXCLUDED.provider,
+                    fetched_at = CURRENT_TIMESTAMP,
+                    is_live = TRUE,
+                    closed_at = NULL,
+                    listed_at = COALESCE(EXCLUDED.listed_at, jobs.listed_at)
+            """, (
+                job["title"], job["company"], job["location"], job["work_mode"],
+                job["salary"], job["experience_required"],
+                json.dumps(job["skills_required"]),
+                job["description"], job["source"], job["url"],
+                job["ats_type"], job["provider"],
+                listed_at_dt,
+            ))
+            if cursor.rowcount == 1:
+                inserted += 1
+            else:
+                refreshed += 1
+        except Exception as e:
+            print(f"[JobsFeed] Upsert failed for {job.get('url')}: {e}")
+
+    # Staleness sweep: any URL we DIDN'T see this run, and that was last
+    # seen more than JOB_LIVE_WINDOW_DAYS ago, is now closed. We only mark
+    # rows whose last refresh attempt failed — a job that simply wasn't in
+    # this run's sample set is given the full window before being dropped.
+    try:
+        cursor.execute("""
+            UPDATE jobs
+            SET is_live = FALSE,
+                closed_at = CURRENT_TIMESTAMP
+            WHERE is_live = TRUE
+              AND url NOT IN (SELECT unnest(%s::text[]))
+              AND fetched_at < (CURRENT_TIMESTAMP - (INTERVAL '1 day' * %s))
+        """, (list(seen_urls) if seen_urls else [""], JOB_LIVE_WINDOW_DAYS))
+        closed = cursor.rowcount
+    except Exception as e:
+        closed = 0
+        print(f"[JobsFeed] Staleness sweep error: {e}")
+
+    conn.commit()
+    conn.close()
+    print(f"[JobsFeed] Refresh complete: {inserted} new, {refreshed} refreshed, {closed} closed.")
+
+
+def trigger_background_job_fetch():
+    print("[JobsFeed] Scheduling background job fetch...")
+    thread = threading.Thread(target=run_jobs_fetch, daemon=True)
+    thread.start()
 
 GREENHOUSE_COMPANIES = [
     'stripe', 'mongodb', 'vercel', 'figma', 'reddit', 'samsara', 
@@ -1957,34 +3271,38 @@ def trigger_background_job_fetch():
 # RECRUITER & FOUNDER PORTAL DATABASE FUNCTIONS
 # =========================================================================
 
-def create_recruiter_job(job_data: dict) -> dict:
+def create_recruiter_job(org_id: int, created_by: str, job_data: dict) -> dict:
+    """Creates a requisition owned by the caller's organization."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        skills = job_data.get("required_skills") or []
+        if isinstance(skills, str):
+            skills = [s.strip() for s in skills.split(",") if s.strip()]
         cursor.execute("""
             INSERT INTO recruiter_jobs (
-                recruiter_id, company_name, role_title, work_mode,
+                org_id, recruiter_id, company_name, role_title, work_mode,
                 location, salary_range, min_devscore, required_skills,
                 experience_level, description, status
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
         """, (
-            job_data.get("recruiter_id", "default_recruiter"),
-            job_data.get("company_name", "Stealth AI"),
-            job_data.get("role_title", "Founding Engineer"),
-            job_data.get("work_mode", "Remote"),
-            job_data.get("location", "Remote / Global"),
-            job_data.get("salary_range", "$140k - $180k"),
-            job_data.get("min_devscore", 700),
-            json.dumps(job_data.get("required_skills", ["Python", "System Design"])),
-            job_data.get("experience_level", "Senior"),
-            job_data.get("description", "Join our high-velocity team building AI systems."),
-            job_data.get("status", "Active")
+            org_id,
+            str(created_by),
+            job_data.get("company_name") or "",
+            job_data.get("role_title") or "",
+            job_data.get("work_mode") or "Remote",
+            job_data.get("location") or "",
+            job_data.get("salary_range") or "",
+            int(job_data.get("min_devscore") or 0),
+            json.dumps(skills),
+            job_data.get("experience_level") or "Mid-Level",
+            job_data.get("description") or "",
+            job_data.get("status") or "Active",
         ))
         res = cursor.fetchone()
         conn.commit()
-        job_id = res.get("id") if res else 1
-        return {**job_data, "id": job_id}
+        return get_recruiter_job(org_id, res["id"]) if res else None
     except Exception as e:
         print(f"Error creating recruiter job: {e}")
         try:
@@ -1995,90 +3313,220 @@ def create_recruiter_job(job_data: dict) -> dict:
     finally:
         conn.close()
 
-def get_recruiter_jobs(recruiter_id: str = None) -> list:
+
+def _serialize_recruiter_job(r) -> dict:
+    skills = []
+    if r.get("required_skills"):
+        try:
+            skills = json.loads(r.get("required_skills"))
+        except Exception:
+            skills = []
+    return {
+        "id": r.get("id"),
+        "org_id": r.get("org_id"),
+        "company_name": r.get("company_name"),
+        "role_title": r.get("role_title"),
+        "work_mode": r.get("work_mode"),
+        "location": r.get("location"),
+        "salary_range": r.get("salary_range"),
+        "min_devscore": r.get("min_devscore"),
+        "required_skills": skills,
+        "experience_level": r.get("experience_level"),
+        "description": r.get("description"),
+        "status": r.get("status"),
+        "created_at": r.get("created_at"),
+        "shortlist_count": int(r.get("shortlist_count") or 0),
+        "assessment_count": int(r.get("assessment_count") or 0),
+    }
+
+
+def get_recruiter_jobs(org_id: int) -> list:
+    """
+    Requisitions for one organization, with live pipeline counts. org_id is
+    mandatory — there is deliberately no unscoped variant.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        if recruiter_id:
-            cursor.execute("SELECT * FROM recruiter_jobs WHERE recruiter_id = %s ORDER BY created_at DESC", (recruiter_id,))
-        else:
-            cursor.execute("SELECT * FROM recruiter_jobs ORDER BY created_at DESC")
-        rows = cursor.fetchall()
-        jobs = []
-        for r in rows:
-            skills = []
-            if r.get("required_skills"):
-                try:
-                    skills = json.loads(r.get("required_skills"))
-                except Exception:
-                    skills = []
-            jobs.append({
-                "id": r.get("id"),
-                "recruiter_id": r.get("recruiter_id"),
-                "company_name": r.get("company_name"),
-                "role_title": r.get("role_title"),
-                "work_mode": r.get("work_mode"),
-                "location": r.get("location"),
-                "salary_range": r.get("salary_range"),
-                "min_devscore": r.get("min_devscore"),
-                "required_skills": skills,
-                "experience_level": r.get("experience_level"),
-                "description": r.get("description"),
-                "status": r.get("status"),
-                "created_at": r.get("created_at")
-            })
-        return jobs
+        cursor.execute("""
+            SELECT j.*,
+                   (SELECT COUNT(*) FROM candidate_shortlists s
+                     WHERE s.job_id = j.id AND s.org_id = j.org_id) AS shortlist_count,
+                   (SELECT COUNT(*) FROM takehome_assessments a
+                     WHERE a.job_id = j.id AND a.org_id = j.org_id) AS assessment_count
+            FROM recruiter_jobs j
+            WHERE j.org_id = %s
+            ORDER BY j.created_at DESC
+        """, (org_id,))
+        return [_serialize_recruiter_job(r) for r in cursor.fetchall()]
     except Exception as e:
         print(f"Error getting recruiter jobs: {e}")
         return []
     finally:
         conn.close()
 
-def shortlist_candidate(data: dict) -> dict:
+
+def get_recruiter_job(org_id: int, job_id: int) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        recruiter_id = data.get("recruiter_id", "recruiter_1")
-        candidate_id = data.get("candidate_id")
-        
-        # Check if already shortlisted by this recruiter
-        cursor.execute("SELECT id FROM candidate_shortlists WHERE recruiter_id = %s AND candidate_id = %s", (recruiter_id, candidate_id))
+        cursor.execute(
+            "SELECT * FROM recruiter_jobs WHERE id = %s AND org_id = %s",
+            (job_id, org_id)
+        )
+        row = cursor.fetchone()
+        return _serialize_recruiter_job(row) if row else None
+    except Exception as e:
+        print(f"Error getting recruiter job: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def update_recruiter_job(org_id: int, job_id: int, fields: dict) -> dict:
+    """Partial update, constrained to the caller's organization."""
+    allowed = (
+        "company_name", "role_title", "work_mode", "location", "salary_range",
+        "min_devscore", "required_skills", "experience_level", "description", "status",
+    )
+    updates = {}
+    for key in allowed:
+        if key not in fields or fields[key] is None:
+            continue
+        value = fields[key]
+        if key == "required_skills":
+            if isinstance(value, str):
+                value = [s.strip() for s in value.split(",") if s.strip()]
+            value = json.dumps(value or [])
+        elif key == "min_devscore":
+            value = int(value)
+        updates[key] = value
+    if not updates:
+        return get_recruiter_job(org_id, job_id)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cursor.execute(
+            f"UPDATE recruiter_jobs SET {set_clause}, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE id = %s AND org_id = %s",
+            (*updates.values(), job_id, org_id)
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        if not changed:
+            return None
+    except Exception as e:
+        print(f"Error updating recruiter job: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+    return get_recruiter_job(org_id, job_id)
+
+
+def delete_recruiter_job(org_id: int, job_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM recruiter_jobs WHERE id = %s AND org_id = %s",
+            (job_id, org_id)
+        )
+        removed = cursor.rowcount
+        if removed:
+            # Detach dependents rather than cascading away pipeline history
+            cursor.execute(
+                "UPDATE candidate_shortlists SET job_id = 0 WHERE job_id = %s AND org_id = %s",
+                (job_id, org_id)
+            )
+            cursor.execute(
+                "UPDATE takehome_assessments SET job_id = 0 WHERE job_id = %s AND org_id = %s",
+                (job_id, org_id)
+            )
+        conn.commit()
+        return removed > 0
+    except Exception as e:
+        print(f"Error deleting recruiter job: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+# -------------------------------------------------------------------------
+# PIPELINE
+# -------------------------------------------------------------------------
+
+PIPELINE_STAGES = (
+    "Sourced", "Screening", "Assessment", "Interview", "Offer", "Hired", "Rejected",
+)
+
+
+def shortlist_candidate(org_id: int, actor_user_id: str, data: dict) -> dict:
+    """
+    Adds a candidate to the organization's pipeline (or updates the existing
+    entry) and records a stage transition event.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        candidate_id = str(data.get("candidate_id") or "").strip()
+        if not candidate_id:
+            return None
+        stage = data.get("stage") or "Sourced"
+        if stage not in PIPELINE_STAGES:
+            stage = "Sourced"
+        job_id = int(data.get("job_id") or 0)
+
+        cursor.execute(
+            "SELECT id, stage FROM candidate_shortlists WHERE org_id = %s AND candidate_id = %s",
+            (org_id, candidate_id)
+        )
         existing = cursor.fetchone()
-        
+
         if existing:
+            shortlist_id = existing["id"]
+            from_stage = existing["stage"]
             cursor.execute("""
-                UPDATE candidate_shortlists SET
-                    stage = %s,
-                    notes = %s,
-                    job_id = %s
-                WHERE id = %s
-                RETURNING id, created_at
-            """, (
-                data.get("stage", "Shortlisted"),
-                data.get("notes", ""),
-                data.get("job_id", 0),
-                existing["id"]
-            ))
-            res = cursor.fetchone()
-            conn.commit()
-            return {**data, "id": res.get("id") if res else existing["id"]}
+                UPDATE candidate_shortlists
+                SET stage = %s, notes = %s, job_id = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND org_id = %s
+            """, (stage, data.get("notes") or "", job_id, shortlist_id, org_id))
         else:
+            from_stage = ""
             cursor.execute("""
                 INSERT INTO candidate_shortlists (
-                    recruiter_id, candidate_id, candidate_name, job_id, stage, notes
-                ) VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id, created_at
+                    org_id, recruiter_id, candidate_id, candidate_name, job_id, stage, notes
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
             """, (
-                recruiter_id,
+                org_id,
+                str(actor_user_id),
                 candidate_id,
-                data.get("candidate_name", "Candidate"),
-                data.get("job_id", 0),
-                data.get("stage", "Shortlisted"),
-                data.get("notes", "")
+                data.get("candidate_name") or "",
+                job_id,
+                stage,
+                data.get("notes") or "",
             ))
-            res = cursor.fetchone()
-            conn.commit()
-            return {**data, "id": res.get("id") if res else 1}
+            shortlist_id = cursor.fetchone()["id"]
+
+        if from_stage != stage:
+            cursor.execute("""
+                INSERT INTO shortlist_events (shortlist_id, org_id, actor_user_id, from_stage, to_stage, note)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (shortlist_id, org_id, str(actor_user_id), from_stage, stage, data.get("notes") or ""))
+
+        conn.commit()
+        return {"id": shortlist_id, "candidate_id": candidate_id, "stage": stage, "job_id": job_id}
     except Exception as e:
         print(f"Error shortlisting candidate: {e}")
         try:
@@ -2089,26 +3537,205 @@ def shortlist_candidate(data: dict) -> dict:
     finally:
         conn.close()
 
-def get_shortlisted_candidates(recruiter_id: str) -> list:
+
+def register_inbound_application(recruiter_job_id: int, candidate_user_id: str,
+                                 candidate_name: str, note: str = "") -> dict:
+    """
+    A candidate applied directly to a requisition. Resolves the owning
+    organization from the requisition itself — the caller never supplies an
+    org_id, so an application can only ever land in the pipeline of the company
+    that posted the job.
+
+    Two deliberate differences from `shortlist_candidate`:
+      * An existing entry is never moved backwards. A candidate the recruiter
+        has already advanced to Interview stays at Interview; the application is
+        recorded as an event instead.
+      * Applying is consent. The candidate chose this company, so an accepted
+        outreach row is written and that org (only that org) may see their
+        contact details. Nothing is unlocked for anyone else.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM candidate_shortlists WHERE recruiter_id = %s ORDER BY created_at DESC", (recruiter_id,))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        candidate_id = str(candidate_user_id or "").strip()
+        if not candidate_id:
+            return None
+
+        cursor.execute(
+            "SELECT id, org_id, role_title FROM recruiter_jobs WHERE id = %s",
+            (int(recruiter_job_id),)
+        )
+        job = cursor.fetchone()
+        if not job or not job.get("org_id"):
+            # Unowned or legacy requisition: there is no tenant to file this
+            # under, and guessing one would leak the application to a stranger.
+            return None
+        org_id = job["org_id"]
+        job_id = job["id"]
+
+        cursor.execute(
+            "SELECT id, stage FROM candidate_shortlists WHERE org_id = %s AND candidate_id = %s",
+            (org_id, candidate_id)
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            shortlist_id = existing["id"]
+            stage = existing["stage"]
+            cursor.execute("""
+                UPDATE candidate_shortlists
+                SET job_id = CASE WHEN job_id IS NULL OR job_id = 0 THEN %s ELSE job_id END,
+                    candidate_name = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND org_id = %s
+            """, (job_id, candidate_name or "", shortlist_id, org_id))
+        else:
+            stage = "Sourced"
+            cursor.execute("""
+                INSERT INTO candidate_shortlists (
+                    org_id, recruiter_id, candidate_id, candidate_name, job_id, stage, notes
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (org_id, candidate_id, candidate_id, candidate_name or "", job_id, stage, note or ""))
+            shortlist_id = cursor.fetchone()["id"]
+
+        cursor.execute("""
+            INSERT INTO shortlist_events (shortlist_id, org_id, actor_user_id, from_stage, to_stage, note)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (shortlist_id, org_id, candidate_id, stage, stage,
+              note or f"Applied to {job.get('role_title') or 'this role'}"))
+
+        cursor.execute("""
+            INSERT INTO recruiter_outreach (org_id, candidate_user_id, job_id, message, sent_by, status, responded_at)
+            VALUES (%s, %s, %s, %s, %s, 'accepted', CURRENT_TIMESTAMP)
+            ON CONFLICT (org_id, candidate_user_id, job_id) DO UPDATE
+                SET status = 'accepted', responded_at = CURRENT_TIMESTAMP
+            RETURNING id
+        """, (org_id, candidate_id, job_id,
+              "Candidate applied directly to this requisition.", candidate_id))
+
+        conn.commit()
+        return {"id": shortlist_id, "org_id": org_id, "job_id": job_id, "stage": stage}
+    except Exception as e:
+        print(f"Error registering inbound application: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+
+def get_shortlisted_candidates(org_id: int) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT s.*, j.role_title AS job_role_title
+            FROM candidate_shortlists s
+            LEFT JOIN recruiter_jobs j ON j.id = s.job_id AND j.org_id = s.org_id
+            WHERE s.org_id = %s
+            ORDER BY s.updated_at DESC NULLS LAST, s.created_at DESC
+        """, (org_id,))
+        return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         print(f"Error getting shortlists: {e}")
         return []
     finally:
         conn.close()
 
-def delete_shortlisted_candidate(shortlist_id: int) -> bool:
+
+def update_shortlist_stage(org_id: int, shortlist_id: int, actor_user_id: str,
+                           stage: str = None, notes: str = None, job_id: int = None) -> dict:
+    """Moves a candidate between pipeline stages and appends to the audit trail."""
+    if stage is not None and stage not in PIPELINE_STAGES:
+        return {"error": "invalid_stage"}
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("DELETE FROM candidate_shortlists WHERE id = %s", (shortlist_id,))
+        cursor.execute(
+            "SELECT stage FROM candidate_shortlists WHERE id = %s AND org_id = %s",
+            (shortlist_id, org_id)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "not_found"}
+        from_stage = row["stage"]
+
+        updates, params = [], []
+        if stage is not None:
+            updates.append("stage = %s")
+            params.append(stage)
+        if notes is not None:
+            updates.append("notes = %s")
+            params.append(notes)
+        if job_id is not None:
+            updates.append("job_id = %s")
+            params.append(int(job_id))
+        if not updates:
+            return {"error": "no_changes"}
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        cursor.execute(
+            f"UPDATE candidate_shortlists SET {', '.join(updates)} WHERE id = %s AND org_id = %s",
+            (*params, shortlist_id, org_id)
+        )
+        if stage is not None and stage != from_stage:
+            cursor.execute("""
+                INSERT INTO shortlist_events (shortlist_id, org_id, actor_user_id, from_stage, to_stage, note)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (shortlist_id, org_id, str(actor_user_id), from_stage, stage, notes or ""))
         conn.commit()
-        return True
+        return {"id": shortlist_id, "stage": stage or from_stage, "from_stage": from_stage}
+    except Exception as e:
+        print(f"Error updating shortlist stage: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"error": "server"}
+    finally:
+        conn.close()
+
+
+def get_shortlist_events(org_id: int, shortlist_id: int) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT e.from_stage, e.to_stage, e.note, e.created_at, u.name AS actor_name
+            FROM shortlist_events e
+            LEFT JOIN users u ON CAST(u.id AS TEXT) = e.actor_user_id
+            WHERE e.shortlist_id = %s AND e.org_id = %s
+            ORDER BY e.created_at DESC
+        """, (shortlist_id, org_id))
+        return [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error fetching shortlist events: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def delete_shortlisted_candidate(org_id: int, shortlist_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM candidate_shortlists WHERE id = %s AND org_id = %s",
+            (shortlist_id, org_id)
+        )
+        removed = cursor.rowcount
+        if removed:
+            cursor.execute(
+                "DELETE FROM shortlist_events WHERE shortlist_id = %s AND org_id = %s",
+                (shortlist_id, org_id)
+            )
+        conn.commit()
+        return removed > 0
     except Exception as e:
         print(f"Error deleting shortlist candidate: {e}")
         try:
@@ -2119,31 +3746,41 @@ def delete_shortlisted_candidate(shortlist_id: int) -> bool:
     finally:
         conn.close()
 
+
+# -------------------------------------------------------------------------
+# TAKE-HOME ASSESSMENTS
+# -------------------------------------------------------------------------
+
 def create_takehome_assessment(data: dict) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
             INSERT INTO takehome_assessments (
-                token, recruiter_id, candidate_id, candidate_name, role_title,
-                problem_title, problem_slug, difficulty, time_limit_minutes, status
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                org_id, token, recruiter_id, candidate_id, candidate_name, candidate_email,
+                role_title, job_id, problem_title, problem_slug, difficulty,
+                time_limit_minutes, status, expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
         """, (
+            data.get("org_id"),
             data.get("token"),
-            data.get("recruiter_id"),
-            data.get("candidate_id"),
-            data.get("candidate_name"),
-            data.get("role_title"),
-            data.get("problem_title"),
-            data.get("problem_slug"),
-            data.get("difficulty", "Medium"),
-            data.get("time_limit_minutes", 45),
-            data.get("status", "Sent")
+            str(data.get("recruiter_id") or ""),
+            str(data.get("candidate_id") or ""),
+            data.get("candidate_name") or "",
+            data.get("candidate_email") or "",
+            data.get("role_title") or "",
+            int(data.get("job_id") or 0),
+            data.get("problem_title") or "",
+            data.get("problem_slug") or "",
+            data.get("difficulty") or "Medium",
+            int(data.get("time_limit_minutes") or 60),
+            data.get("status") or "Sent",
+            data.get("expires_at"),
         ))
         res = cursor.fetchone()
         conn.commit()
-        return {**data, "id": res.get("id") if res else 1}
+        return {**data, "id": res["id"] if res else None, "created_at": res.get("created_at") if res else None}
     except Exception as e:
         print(f"Error creating takehome assessment: {e}")
         try:
@@ -2154,23 +3791,32 @@ def create_takehome_assessment(data: dict) -> dict:
     finally:
         conn.close()
 
-def get_takehome_assessments(recruiter_id: str = None) -> list:
+
+def get_takehome_assessments(org_id: int) -> list:
+    """
+    Assessments for one organization. The raw token is deliberately NOT
+    returned — a recruiter holding it could complete the candidate's test.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        if recruiter_id:
-            cursor.execute("SELECT * FROM takehome_assessments WHERE recruiter_id = %s ORDER BY created_at DESC", (recruiter_id,))
-        else:
-            cursor.execute("SELECT * FROM takehome_assessments ORDER BY created_at DESC")
-        rows = cursor.fetchall()
+        cursor.execute("""
+            SELECT id, org_id, candidate_id, candidate_name, candidate_email, role_title,
+                   job_id, problem_title, problem_slug, difficulty, time_limit_minutes,
+                   status, score, chaos_resilience, test_results, attempt_count,
+                   created_at, expires_at, started_at, submitted_at, completed_at, invite_sent_at
+            FROM takehome_assessments
+            WHERE org_id = %s
+            ORDER BY created_at DESC
+        """, (org_id,))
         result = []
-        for r in rows:
+        for r in cursor.fetchall():
             item = dict(r)
-            if item.get("test_results") and isinstance(item["test_results"], str):
+            if isinstance(item.get("test_results"), str):
                 try:
                     item["test_results"] = json.loads(item["test_results"])
                 except Exception:
-                    pass
+                    item["test_results"] = {}
             result.append(item)
         return result
     except Exception as e:
@@ -2178,6 +3824,7 @@ def get_takehome_assessments(recruiter_id: str = None) -> list:
         return []
     finally:
         conn.close()
+
 
 def get_takehome_assessment_by_token(token: str) -> dict:
     conn = get_db_connection()
@@ -2188,11 +3835,11 @@ def get_takehome_assessment_by_token(token: str) -> dict:
         if not row:
             return None
         res = dict(row)
-        if res.get("test_results") and isinstance(res["test_results"], str):
+        if isinstance(res.get("test_results"), str):
             try:
                 res["test_results"] = json.loads(res["test_results"])
             except Exception:
-                pass
+                res["test_results"] = {}
         return res
     except Exception as e:
         print(f"Error getting takehome assessment by token: {e}")
@@ -2200,7 +3847,57 @@ def get_takehome_assessment_by_token(token: str) -> dict:
     finally:
         conn.close()
 
-def update_takehome_assessment_result(token: str, status: str, score: int, chaos_resilience: int, test_results: dict) -> bool:
+
+def mark_takehome_started(token: str) -> bool:
+    """Stamps started_at once, so the countdown is anchored server-side."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE takehome_assessments
+            SET started_at = CURRENT_TIMESTAMP,
+                status = CASE WHEN status = 'Sent' THEN 'In Progress' ELSE status END
+            WHERE token = %s AND started_at IS NULL
+        """, (token,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"Error marking takehome started: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def mark_takehome_invite_sent(token: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE takehome_assessments SET invite_sent_at = CURRENT_TIMESTAMP WHERE token = %s",
+            (token,)
+        )
+        conn.commit()
+        return True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def update_takehome_assessment_result(token: str, status: str, score: int,
+                                      chaos_resilience: int, test_results: dict) -> bool:
+    """
+    Records a submission. Guarded so a token can only be submitted once — the
+    UPDATE is a no-op if the assessment has already been finalized.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -2210,11 +3907,14 @@ def update_takehome_assessment_result(token: str, status: str, score: int, chaos
                 score = %s,
                 chaos_resilience = %s,
                 test_results = %s,
+                attempt_count = COALESCE(attempt_count, 0) + 1,
+                submitted_at = CURRENT_TIMESTAMP,
                 completed_at = CURRENT_TIMESTAMP
-            WHERE token = %s
+            WHERE token = %s AND submitted_at IS NULL
         """, (status, score, chaos_resilience, json.dumps(test_results), token))
+        changed = cursor.rowcount
         conn.commit()
-        return True
+        return changed > 0
     except Exception as e:
         print(f"Error updating takehome assessment result: {e}")
         try:
@@ -2225,13 +3925,18 @@ def update_takehome_assessment_result(token: str, status: str, score: int, chaos
     finally:
         conn.close()
 
-def delete_takehome_assessment(assessment_id: int) -> bool:
+
+def delete_takehome_assessment(org_id: int, assessment_id: int) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("DELETE FROM takehome_assessments WHERE id = %s", (assessment_id,))
+        cursor.execute(
+            "DELETE FROM takehome_assessments WHERE id = %s AND org_id = %s",
+            (assessment_id, org_id)
+        )
+        removed = cursor.rowcount
         conn.commit()
-        return True
+        return removed > 0
     except Exception as e:
         print(f"Error deleting takehome assessment: {e}")
         try:
@@ -2242,20 +3947,288 @@ def delete_takehome_assessment(assessment_id: int) -> bool:
     finally:
         conn.close()
 
-def create_or_update_startup_profile(data: dict) -> dict:
+
+def get_assessment_for_resend(org_id: int, assessment_id: int) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        user_id = str(data.get("user_id", "default_recruiter"))
-        company_name = data.get("company_name", "My Startup")
+        cursor.execute(
+            "SELECT * FROM takehome_assessments WHERE id = %s AND org_id = %s",
+            (assessment_id, org_id)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"Error fetching assessment: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+# -------------------------------------------------------------------------
+# CANDIDATE CONSENT & RECRUITER OUTREACH
+# -------------------------------------------------------------------------
+
+def set_candidate_opportunity_optin(user_id: str, open_to_opportunities: bool,
+                                    preferences: str = None) -> dict:
+    """
+    The sourcing consent switch. A candidate is invisible to every recruiter
+    until this is TRUE.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT 1 FROM candidate_profiles WHERE user_id = %s", (str(user_id),))
+        if not cursor.fetchone():
+            cursor.execute(
+                "INSERT INTO candidate_profiles (user_id) VALUES (%s)",
+                (str(user_id),)
+            )
+        if preferences is None:
+            cursor.execute("""
+                UPDATE candidate_profiles
+                SET open_to_opportunities = %s,
+                    opted_in_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END
+                WHERE user_id = %s
+            """, (bool(open_to_opportunities), bool(open_to_opportunities), str(user_id)))
+        else:
+            cursor.execute("""
+                UPDATE candidate_profiles
+                SET open_to_opportunities = %s,
+                    opportunity_preferences = %s,
+                    opted_in_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END
+                WHERE user_id = %s
+            """, (bool(open_to_opportunities), preferences, bool(open_to_opportunities), str(user_id)))
+        conn.commit()
+        return {
+            "open_to_opportunities": bool(open_to_opportunities),
+            "opportunity_preferences": preferences or "",
+        }
+    except Exception as e:
+        print(f"Error setting candidate opt-in: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+
+def get_candidate_opportunity_status(user_id: str) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT open_to_opportunities, opportunity_preferences, opted_in_at
+            FROM candidate_profiles WHERE user_id = %s
+        """, (str(user_id),))
+        row = cursor.fetchone()
+        if not row:
+            return {"open_to_opportunities": False, "opportunity_preferences": "", "opted_in_at": None}
+        return {
+            "open_to_opportunities": bool(row.get("open_to_opportunities")),
+            "opportunity_preferences": row.get("opportunity_preferences") or "",
+            "opted_in_at": row.get("opted_in_at"),
+        }
+    except Exception as e:
+        print(f"Error fetching opt-in status: {e}")
+        return {"open_to_opportunities": False, "opportunity_preferences": "", "opted_in_at": None}
+    finally:
+        conn.close()
+
+
+def create_outreach_request(org_id: int, candidate_user_id: str, job_id: int,
+                            message: str, sent_by: str) -> dict:
+    """
+    Records a contact request. The candidate must accept before the recruiter
+    sees any contact detail.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT open_to_opportunities FROM candidate_profiles WHERE user_id = %s
+        """, (str(candidate_user_id),))
+        prof = cursor.fetchone()
+        if not prof or not prof.get("open_to_opportunities"):
+            return {"error": "not_open_to_opportunities"}
+
+        cursor.execute("""
+            INSERT INTO recruiter_outreach (org_id, candidate_user_id, job_id, message, sent_by)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (org_id, candidate_user_id, job_id) DO UPDATE
+                SET message = EXCLUDED.message,
+                    sent_by = EXCLUDED.sent_by,
+                    status = CASE WHEN recruiter_outreach.status = 'declined'
+                                  THEN 'declined' ELSE recruiter_outreach.status END
+            RETURNING id, status
+        """, (org_id, str(candidate_user_id), int(job_id or 0), (message or "")[:2000], str(sent_by)))
+        res = cursor.fetchone()
+        conn.commit()
+        return {"id": res["id"], "status": res["status"]}
+    except Exception as e:
+        print(f"Error creating outreach request: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"error": "server"}
+    finally:
+        conn.close()
+
+
+def get_org_outreach(org_id: int) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT id, candidate_user_id, job_id, status, message, created_at, responded_at
+            FROM recruiter_outreach WHERE org_id = %s ORDER BY created_at DESC
+        """, (org_id,))
+        return [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error fetching org outreach: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_unlocked_candidate_ids(org_id: int) -> set:
+    """Candidate ids that have accepted this organization's outreach."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT DISTINCT candidate_user_id FROM recruiter_outreach
+            WHERE org_id = %s AND status = 'accepted'
+        """, (org_id,))
+        return {str(r["candidate_user_id"]) for r in cursor.fetchall()}
+    except Exception as e:
+        print(f"Error fetching unlocked candidates: {e}")
+        return set()
+    finally:
+        conn.close()
+
+
+def get_candidate_outreach(candidate_user_id: str) -> list:
+    """The candidate's own inbox of pending and answered contact requests."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT r.id, r.status, r.message, r.created_at, r.responded_at, r.job_id,
+                   o.name AS org_name, o.website_url AS org_website,
+                   j.role_title, j.location, j.work_mode, j.salary_range
+            FROM recruiter_outreach r
+            JOIN organizations o ON o.id = r.org_id
+            LEFT JOIN recruiter_jobs j ON j.id = r.job_id AND j.org_id = r.org_id
+            WHERE r.candidate_user_id = %s
+            ORDER BY r.created_at DESC
+        """, (str(candidate_user_id),))
+        return [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error fetching candidate outreach: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_candidate_tracker_state(candidate_user_id: str) -> dict:
+    """
+    Everything the candidate's own application tracker needs, keyed by
+    requisition so each application shows the stage at THAT company. The
+    previous implementation took the single newest shortlist row across all
+    organizations and stamped it onto every application, so once two companies
+    were in play the tracker showed the wrong company's stage.
+
+    The assessment token is included because this is the candidate's own data —
+    callers must therefore resolve `candidate_user_id` from the bearer token and
+    never from a request parameter.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    state = {"shortlists": [], "assessments": []}
+    try:
+        cursor.execute("""
+            SELECT s.id, s.job_id, s.stage, s.notes, s.created_at, s.updated_at,
+                   o.name AS org_name, j.role_title
+            FROM candidate_shortlists s
+            JOIN organizations o ON o.id = s.org_id
+            LEFT JOIN recruiter_jobs j ON j.id = s.job_id AND j.org_id = s.org_id
+            WHERE s.candidate_id = %s
+            ORDER BY s.updated_at DESC NULLS LAST, s.created_at DESC
+        """, (str(candidate_user_id),))
+        state["shortlists"] = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute("""
+            SELECT a.id, a.job_id, a.token, a.problem_title, a.problem_slug,
+                   a.difficulty, a.time_limit_minutes, a.status, a.score,
+                   a.expires_at, a.started_at, a.submitted_at, a.created_at,
+                   o.name AS org_name, a.role_title
+            FROM takehome_assessments a
+            JOIN organizations o ON o.id = a.org_id
+            WHERE a.candidate_id = %s
+            ORDER BY a.created_at DESC
+        """, (str(candidate_user_id),))
+        state["assessments"] = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error fetching candidate tracker state: {e}")
+    finally:
+        conn.close()
+    return state
+
+
+def respond_to_outreach(outreach_id: int, candidate_user_id: str, accept: bool) -> dict:
+    """Only the addressed candidate can answer, and only once."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE recruiter_outreach
+            SET status = %s, responded_at = CURRENT_TIMESTAMP
+            WHERE id = %s AND candidate_user_id = %s AND status = 'pending'
+        """, ("accepted" if accept else "declined", outreach_id, str(candidate_user_id)))
+        changed = cursor.rowcount
+        conn.commit()
+        if not changed:
+            return {"error": "not_found_or_answered"}
+        return {"id": outreach_id, "status": "accepted" if accept else "declined"}
+    except Exception as e:
+        print(f"Error responding to outreach: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"error": "server"}
+    finally:
+        conn.close()
+
+
+def create_or_update_startup_profile(data: dict) -> dict:
+    """
+    Upserts the company profile keyed on the founder's user id. The caller must
+    supply that id — it is resolved from the bearer token, never defaulted to a
+    shared "default_recruiter" row that every tenant would have written into.
+    """
+    user_id = str(data.get("user_id") or "").strip()
+    if not user_id:
+        return None
+    company_name = (data.get("company_name") or "").strip()
+    if not company_name:
+        return None
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
         founder_name = data.get("founder_name", "")
-        founder_role = data.get("founder_role", "Founder / CTO")
+        founder_role = data.get("founder_role", "")
         tagline = data.get("tagline", "")
-        stage = data.get("stage", "Seed")
+        stage = data.get("stage", "")
         website_url = data.get("website_url", "")
-        industry = data.get("industry", "AI & DevTools")
-        location = data.get("location", "Remote")
-        team_size = data.get("team_size", "1-10")
+        industry = data.get("industry", "")
+        location = data.get("location", "")
+        team_size = data.get("team_size", "")
         primary_tech_stack = data.get("primary_tech_stack", [])
         if isinstance(primary_tech_stack, list):
             primary_tech_stack_json = json.dumps(primary_tech_stack)
@@ -2331,60 +4304,41 @@ def get_startup_profile(user_id: str) -> dict:
 
 def get_user_prepai_stats(user_id: str = None) -> dict:
     """
-    Fetches real aggregated voice/interview performance metrics for the user.
+    Real aggregated voice/interview metrics for one user. Returns zeros when the
+    user has no completed sessions — never another user's averages.
     """
+    empty = {
+        "sessions_count": 0,
+        "voice_rating": 0.0,
+        "technical_depth": 0.0,
+        "communication": 0.0,
+    }
+    if not user_id or user_id == "anonymous":
+        return empty
+
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        if user_id and user_id != "anonymous":
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as sessions_count,
-                    AVG(overall_rating) as avg_rating,
-                    AVG(technical_depth) as avg_tech,
-                    AVG(communication) as avg_comm
-                FROM voice_sessions
-                WHERE user_id = %s AND overall_rating IS NOT NULL
-            """, (str(user_id),))
-            row = cursor.fetchone()
-            if not row or not row.get("sessions_count") or row["sessions_count"] == 0:
-                cursor.execute("""
-                    SELECT 
-                        COUNT(*) as sessions_count,
-                        AVG(overall_rating) as avg_rating,
-                        AVG(technical_depth) as avg_tech,
-                        AVG(communication) as avg_comm
-                    FROM voice_sessions
-                    WHERE overall_rating IS NOT NULL
-                """)
-                row = cursor.fetchone()
-        else:
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as sessions_count,
-                    AVG(overall_rating) as avg_rating,
-                    AVG(technical_depth) as avg_tech,
-                    AVG(communication) as avg_comm
-                FROM voice_sessions
-                WHERE overall_rating IS NOT NULL
-            """)
-            row = cursor.fetchone()
-
+        cursor.execute("""
+            SELECT
+                COUNT(*) as sessions_count,
+                AVG(overall_rating) as avg_rating,
+                AVG(technical_depth) as avg_tech,
+                AVG(communication) as avg_comm
+            FROM voice_sessions
+            WHERE user_id = %s AND overall_rating IS NOT NULL
+        """, (str(user_id),))
+        row = cursor.fetchone()
         if row and row.get("sessions_count") and row["sessions_count"] > 0:
             return {
                 "sessions_count": int(row["sessions_count"]),
-                "voice_rating": round(float(row["avg_rating"] or 7.5), 1),
-                "technical_depth": round(float(row["avg_tech"] or 7.0), 1),
-                "communication": round(float(row["avg_comm"] or 7.5), 1),
+                "voice_rating": round(float(row["avg_rating"] or 0.0), 1),
+                "technical_depth": round(float(row["avg_tech"] or 0.0), 1),
+                "communication": round(float(row["avg_comm"] or 0.0), 1),
             }
     except Exception as e:
         print(f"Error fetching user prepai stats: {e}")
     finally:
         conn.close()
 
-    return {
-        "sessions_count": 0,
-        "voice_rating": 0.0,
-        "technical_depth": 0.0,
-        "communication": 0.0,
-    }
+    return empty

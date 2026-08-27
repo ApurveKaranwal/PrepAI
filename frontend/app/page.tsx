@@ -1,6 +1,6 @@
 "use client";
 // v1.0.1 - Responsive UI Stable
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Menu } from "lucide-react";
 import AuthPage from "@/components/auth/AuthPage";
 import Sidebar from "@/components/navigation/Sidebar";
@@ -12,6 +12,15 @@ import VoiceCopilot from "@/components/interview/VoiceCopilot";
 import CareerAgent from "@/components/career/CareerAgent";
 import RecruiterPortal from "@/components/recruiter/RecruiterPortal";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
+import {
+  apiGet,
+  getToken,
+  getStoredUser,
+  setStoredUser,
+  clearSession,
+  onUnauthorized,
+  errorMessage,
+} from "@/lib/api";
 
 interface UserProfile {
   uid?: string;
@@ -19,69 +28,180 @@ interface UserProfile {
   displayName?: string | null;
   photoURL?: string | null;
   name?: string | null;
+  provider?: string | null;
+}
+
+export interface Organization {
+  id: number;
+  name: string;
+  slug: string;
+  role: string;
 }
 
 export default function Home() {
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<string>("dashboard");
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [orgResolved, setOrgResolved] = useState<boolean>(false);
+  // Restored from localStorage so a refresh drops the user back on the same
+  // workspace they were on, not the dashboard. Falls back to "dashboard" the
+  // first time the app loads. We deliberately keep the key scoped to this
+  // product and not tied to a user id: the available tabs are the same for
+  // every account, so there is no privacy concern with one shared key.
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window === "undefined") return "dashboard";
+    try {
+      return window.localStorage.getItem("prepflow_active_tab") || "dashboard";
+    } catch {
+      return "dashboard";
+    }
+  });
+  const [recruiterSection, setRecruiterSection] = useState<string>(() => {
+    if (typeof window === "undefined") return "sourcing";
+    try {
+      return window.localStorage.getItem("prepflow_recruiter_section") || "sourcing";
+    } catch {
+      return "sourcing";
+    }
+  });
+
+  // Mirror active tab to localStorage so a refresh (or reopening a tab) lands
+  // the user back on the workspace they were on, not the dashboard.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("prepflow_active_tab", activeTab);
+    } catch {
+      /* private-browsing modes can throw; fall back to in-memory only */
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("prepflow_recruiter_section", recruiterSection);
+    } catch {
+      /* ignore */
+    }
+  }, [recruiterSection]);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
 
+  /**
+   * `GET /api/auth/me` is the only way to learn which organization the stored
+   * token belongs to — org membership is deliberately not client state, because
+   * it decides what recruiter data the caller may read. It doubles as the
+   * token validity check on boot: a dead token 401s here, `apiFetch` clears the
+   * session, and the `onUnauthorized` subscriber below drops us to sign-in.
+   */
+  const refreshIdentity = useCallback(async () => {
+    if (!getToken()) {
+      setOrganization(null);
+      setOrgResolved(true);
+      return;
+    }
+    try {
+      const data = await apiGet("/api/auth/me");
+      if (data?.user) {
+        setUser((prev) => {
+          const merged = { ...(prev || {}), ...data.user };
+          setStoredUser(merged);
+          return merged;
+        });
+      }
+      setOrganization(data?.organization || null);
+    } catch (err) {
+      // A 401 already cleared the session; anything else (server down) should
+      // not eject a signed-in user, so the org simply stays unresolved.
+      console.warn("Could not confirm your session:", errorMessage(err));
+    } finally {
+      setOrgResolved(true);
+    }
+  }, []);
+
+  // Drop to the sign-in screen the moment any request reports an expired token.
+  useEffect(() => {
+    const unsubscribe = onUnauthorized(() => {
+      setUser(null);
+      setOrganization(null);
+      setOrgResolved(true);
+      setActiveTab("dashboard");
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   // Check redirects and listen to auth state changes for session persistence
   useEffect(() => {
-    // 1. Load from local cache instantly to prevent flashing login page
-    const cachedUser = localStorage.getItem("prepflow_user");
-    if (cachedUser) {
-      try {
-        const parsedUser = JSON.parse(cachedUser);
-        setTimeout(() => {
-          setUser(parsedUser);
-          setAuthLoading(false);
-        }, 0);
-      } catch (e) {
-        console.error("Failed to parse cached user:", e);
-      }
-    }
-
     let unsubscribe = () => {};
+    let cancelled = false;
+
+    // 1. Paint from the local cache immediately so a valid session does not
+    //    flash the login page. Only trust it when a token is present too — a
+    //    cached user without a token cannot make a single authenticated call.
+    const cachedUser = getStoredUser();
+    if (cachedUser && getToken()) {
+      setUser(cachedUser);
+      setAuthLoading(false);
+    } else if (cachedUser) {
+      clearSession();
+    }
 
     async function initializeAuth() {
       try {
-        // 2. Check if returning from a Google Redirect
+        // 2. Finish a Google sign-in that used the redirect flow.
         const loggedInUser = await checkRedirectResult();
-        if (loggedInUser) {
-          localStorage.setItem("prepflow_user", JSON.stringify(loggedInUser));
+        if (loggedInUser && !cancelled) {
           setUser(loggedInUser);
           setActiveTab("dashboard");
           setAuthLoading(false);
+          await refreshIdentity();
           return;
         }
       } catch (err) {
-        console.error("Failed to login via Google Redirect result:", err);
+        console.error("Google redirect sign-in failed:", errorMessage(err));
       }
 
-      // 3. Listen to active persisted session changes
+      if (cancelled) return;
+
+      // 3. Validate whatever session we have against the server.
+      await refreshIdentity();
+      if (cancelled) return;
+
+      // 4. Keep following Firebase for Google sessions.
       unsubscribe = authOnAuthStateChanged((currentUser: UserProfile | null) => {
+        if (cancelled) return;
         if (currentUser) {
-          localStorage.setItem("prepflow_user", JSON.stringify(currentUser));
           setUser(currentUser);
+          refreshIdentity();
         } else {
-          localStorage.removeItem("prepflow_user");
+          clearSession();
           setUser(null);
+          setOrganization(null);
         }
         setAuthLoading(false);
       });
+
+      // Firebase never reports for email/password users — and is absent
+      // entirely when unconfigured — so the loading gate is released here
+      // rather than waiting on a callback that may never arrive.
+      setAuthLoading(false);
     }
 
     initializeAuth();
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [refreshIdentity]);
 
   const handleLoginSuccess = (userData: UserProfile) => {
-    localStorage.setItem("prepflow_user", JSON.stringify(userData));
+    setStoredUser(userData);
     setUser(userData);
     setActiveTab("dashboard");
+    setOrgResolved(false);
+    refreshIdentity();
   };
 
   const handleEndInterview = () => {
@@ -91,11 +211,14 @@ export default function Home() {
   const handleLogout = async () => {
     try {
       await authSignOut();
-      localStorage.removeItem("prepflow_user");
-      setUser(null);
-      setActiveTab("dashboard");
     } catch (err) {
-      console.error("Sign out error:", err);
+      console.error("Sign out error:", errorMessage(err));
+    } finally {
+      clearSession();
+      setUser(null);
+      setOrganization(null);
+      setOrgResolved(true);
+      setActiveTab("dashboard");
     }
   };
 
@@ -124,6 +247,10 @@ export default function Home() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         user={user}
+        organization={organization}
+        orgResolved={orgResolved}
+        recruiterSection={recruiterSection}
+        onRecruiterSection={setRecruiterSection}
         onLogout={handleLogout}
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
@@ -135,7 +262,8 @@ export default function Home() {
         <header className="lg:hidden border-b border-[#DFD5C6] py-3.5 px-4 flex items-center justify-between shrink-0 bg-[#FCFAF7]/95 backdrop-blur-md z-30 select-none">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-1.5 rounded-lg border border-[#DFD5C6] hover:bg-[#FAF6F0] text-[#6E6359] cursor-pointer"
+            aria-label="Open navigation menu"
+            className="p-1.5 rounded-lg border border-[#DFD5C6] hover:bg-[#FAF6F0] text-[#6E6359] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C85A32]"
           >
             <Menu className="h-4 w-4" />
           </button>
@@ -148,12 +276,12 @@ export default function Home() {
         </header>
 
         {activeTab === "dashboard" && (
-          <DashboardHome 
+          <DashboardHome
             onNavigate={(tab: string) => {
               setActiveTab(tab);
               setSidebarOpen(false);
-            }} 
-            user={user} 
+            }}
+            user={user}
           />
         )}
         {activeTab === "interviews" && (
@@ -176,8 +304,13 @@ export default function Home() {
           </div>
         )}
         {activeTab === "recruiter-portal" && (
-          <RecruiterPortal 
+          <RecruiterPortal
             user={user}
+            organization={organization}
+            orgResolved={orgResolved}
+            onOrganizationChange={setOrganization}
+            section={recruiterSection}
+            onSectionChange={setRecruiterSection}
             onNavigate={(tab: string) => {
               setActiveTab(tab);
               setSidebarOpen(false);
@@ -188,4 +321,3 @@ export default function Home() {
     </div>
   );
 }
-

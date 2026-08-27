@@ -1,34 +1,115 @@
 """
 Code Execution Sandbox Runner for PrepAI Code Studio
-Supports isolated, 100% accurate polyglot subprocess execution for:
+Supports isolated polyglot execution for:
 - Python 3.11
 - JavaScript & TypeScript (Node.js)
-- C++ (GCC 17 g++)
-- Java (OpenJDK 21 / Semantic Execution Engine)
-- Go (Golang 1.22 / Semantic Execution Engine)
+- C++ (g++ / clang++)
+- Java (transpiled to the Node runtime)
+- Go (transpiled to the Node runtime)
+
+This module builds the test harness for each language. It never spawns a process
+itself — every execution goes through `code_studio.sandbox.execute_untrusted`,
+which owns the security boundary (scrubbed environment, throwaway working
+directory, resource caps, or a locked-down container when SANDBOX_MODE=docker).
+Read that module's docstring before changing anything here.
 """
 
-import sys
-import os
 import json
-import time
-import shutil
 import re
-import subprocess
-import tempfile
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
-PYTHON_EXE = sys.executable
-NODE_EXE = shutil.which("node") or r"C:\Program Files\nodejs\node.EXE"
-GPP_EXE = (
-    shutil.which("g++")
-    or r"C:\Users\Apurve\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\g++.EXE"
-)
+from . import sandbox
+from .sandbox import Limits
+
+OUTPUT_START = "__TEST_OUTPUT_START__"
+OUTPUT_END = "__TEST_OUTPUT_END__"
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+
+
+def _safe_identifier(name: str) -> str:
+    """
+    Entry-point names are interpolated into generated source, so they are checked
+    against a strict identifier pattern first. These come from the problem
+    catalog rather than from the candidate, but a bad value here would be a code
+    injection into the harness.
+    """
+    candidate = (name or "").strip()
+    if not _IDENTIFIER_RE.match(candidate):
+        return ""
+    return candidate
+
+
+def _failure(status: str, message: str, test_cases: List[Dict[str, Any]],
+             stdout: str = "", duration_ms: float = 0) -> Dict[str, Any]:
+    return {
+        "success": False,
+        "status": status,
+        "tests_passed": 0,
+        "total_tests": len(test_cases),
+        "duration_ms": duration_ms,
+        "test_results": [],
+        "stdout": stdout,
+        "stderr": message,
+    }
+
+
+def _parse_harness_output(result: "sandbox.SandboxResult",
+                          test_cases: List[Dict[str, Any]],
+                          language_error: str) -> Dict[str, Any]:
+    """Shared interpretation of a completed sandbox run."""
+    if result.unavailable:
+        return _failure("SYSTEM_ERROR", result.unavailable, test_cases)
+
+    if result.timed_out:
+        return _failure(
+            "TIMEOUT",
+            "Time Limit Exceeded. Your solution did not finish inside the allowed window.",
+            test_cases,
+        )
+
+    stdout = result.stdout
+    if OUTPUT_START in stdout and OUTPUT_END in stdout:
+        json_payload = stdout.split(OUTPUT_START)[1].split(OUTPUT_END)[0].strip()
+        user_stdout = stdout.split(OUTPUT_START)[0].strip()
+        try:
+            parsed = json.loads(json_payload)
+        except json.JSONDecodeError as e:
+            return _failure("ERROR", f"Could not read the test harness output: {e}",
+                            test_cases, stdout=user_stdout)
+        return {
+            "success": True,
+            "status": "COMPLETED",
+            "tests_passed": parsed.get("tests_passed", 0),
+            "total_tests": parsed.get("total_tests", len(test_cases)),
+            "duration_ms": parsed.get("total_duration_ms", 0),
+            "test_results": parsed.get("results", []),
+            "stdout": user_stdout,
+            "stderr": result.stderr,
+        }
+
+    return _failure("ERROR", result.stderr or language_error, test_cases, stdout=stdout)
 
 
 # =============================================================================
 # Helper: Format Values as Literals
 # =============================================================================
+
+def _cpp_escape(text: str) -> str:
+    """
+    Escapes a value for a C++ string or character literal. Test-case values come
+    from the problem catalog, but an unescaped quote or backslash in one would
+    break compilation for every candidate attempting that problem.
+    """
+    return (
+        text.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+    )
+
 
 def val_to_cpp_literal(val: Any) -> str:
     if val is None:
@@ -39,8 +120,8 @@ def val_to_cpp_literal(val: Any) -> str:
         return str(val)
     if isinstance(val, str):
         if len(val) == 1:
-            return f"'{val}'"
-        return f'std::string("{val}")'
+            return f"'{_cpp_escape(val)}'"
+        return f'std::string("{_cpp_escape(val)}")'
     if isinstance(val, list):
         items = ", ".join(val_to_cpp_literal(x) for x in val)
         return f"{{{items}}}"
@@ -57,11 +138,23 @@ def execute_python_code(
     test_cases: List[Dict[str, Any]],
     timeout_seconds: float = 5.0
 ) -> Dict[str, Any]:
+    entry = _safe_identifier(entry_point)
+    if not entry:
+        return _failure("SYSTEM_ERROR", f"Invalid entry point '{entry_point}'.", test_cases)
+
     test_cases_json = json.dumps(test_cases)
     harness_template = f"""import sys
+import os
 import json
 import time
 import traceback
+
+__src_dir = os.path.dirname(os.path.abspath(__file__))
+
+def __clean_trace(text):
+    # Tracebacks quote the absolute source path. The candidate needs the file and
+    # line, not the server's temp directory and OS user name.
+    return text.replace(__src_dir + os.sep, "").replace(__src_dir, "")
 
 # --- User Code ---
 {code}
@@ -72,18 +165,18 @@ results = []
 total_passed = 0
 overall_start = time.perf_counter()
 
-fn = globals().get("{entry_point}")
+fn = globals().get("{entry}")
 
 for idx, tc in enumerate(test_cases):
     tc_input = tc.get("input", {{}})
     expected = tc.get("expected")
     desc = tc.get("description", f"Test Case {{idx + 1}}")
-    
+
     t_start = time.perf_counter()
     try:
         if fn is None:
-            raise NameError(f"Entry function '{entry_point}' was not found in your code.")
-            
+            raise NameError(f"Entry function '{entry}' was not found in your code.")
+
         if isinstance(tc_input, dict):
             try:
                 actual = fn(**tc_input)
@@ -93,18 +186,18 @@ for idx, tc in enumerate(test_cases):
             actual = fn(*tc_input)
         else:
             actual = fn(tc_input)
-            
+
         t_duration_ms = round((time.perf_counter() - t_start) * 1000, 2)
-        
+
         passed = (actual == expected)
         if not passed and isinstance(actual, float) and isinstance(expected, (int, float)):
             passed = abs(actual - expected) < 1e-4
         elif not passed and isinstance(actual, list) and isinstance(expected, list):
             passed = (actual == expected)
-            
+
         if passed:
             total_passed += 1
-            
+
         results.append({{
             "test_index": idx + 1,
             "description": desc,
@@ -117,7 +210,7 @@ for idx, tc in enumerate(test_cases):
         }})
     except Exception as e:
         t_duration_ms = round((time.perf_counter() - t_start) * 1000, 2)
-        err_msg = traceback.format_exc()
+        err_msg = __clean_trace(traceback.format_exc())
         results.append({{
             "test_index": idx + 1,
             "description": desc,
@@ -131,90 +224,33 @@ for idx, tc in enumerate(test_cases):
 
 total_duration_ms = round((time.perf_counter() - overall_start) * 1000, 2)
 
-print("__TEST_OUTPUT_START__")
+# default=str so a solution returning a non-JSON-serialisable object reports a
+# readable value instead of collapsing the whole run into a harness error.
+print("{OUTPUT_START}")
 print(json.dumps({{
     "results": results,
     "tests_passed": total_passed,
     "total_tests": len(test_cases),
     "total_duration_ms": total_duration_ms
-}}))
-print("__TEST_OUTPUT_END__")
+}}, default=str))
+print("{OUTPUT_END}")
 """
 
-    temp_file = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-            f.write(harness_template)
-            temp_file = f.name
+    tool = sandbox.toolchain("python")
+    if tool["error"]:
+        return _failure("SYSTEM_ERROR", tool["error"], test_cases)
 
-        proc = subprocess.run(
-            [PYTHON_EXE, temp_file],
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            encoding="utf-8",
-            errors="replace"
+    with sandbox.sandbox_workspace() as workdir:
+        source = sandbox.write_source(workdir, "solution.py", harness_template)
+        result = sandbox.execute_untrusted(
+            steps=[[tool["exe"], *tool["extra_args"], source]],
+            workdir=workdir,
+            limits=Limits(wall_seconds=timeout_seconds, cpu_seconds=max(2, int(timeout_seconds) + 1)),
+            image=tool["image"],
         )
-
-        stdout = proc.stdout
-        stderr = proc.stderr
-
-        if "__TEST_OUTPUT_START__" in stdout and "__TEST_OUTPUT_END__" in stdout:
-            parts = stdout.split("__TEST_OUTPUT_START__")[1].split("__TEST_OUTPUT_END__")
-            json_payload = parts[0].strip()
-            user_stdout = stdout.split("__TEST_OUTPUT_START__")[0].strip()
-            
-            parsed = json.loads(json_payload)
-            return {
-                "success": True,
-                "status": "COMPLETED",
-                "tests_passed": parsed.get("tests_passed", 0),
-                "total_tests": parsed.get("total_tests", 0),
-                "duration_ms": parsed.get("total_duration_ms", 0),
-                "test_results": parsed.get("results", []),
-                "stdout": user_stdout,
-                "stderr": stderr
-            }
-        else:
-            return {
-                "success": False,
-                "status": "ERROR",
-                "tests_passed": 0,
-                "total_tests": len(test_cases),
-                "duration_ms": 0,
-                "test_results": [],
-                "stdout": stdout,
-                "stderr": stderr or "Runtime Error or Syntax Error in Python execution."
-            }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "status": "TIMEOUT",
-            "tests_passed": 0,
-            "total_tests": len(test_cases),
-            "duration_ms": int(timeout_seconds * 1000),
-            "test_results": [],
-            "stdout": "",
-            "stderr": f"Time Limit Exceeded ({timeout_seconds}s limit)."
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "status": "SYSTEM_ERROR",
-            "tests_passed": 0,
-            "total_tests": len(test_cases),
-            "duration_ms": 0,
-            "test_results": [],
-            "stdout": "",
-            "stderr": str(e)
-        }
-    finally:
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except Exception:
-                pass
+        return _parse_harness_output(
+            result, test_cases, "Runtime error or syntax error in Python execution."
+        )
 
 
 # =============================================================================
@@ -227,6 +263,10 @@ def execute_javascript_code(
     test_cases: List[Dict[str, Any]],
     timeout_seconds: float = 5.0
 ) -> Dict[str, Any]:
+    entry = _safe_identifier(entry_point)
+    if not entry:
+        return _failure("SYSTEM_ERROR", f"Invalid entry point '{entry_point}'.", test_cases)
+
     # Strip TypeScript annotations
     clean_code = code
     clean_code = re.sub(r"interface\s+\w+[\s\S]*?\}", "", clean_code)
@@ -239,6 +279,28 @@ def execute_javascript_code(
 {clean_code}
 
 // --- Test Runner Harness ---
+// Stack traces quote the absolute source path. The candidate needs the file and
+// line, not the server's temp directory and OS user name.
+const __srcDir = typeof __dirname !== "undefined" ? __dirname : "";
+function __cleanTrace(text) {{
+    const s = String(text == null ? "" : text);
+    if (!__srcDir) return s;
+    return s.split(__srcDir + require("path").sep).join("").split(__srcDir).join("");
+}}
+
+// Entry-point resolution runs once, at module scope, so a lexically declared
+// `function`/`const`/`let` is visible. `typeof` on an undeclared identifier is
+// safe — it yields "undefined" rather than throwing — which is why this no
+// longer needs eval().
+let __entryFn = null;
+if (typeof {entry} === "function") {{
+    __entryFn = {entry};
+}} else if (typeof globalThis !== "undefined" && typeof globalThis["{entry}"] === "function") {{
+    __entryFn = globalThis["{entry}"];
+}} else if (typeof module !== "undefined" && module.exports && typeof module.exports["{entry}"] === "function") {{
+    __entryFn = module.exports["{entry}"];
+}}
+
 const testCases = JSON.parse({json.dumps(test_cases_json)});
 const results = [];
 let totalPassed = 0;
@@ -249,38 +311,32 @@ for (let idx = 0; idx < testCases.length; idx++) {{
     const tcInput = tc.input;
     const expected = tc.expected;
     const desc = tc.description || `Test Case ${{idx + 1}}`;
-    
+
     const tStart = process.hrtime();
     try {{
-        let fn = null;
-        try {{
-            fn = eval("{entry_point}");
-        }} catch(e) {{
-            fn = global["{entry_point}"];
+        if (typeof __entryFn !== "function") {{
+            throw new Error(`Entry function '{entry}' was not found in your code.`);
         }}
-        if (typeof fn !== "function") {{
-            throw new Error(`Entry function '{entry_point}' was not found in your code.`);
-        }}
-        
+
         let actual;
         if (Array.isArray(tcInput)) {{
-            actual = fn(...tcInput);
+            actual = __entryFn(...tcInput);
         }} else if (typeof tcInput === "object" && tcInput !== null) {{
-            actual = fn(...Object.values(tcInput));
+            actual = __entryFn(...Object.values(tcInput));
         }} else {{
-            actual = fn(tcInput);
+            actual = __entryFn(tcInput);
         }}
-        
+
         const diff = process.hrtime(tStart);
         const durationMs = ((diff[0] * 1e9 + diff[1]) / 1e6).toFixed(2);
-        
+
         let passed = (JSON.stringify(actual) === JSON.stringify(expected));
         if (!passed && typeof actual === "number" && typeof expected === "number") {{
             passed = Math.abs(actual - expected) < 1e-4;
         }}
-        
+
         if (passed) totalPassed++;
-        
+
         results.push({{
             test_index: idx + 1,
             description: desc,
@@ -302,7 +358,7 @@ for (let idx = 0; idx < testCases.length; idx++) {{
             actual: null,
             passed: false,
             duration_ms: parseFloat(durationMs),
-            error: err.stack || err.toString()
+            error: __cleanTrace(err.stack || err.toString())
         }});
     }}
 }}
@@ -310,90 +366,38 @@ for (let idx = 0; idx < testCases.length; idx++) {{
 const overallDiff = process.hrtime(overallStart);
 const totalDurationMs = ((overallDiff[0] * 1e9 + overallDiff[1]) / 1e6).toFixed(2);
 
-console.log("__TEST_OUTPUT_START__");
+console.log("{OUTPUT_START}");
 console.log(JSON.stringify({{
     results: results,
     tests_passed: totalPassed,
     total_tests: testCases.length,
     total_duration_ms: parseFloat(totalDurationMs)
 }}));
-console.log("__TEST_OUTPUT_END__");
+console.log("{OUTPUT_END}");
 """
 
-    temp_file = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False, encoding="utf-8") as f:
-            f.write(harness_template)
-            temp_file = f.name
+    tool = sandbox.toolchain("node")
+    if tool["error"]:
+        return _failure("SYSTEM_ERROR", tool["error"], test_cases)
 
-        proc = subprocess.run(
-            [NODE_EXE, temp_file],
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            encoding="utf-8",
-            errors="replace"
+    with sandbox.sandbox_workspace() as workdir:
+        source = sandbox.write_source(workdir, "solution.js", harness_template)
+        result = sandbox.execute_untrusted(
+            steps=[[tool["exe"], *tool["extra_args"], source]],
+            workdir=workdir,
+            limits=Limits(
+                wall_seconds=timeout_seconds,
+                cpu_seconds=max(2, int(timeout_seconds) + 1),
+                # V8 reserves a large virtual address space up front, so an
+                # RLIMIT_AS cap stops Node from starting at all. It is bounded
+                # with --max-old-space-size instead.
+                apply_address_space_limit=False,
+            ),
+            image=tool["image"],
         )
-
-        stdout = proc.stdout
-        stderr = proc.stderr
-
-        if "__TEST_OUTPUT_START__" in stdout and "__TEST_OUTPUT_END__" in stdout:
-            parts = stdout.split("__TEST_OUTPUT_START__")[1].split("__TEST_OUTPUT_END__")
-            json_payload = parts[0].strip()
-            user_stdout = stdout.split("__TEST_OUTPUT_START__")[0].strip()
-            
-            parsed = json.loads(json_payload)
-            return {
-                "success": True,
-                "status": "COMPLETED",
-                "tests_passed": parsed.get("tests_passed", 0),
-                "total_tests": parsed.get("total_tests", 0),
-                "duration_ms": parsed.get("total_duration_ms", 0),
-                "test_results": parsed.get("results", []),
-                "stdout": user_stdout,
-                "stderr": stderr
-            }
-        else:
-            return {
-                "success": False,
-                "status": "ERROR",
-                "tests_passed": 0,
-                "total_tests": len(test_cases),
-                "duration_ms": 0,
-                "test_results": [],
-                "stdout": stdout,
-                "stderr": stderr or "JavaScript runtime or syntax error."
-            }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "status": "TIMEOUT",
-            "tests_passed": 0,
-            "total_tests": len(test_cases),
-            "duration_ms": int(timeout_seconds * 1000),
-            "test_results": [],
-            "stdout": "",
-            "stderr": f"Time Limit Exceeded ({timeout_seconds}s limit)."
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "status": "SYSTEM_ERROR",
-            "tests_passed": 0,
-            "total_tests": len(test_cases),
-            "duration_ms": 0,
-            "test_results": [],
-            "stdout": "",
-            "stderr": str(e)
-        }
-    finally:
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except Exception:
-                pass
+        return _parse_harness_output(
+            result, test_cases, "JavaScript runtime or syntax error."
+        )
 
 
 # =============================================================================
@@ -406,34 +410,40 @@ def execute_cpp_code(
     test_cases: List[Dict[str, Any]],
     timeout_seconds: float = 5.0
 ) -> Dict[str, Any]:
+    entry = _safe_identifier(entry_point)
+    if not entry:
+        return _failure("SYSTEM_ERROR", f"Invalid entry point '{entry_point}'.", test_cases)
+
     test_invocations = []
     for idx, tc in enumerate(test_cases):
         inp = tc.get("input", {})
         exp = tc.get("expected")
-        desc = tc.get("description", f"Test Case {idx + 1}")
-        
+
         if isinstance(inp, dict):
             args_str = ", ".join(val_to_cpp_literal(v) for v in inp.values())
         elif isinstance(inp, list):
             args_str = ", ".join(val_to_cpp_literal(v) for v in inp)
         else:
             args_str = val_to_cpp_literal(inp)
-            
+
         if exp is None:
             comparison_snippet = "bool passed = true;"
         else:
             exp_str = val_to_cpp_literal(exp)
             comparison_snippet = f"decltype(actual) expected_val = {exp_str};\n        bool passed = (actual == expected_val);"
-            
+
+        # The description is deliberately not emitted from C++ — it is attached in
+        # Python afterwards, so no catalog text is interpolated into the generated
+        # source or into the JSON the harness prints.
         test_invocations.append(f"""    {{
         auto t_start = std::chrono::high_resolution_clock::now();
-        auto actual = {entry_point}({args_str});
+        auto actual = {entry}({args_str});
         auto t_end = std::chrono::high_resolution_clock::now();
         double dur_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        total_dur_ms += dur_ms;
         {comparison_snippet}
         if (passed) total_passed++;
         std::cout << "        {{\\"test_index\\": " << {idx + 1}
-                  << ", \\"description\\": \\"{desc}\\""
                   << ", \\"passed\\": " << (passed ? "true" : "false")
                   << ", \\"duration_ms\\": " << dur_ms
                   << ", \\"actual\\": ";
@@ -444,8 +454,9 @@ def execute_cpp_code(
     }}""")
 
     all_invocations = "\n".join(test_invocations)
-    
+
     harness = f"""#include <iostream>
+#include <iomanip>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -485,122 +496,75 @@ inline void print_json_val(const std::vector<T>& vec) {{
 
 int main() {{
     int total_passed = 0;
-    std::cout << "__TEST_OUTPUT_START__\\n";
+    double total_dur_ms = 0.0;
+    std::cout << std::fixed << std::setprecision(4);
+    std::cout << "{OUTPUT_START}\\n";
     std::cout << "{{\\n    \\"results\\": [\\n";
 {all_invocations}
     std::cout << "    ],\\n";
     std::cout << "    \\"tests_passed\\": " << total_passed << ",\\n";
-    std::cout << "    \\"total_tests\\": " << {len(test_cases)} << "\\n";
+    std::cout << "    \\"total_tests\\": " << {len(test_cases)} << ",\\n";
+    std::cout << "    \\"total_duration_ms\\": " << total_dur_ms << "\\n";
     std::cout << "}}\\n";
-    std::cout << "__TEST_OUTPUT_END__\\n";
+    std::cout << "{OUTPUT_END}\\n";
     return 0;
 }}
 """
 
-    temp_cpp = None
-    temp_exe = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".cpp", delete=False, encoding="utf-8") as f:
-            f.write(harness)
-            temp_cpp = f.name
+    tool = sandbox.toolchain("cpp")
+    if tool["error"]:
+        return _failure("SYSTEM_ERROR", tool["error"], test_cases)
 
-        temp_exe = temp_cpp.replace(".cpp", ".exe")
+    with sandbox.sandbox_workspace() as workdir:
+        source = sandbox.write_source(workdir, "solution.cpp", harness)
+        binary = sandbox.artifact_path(workdir, "solution")
 
-        compile_proc = subprocess.run(
-            [GPP_EXE, "-std=c++17", "-O2", temp_cpp, "-o", temp_exe],
-            capture_output=True,
-            text=True,
-            timeout=10.0,
-            encoding="utf-8",
-            errors="replace"
-        )
-        if compile_proc.returncode != 0:
-            return {
-                "success": False,
-                "status": "COMPILATION_ERROR",
-                "tests_passed": 0,
-                "total_tests": len(test_cases),
-                "duration_ms": 0,
-                "test_results": [],
-                "stdout": "",
-                "stderr": compile_proc.stderr or "C++ compilation failed."
-            }
-
-        run_proc = subprocess.run(
-            [temp_exe],
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            encoding="utf-8",
-            errors="replace"
+        result = sandbox.execute_untrusted(
+            steps=[
+                [tool["exe"], "-std=c++17", "-O2", source, "-o", binary],
+                [binary],
+            ],
+            workdir=workdir,
+            limits=Limits(
+                # The compile step shares this budget, so it needs headroom beyond
+                # the problem's own time limit.
+                wall_seconds=max(20.0, timeout_seconds + 15.0),
+                cpu_seconds=max(20, int(timeout_seconds) + 15),
+                # g++ maps large amounts of virtual address space; an RLIMIT_AS cap
+                # tight enough to be meaningful for the solution makes the compiler
+                # itself fail. The container memory cap still applies in docker mode.
+                apply_address_space_limit=False,
+            ),
+            image=tool["image"],
         )
 
-        stdout = run_proc.stdout
-        stderr = run_proc.stderr
+        # failed_step 0 is the compiler, so a build error stays distinguishable
+        # from a crash in the candidate's own code.
+        if result.failed_step == 0 and not result.timed_out and not result.unavailable:
+            return _failure(
+                "COMPILATION_ERROR",
+                result.stderr or "C++ compilation failed.",
+                test_cases,
+            )
 
-        if "__TEST_OUTPUT_START__" in stdout and "__TEST_OUTPUT_END__" in stdout:
-            parts = stdout.split("__TEST_OUTPUT_START__")[1].split("__TEST_OUTPUT_END__")
-            json_payload = parts[0].strip()
-            parsed = json.loads(json_payload)
-            
-            for idx, res in enumerate(parsed.get("results", [])):
-                if idx < len(test_cases):
-                    res["input"] = test_cases[idx].get("input")
-                    res["expected"] = test_cases[idx].get("expected")
-                    if "actual" not in res:
-                        res["actual"] = test_cases[idx].get("expected") if res.get("passed") else "Failed result"
+        parsed = _parse_harness_output(
+            result, test_cases, "C++ binary crashed during execution."
+        )
+        if parsed["status"] == "ERROR":
+            parsed["status"] = "RUNTIME_ERROR"
 
-            return {
-                "success": True,
-                "status": "COMPLETED",
-                "tests_passed": parsed.get("tests_passed", 0),
-                "total_tests": parsed.get("total_tests", len(test_cases)),
-                "duration_ms": 1.2,
-                "test_results": parsed.get("results", []),
-                "stdout": stdout.split("__TEST_OUTPUT_START__")[0].strip(),
-                "stderr": stderr
-            }
-        else:
-            return {
-                "success": False,
-                "status": "RUNTIME_ERROR",
-                "tests_passed": 0,
-                "total_tests": len(test_cases),
-                "duration_ms": 0,
-                "test_results": [],
-                "stdout": stdout,
-                "stderr": stderr or "C++ binary crashed during execution."
-            }
+        # The harness prints only what it measured; the description, input and
+        # expected value are joined back on here from the catalog.
+        for idx, res in enumerate(parsed.get("test_results") or []):
+            if idx >= len(test_cases):
+                break
+            tc = test_cases[idx]
+            res["description"] = tc.get("description") or f"Test Case {idx + 1}"
+            res["input"] = tc.get("input")
+            res["expected"] = tc.get("expected")
+            res.setdefault("error", None)
 
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "status": "TIMEOUT",
-            "tests_passed": 0,
-            "total_tests": len(test_cases),
-            "duration_ms": int(timeout_seconds * 1000),
-            "test_results": [],
-            "stdout": "",
-            "stderr": f"C++ execution timed out ({timeout_seconds}s limit)."
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "status": "SYSTEM_ERROR",
-            "tests_passed": 0,
-            "total_tests": len(test_cases),
-            "duration_ms": 0,
-            "test_results": [],
-            "stdout": "",
-            "stderr": str(e)
-        }
-    finally:
-        for p in [temp_cpp, temp_exe]:
-            if p and os.path.exists(p):
-                try:
-                    os.remove(p)
-                except Exception:
-                    pass
+        return parsed
 
 
 # =============================================================================

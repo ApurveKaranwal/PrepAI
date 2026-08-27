@@ -7,11 +7,13 @@ import json
 import random
 import cv2
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import (
+    BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import pypdf
 from dotenv import load_dotenv
 import time
@@ -22,6 +24,8 @@ import database
 from ml.evaluation.evaluation import InterviewMLModel
 from config import GROQ_HEAVY_MODEL, GROQ_LIGHT_MODEL
 from llm_client import call_llm, call_llm_json
+from auth_deps import AuthUser, OrgContext, require_user, require_org_member
+import resume_analyser
 
 # Load environment variables
 load_dotenv()
@@ -39,14 +43,24 @@ from career_agent import router as career_agent_router
 app.include_router(career_agent_router, prefix="/api/career")
 
 
-# Enable CORS
+# ---------------------------------------------------------------------------
+# CORS
+# An explicit allow-list. The previous configuration paired a `*` origin and a
+# `https?://.*` regex with allow_credentials=True, which lets any site on the
+# internet make credentialed calls against this API on a signed-in user's behalf.
+# Set ALLOWED_ORIGINS in the environment for deployed frontends.
+# ---------------------------------------------------------------------------
+_DEFAULT_ORIGINS = "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "*"],
-    allow_origin_regex=r"https?://.*",
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # Instantiate local ML engine
@@ -91,7 +105,9 @@ class GoogleSignInRequest(BaseModel):
     uid: str
 
 class PlatformSyncRequest(BaseModel):
-    user_id: str
+    # user_id is accepted for backwards compatibility but ignored: the target
+    # profile is always the authenticated caller's.
+    user_id: Optional[str] = None
     leetcode_handle: Optional[str] = ""
     codeforces_handle: Optional[str] = ""
     github_url: Optional[str] = ""
@@ -492,31 +508,81 @@ def get_history():
         print(f"Error fetching history: {e}")
         return {"sessions": [], "error": "Failed to load history. Please try again."}
 
-# User authentication endpoints
+# =========================================================================
+# USER AUTHENTICATION
+# Opaque DB-backed bearer tokens. The raw token is returned exactly once at
+# sign-in; only its SHA-256 digest is persisted, so a database leak cannot be
+# replayed as a live session.
+# =========================================================================
+
+def _issue_session(user: dict, user_agent: str = "") -> dict:
+    """Wraps a freshly authenticated user with a bearer token for the client."""
+    session = database.create_auth_session(user["uid"], user_agent)
+    if not session:
+        raise HTTPException(status_code=500, detail="Could not start a session. Please try again.")
+    return {
+        "status": "success",
+        "user": user,
+        "session_token": session["session_token"],
+        "expires_at": session["expires_at"],
+    }
+
+
 @app.post("/api/auth/signup")
-def signup(req: SignUpRequest):
+def signup(req: SignUpRequest, user_agent: Optional[str] = Header(None)):
     try:
         user = database.create_user(req.email, req.password, req.name)
-        return {"status": "success", "user": user}
+        return _issue_session(user, user_agent or "")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error during signup: {e}")
+        raise HTTPException(status_code=500, detail="Could not create your account. Please try again.")
 
 @app.post("/api/auth/signin")
-def signin(req: SignInRequest):
+def signin(req: SignInRequest, user_agent: Optional[str] = Header(None)):
     user = database.verify_user(req.email, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return {"status": "success", "user": user}
+    return _issue_session(user, user_agent or "")
 
 @app.post("/api/auth/google")
-def google_auth(req: GoogleSignInRequest):
+def google_auth(req: GoogleSignInRequest, user_agent: Optional[str] = Header(None)):
     try:
         user = database.get_or_create_google_user(req.email, req.name, req.uid)
-        return {"status": "success", "user": user}
+        return _issue_session(user, user_agent or "")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error during Google auth: {e}")
+        raise HTTPException(status_code=500, detail="Could not sign you in. Please try again.")
+
+@app.post("/api/auth/signout")
+def signout(authorization: Optional[str] = Header(None)):
+    """Revokes the presented token. Idempotent — always reports success."""
+    token = ""
+    if authorization:
+        parts = authorization.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1].strip()
+    if token:
+        database.revoke_auth_session(token)
+    return {"status": "success"}
+
+@app.get("/api/auth/me")
+def whoami(user: AuthUser = Depends(require_user)):
+    """Lets the client validate a stored token on boot and learn its org, if any."""
+    org = database.get_user_org(user.uid)
+    return {
+        "status": "success",
+        "user": {"uid": user.uid, "email": user.email, "name": user.name},
+        "organization": (
+            {"id": org["id"], "name": org["name"], "slug": org["slug"], "role": org["role"]}
+            if org else None
+        ),
+    }
 
 # Load OpenCV cascades for gaze tracking
 face_cascade = None
@@ -626,66 +692,59 @@ async def analyze_resume_deep(
 ):
     if not resume.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF resumes are supported at this time.")
-        
+
     try:
         content = await resume.read()
-        pdf_reader = pypdf.PdfReader(io.BytesIO(content))
+        try:
+            pdf_reader = pypdf.PdfReader(io.BytesIO(content))
+        except Exception as parse_error:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Could not read this PDF. The file may be encrypted, "
+                    "corrupted, or image-based (a scanned document)."
+                ),
+            )
         text_parts = []
         for page in pdf_reader.pages:
             page_text = page.extract_text()
             if page_text:
                 text_parts.append(page_text)
         text = "\n".join(text_parts)
-            
+
         if not text.strip():
-            raise HTTPException(status_code=400, detail="Could not extract text from the provided PDF.")
-            
-        compact_text = re.sub(r"\s+", " ", text[:3200]).strip()
-        
-        prompt = f"""
-        You are an elite Technical Recruiter and ATS analyzer.
-        Critically analyze this resume against target job role: "{job_role}".
-        
-        Resume Text:
-        {compact_text}
-        
-        Provide your analysis in EXACTLY the following JSON format:
-        {{
-            "overall_summary": "A 2-3 sentence paragraph summarizing their overall fit and the initial impression for this role.",
-            "ats_score": 82,
-            "sub_scores": {{
-                "skills": 85,
-                "experience": 80,
-                "formatting": 90,
-                "impact": 75
-            }},
-            "pros": ["detailed pro 1", "detailed pro 2"],
-            "cons": ["detailed con 1", "detailed con 2"],
-            "missing_keywords": ["keyword1", "keyword2", "keyword3"],
-            "experience_feedback": "A 2-3 sentence critique on experience bullet points (metrics, action verbs).",
-            "suggestions": ["actionable step 1", "actionable step 2"]
-        }}
-        """
-        
-        fallback_data = generate_heuristic_ats_analysis(text, job_role)
-        
-        response_json = call_llm_json(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=900,
-            default=fallback_data
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Could not extract any text from this PDF. The file may be "
+                    "a scanned image. Try re-exporting with a text-based PDF."
+                ),
+            )
+
+        if not (job_role or "").strip():
+            raise HTTPException(status_code=400, detail="Please provide a target job role.")
+
+        # Deterministic analysis + LLM narrative. If the LLM is unreachable
+        # the report still comes back — just with `narrative_source: "template"`
+        # and shorter qualitative text.
+        report = resume_analyser.analyze_resume_full(
+            resume_text=text,
+            job_role=job_role.strip(),
+            filename=resume.filename or "",
         )
-        
-        if not response_json or "ats_score" not in response_json:
-            response_json = fallback_data
-            
-        return {"status": "success", "analysis": response_json}
-        
+
+        status = "success" if report.get("narrative_source") == "llm" else "partial"
+
+        return {
+            "status": status,
+            "analysis": report,
+        }
+
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error analyzing resume: {e}")
-        return {"status": "success", "analysis": generate_heuristic_ats_analysis(text if 'text' in locals() else "", job_role)}
+        raise HTTPException(status_code=500, detail="Resume analysis failed unexpectedly.")
 
 @app.post("/api/resume-rewrite")
 async def rewrite_resume(
@@ -771,11 +830,10 @@ async def rewrite_resume(
 # Multi-Platform Profile Aggregator & DevScore Routes
 # -------------------------------------------------------------
 @app.post("/api/profile/sync-platforms")
-async def sync_candidate_platforms(payload: PlatformSyncRequest):
-    user_id = payload.user_id
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID is required")
-
+async def sync_candidate_platforms(payload: PlatformSyncRequest, user: AuthUser = Depends(require_user)):
+    # The target user comes from the bearer token, never from the request body —
+    # otherwise anyone could overwrite another candidate's platform handles.
+    user_id = user.uid
     try:
         # 1. Fetch live metrics from platforms
         lc_stats = profile_aggregator.fetch_leetcode_stats(payload.leetcode_handle) if payload.leetcode_handle else {}
@@ -815,9 +873,8 @@ async def sync_candidate_platforms(payload: PlatformSyncRequest):
 
 
 @app.get("/api/profile/devscore")
-async def get_candidate_devscore(user_id: str):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID is required")
+async def get_candidate_devscore(user: AuthUser = Depends(require_user)):
+    user_id = user.uid
 
     try:
         profile = database.get_candidate_profile(user_id)
@@ -872,246 +929,808 @@ async def get_candidate_devscore(user_id: str):
 
 
 # =========================================================================
-# RECRUITER & FOUNDER PORTAL ENDPOINTS
+# HIRING ORGANIZATION, RECRUITER PORTAL & CANDIDATE CONSENT ENDPOINTS
+# =========================================================================
+# Two rules govern every handler below:
+#   1. Identity comes from the bearer token, tenancy from `require_org_member`.
+#      No handler reads a recruiter_id, user_id or org_id out of the request.
+#   2. A candidate's contact details are only ever returned once that candidate
+#      has accepted this organization's outreach.
 # =========================================================================
 
 import recruiter_service
+import email_service
+
+
+def _to_naive_utc(value) -> Optional[datetime]:
+    """Normalizes a DB timestamp (datetime or ISO string) for comparison."""
+    if not value:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    return None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class OrgCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    website_url: Optional[str] = ""
+    description: Optional[str] = ""
+
+class OrgUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    website_url: Optional[str] = None
+    description: Optional[str] = None
+
+class OrgInviteRequest(BaseModel):
+    email: str
+    role: str = "member"
+
+class OrgInviteAcceptRequest(BaseModel):
+    invite_token: str
+
+class OrgMemberRoleRequest(BaseModel):
+    role: str
 
 class RecruiterJobCreateRequest(BaseModel):
-    recruiter_id: str = "default_recruiter"
-    company_name: str
-    role_title: str
+    company_name: str = Field(min_length=1, max_length=160)
+    role_title: str = Field(min_length=1, max_length=160)
     work_mode: str = "Remote"
-    location: str = "Global / Remote"
-    salary_range: str = "$130k - $170k"
-    min_devscore: int = 700
-    required_skills: List[str] = ["Python", "System Design"]
-    experience_level: str = "Senior"
+    location: str = ""
+    salary_range: str = ""
+    min_devscore: int = 0
+    required_skills: List[str] = []
+    experience_level: str = "Mid-Level"
     description: str = ""
+    status: str = "Active"
+
+class RecruiterJobUpdateRequest(BaseModel):
+    company_name: Optional[str] = None
+    role_title: Optional[str] = None
+    work_mode: Optional[str] = None
+    location: Optional[str] = None
+    salary_range: Optional[str] = None
+    min_devscore: Optional[int] = None
+    required_skills: Optional[List[str]] = None
+    experience_level: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
 
 class ShortlistCandidateRequest(BaseModel):
-    recruiter_id: str = "default_recruiter"
     candidate_id: str
-    candidate_name: str
     job_id: int = 0
-    stage: str = "Shortlisted"
+    stage: str = "Sourced"
     notes: str = ""
 
+class ShortlistUpdateRequest(BaseModel):
+    stage: Optional[str] = None
+    notes: Optional[str] = None
+    job_id: Optional[int] = None
+
 class StartupProfileRequest(BaseModel):
-    user_id: str
     company_name: str
     founder_name: Optional[str] = ""
-    founder_role: Optional[str] = "Founder / CTO"
+    founder_role: Optional[str] = ""
     tagline: Optional[str] = ""
-    stage: Optional[str] = "Seed"
+    stage: Optional[str] = ""
     website_url: Optional[str] = ""
-    industry: Optional[str] = "AI & DevTools"
-    location: Optional[str] = "Remote"
-    team_size: Optional[str] = "1-10"
+    industry: Optional[str] = ""
+    location: Optional[str] = ""
+    team_size: Optional[str] = ""
     primary_tech_stack: Optional[List[str]] = []
     about: Optional[str] = ""
     logo_url: Optional[str] = ""
 
 class SendAssessmentRequest(BaseModel):
-    recruiter_id: str = "default_recruiter"
     candidate_id: str
-    candidate_name: str
-    role_title: str = "Software Engineer"
+    job_id: int = 0
+    role_title: Optional[str] = None
     problem_slug: str = "lru-cache-ttl"
     difficulty: str = "Medium"
-    time_limit_minutes: int = 45
+    time_limit_minutes: int = 60
+
+class OutreachRequest(BaseModel):
+    candidate_id: str
+    job_id: int = 0
+    message: str = ""
+
+class OpportunityOptInRequest(BaseModel):
+    open_to_opportunities: bool
+    opportunity_preferences: Optional[str] = None
+
+class OutreachResponseRequest(BaseModel):
+    accept: bool
+
+
+# -------------------------------------------------------------------------
+# Organization lifecycle
+# -------------------------------------------------------------------------
+
+@app.get("/api/org")
+def get_my_org(user: AuthUser = Depends(require_user)):
+    """
+    Returns the caller's organization, or null. The frontend uses a null result
+    to route to the create-organization screen instead of the portal.
+    """
+    org = database.get_user_org(user.uid)
+    if not org:
+        return {"status": "success", "organization": None, "members": [], "pending_invites": []}
+    members = database.get_org_members(org["id"])
+    invites = (
+        database.get_pending_org_invites(org["id"])
+        if database.role_at_least(org["role"], "admin") else []
+    )
+    return {
+        "status": "success",
+        "organization": org,
+        "members": members,
+        "pending_invites": invites,
+    }
+
+
+@app.post("/api/org")
+def create_org(req: OrgCreateRequest, user: AuthUser = Depends(require_user)):
+    existing = database.get_user_org(user.uid)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"You already belong to {existing['name']}. Leave it before creating another organization.",
+        )
+    try:
+        org = database.create_organization(
+            name=req.name, founder_user_id=user.uid,
+            website_url=req.website_url or "", description=req.description or "",
+        )
+    except Exception as e:
+        print(f"Error creating organization: {e}")
+        raise HTTPException(status_code=500, detail="Could not create the organization. Please try again.")
+    return {"status": "success", "organization": org}
+
+
+@app.patch("/api/org")
+def update_org(req: OrgUpdateRequest, org: OrgContext = Depends(require_org_member("admin"))):
+    updated = database.update_organization(org.org_id, req.model_dump(exclude_none=True))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    return {"status": "success", "organization": updated}
+
+
+@app.post("/api/org/invite")
+def invite_teammate(
+    req: OrgInviteRequest,
+    background_tasks: BackgroundTasks,
+    org: OrgContext = Depends(require_org_member("admin")),
+):
+    email = (req.email or "").strip().lower()
+    if "@" not in email or len(email) < 5:
+        raise HTTPException(status_code=400, detail="Enter a valid email address.")
+    if req.role not in ("admin", "member"):
+        raise HTTPException(status_code=400, detail="Role must be 'admin' or 'member'.")
+
+    invite = database.create_org_invite(org.org_id, email, req.role, org.uid)
+    if not invite:
+        raise HTTPException(status_code=500, detail="Could not create the invitation. Please try again.")
+
+    accept_base = (os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+    accept_url = f"{accept_base}/join?invite={invite['invite_token']}"
+    background_tasks.add_task(
+        email_service.send_org_invite_email,
+        org_name=org.org_name, inviter_name=org.user.name or org.user.email,
+        role=req.role, recipient_email=email, accept_url=accept_url,
+    )
+    # The raw invite token goes to the invitee by email and is echoed here so an
+    # admin can copy the link manually when SMTP is not configured.
+    return {
+        "status": "success",
+        "invite": {
+            "id": invite["id"], "email": invite["email"], "role": invite["role"],
+            "expires_at": invite["expires_at"], "accept_url": accept_url,
+        },
+    }
+
+
+@app.get("/api/org/invites")
+def list_org_invites(org: OrgContext = Depends(require_org_member("admin"))):
+    return {"status": "success", "invites": database.get_pending_org_invites(org.org_id)}
+
+
+@app.post("/api/org/invite/accept")
+def accept_invite(req: OrgInviteAcceptRequest, user: AuthUser = Depends(require_user)):
+    result = database.accept_org_invite(req.invite_token, user.uid, user.email)
+    reason = result.get("error") if result else "server"
+    if reason:
+        messages = {
+            "invalid": (404, "That invitation link is not valid."),
+            "used": (409, "That invitation has already been used."),
+            "expired": (410, "That invitation has expired. Ask for a new one."),
+            "email_mismatch": (403, "That invitation was sent to a different email address."),
+            "already_member": (409, "You already belong to an organization."),
+            "server": (500, "Could not accept the invitation. Please try again."),
+        }
+        status_code, detail = messages.get(reason, (400, "Could not accept the invitation."))
+        raise HTTPException(status_code=status_code, detail=detail)
+    return {"status": "success", "organization": result}
+
+
+@app.patch("/api/org/members/{member_user_id}")
+def change_member_role(
+    member_user_id: str,
+    req: OrgMemberRoleRequest,
+    org: OrgContext = Depends(require_org_member("owner")),
+):
+    if req.role not in database.ORG_ROLES:
+        raise HTTPException(status_code=400, detail="Unknown role.")
+    if str(member_user_id) == str(org.uid):
+        raise HTTPException(status_code=400, detail="You cannot change your own role.")
+    if not database.update_org_member_role(org.org_id, member_user_id, req.role):
+        raise HTTPException(status_code=404, detail="That teammate is not part of your organization.")
+    return {"status": "success", "members": database.get_org_members(org.org_id)}
+
+
+@app.delete("/api/org/members/{member_user_id}")
+def remove_member(member_user_id: str, org: OrgContext = Depends(require_org_member("owner"))):
+    if str(member_user_id) == str(org.uid):
+        raise HTTPException(status_code=400, detail="You cannot remove yourself. Transfer ownership first.")
+    if not database.remove_org_member(org.org_id, member_user_id):
+        raise HTTPException(status_code=404, detail="That teammate is not part of your organization, or is the owner.")
+    return {"status": "success", "members": database.get_org_members(org.org_id)}
+
+
+# -------------------------------------------------------------------------
+# Company branding (shared by the whole org, stored against the founder)
+# -------------------------------------------------------------------------
 
 @app.get("/api/recruiter/startup-profile")
-def get_startup_profile_endpoint(user_id: str):
-    try:
-        profile = database.get_startup_profile(user_id)
-        return {
-            "status": "success",
-            "profile": profile
-        }
-    except Exception as e:
-        print(f"Error getting startup profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+def get_startup_profile_endpoint(org: OrgContext = Depends(require_org_member())):
+    """
+    One company profile per organization, so every teammate sees and edits the
+    same branding. It is keyed on the founder's user id for backwards
+    compatibility with profiles created before organizations existed.
+    """
+    record = database.get_organization(org.org_id) or {}
+    owner_id = record.get("founder_user_id") or org.uid
+    profile = database.get_startup_profile(owner_id) or {}
+    profile.setdefault("company_name", org.org_name)
+    profile.setdefault("website_url", record.get("website_url") or "")
+    return {"status": "success", "profile": profile, "role": org.role}
+
 
 @app.post("/api/recruiter/startup-profile")
-def save_startup_profile_endpoint(req: StartupProfileRequest):
+def save_startup_profile_endpoint(
+    req: StartupProfileRequest,
+    org: OrgContext = Depends(require_org_member("admin")),
+):
+    record = database.get_organization(org.org_id) or {}
+    owner_id = record.get("founder_user_id") or org.uid
+    payload = req.model_dump()
+    payload["user_id"] = owner_id
     try:
-        profile = database.create_or_update_startup_profile(req.dict())
-        return {
-            "status": "success",
-            "profile": profile
-        }
+        profile = database.create_or_update_startup_profile(payload)
+        # Keep the organization row in step so invites and outreach use one name.
+        database.update_organization(org.org_id, {
+            "name": req.company_name or org.org_name,
+            "website_url": req.website_url,
+        })
+        return {"status": "success", "profile": profile}
     except Exception as e:
         print(f"Error saving startup profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Could not save the company profile. Please try again.")
+
+
+# -------------------------------------------------------------------------
+# Talent search
+# -------------------------------------------------------------------------
 
 @app.get("/api/recruiter/candidates")
 def get_recruiter_candidates(
+    org: OrgContext = Depends(require_org_member()),
     query: str = "",
     min_devscore: int = 0,
     primary_stack: str = "All",
     tier: str = "All",
-    min_resilience: float = 0.0
+    limit: int = Query(20, ge=1, le=recruiter_service.MAX_PAGE_SIZE),
+    offset: int = Query(0, ge=0),
 ):
     try:
-        candidates = recruiter_service.search_candidate_talent(
-            query=query,
-            min_devscore=min_devscore,
-            primary_stack=primary_stack,
-            tier=tier,
-            min_resilience=min_resilience
+        page = recruiter_service.search_candidate_talent(
+            org_id=org.org_id, query=query, min_devscore=min_devscore,
+            primary_stack=primary_stack, tier=tier, limit=limit, offset=offset,
         )
         return {
             "status": "success",
-            "total_count": len(candidates),
-            "candidates": candidates
+            "candidates": page["items"],
+            "total_count": page["total"],
+            "has_more": page["has_more"],
+            "limit": limit,
+            "offset": offset,
         }
     except Exception as e:
         print(f"Error in recruiter candidate search: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Talent search is temporarily unavailable.")
 
-@app.get("/api/recruiter/jobs")
-def list_recruiter_jobs(recruiter_id: Optional[str] = None):
-    try:
-        jobs = database.get_recruiter_jobs(recruiter_id)
-        return {
-            "status": "success",
-            "jobs": jobs
-        }
-    except Exception as e:
-        print(f"Error fetching recruiter jobs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/recruiter/jobs")
-def create_recruiter_job_endpoint(req: RecruiterJobCreateRequest):
-    try:
-        res = database.create_recruiter_job(req.dict())
-        return {
-            "status": "success",
-            "job": res
-        }
-    except Exception as e:
-        print(f"Error creating recruiter job: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/recruiter/candidates/{candidate_id}")
+def get_recruiter_candidate_detail(candidate_id: str, org: OrgContext = Depends(require_org_member())):
+    candidate = recruiter_service.get_candidate_detail(org.org_id, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="That candidate is not available for sourcing.")
+    return {"status": "success", "candidate": candidate}
 
-@app.post("/api/recruiter/shortlist")
-def shortlist_candidate_endpoint(req: ShortlistCandidateRequest):
-    try:
-        res = database.shortlist_candidate(req.dict())
-        return {
-            "status": "success",
-            "shortlist": res
-        }
-    except Exception as e:
-        print(f"Error shortlisting candidate: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/recruiter/shortlist")
-def get_shortlisted_endpoint(recruiter_id: str = "default_recruiter"):
-    try:
-        shortlists = database.get_shortlisted_candidates(recruiter_id)
-        return {
-            "status": "success",
-            "shortlists": shortlists
-        }
-    except Exception as e:
-        print(f"Error fetching shortlists: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/recruiter/shortlist/{shortlist_id}")
-def delete_shortlist_endpoint(shortlist_id: int):
-    try:
-        success = database.delete_shortlisted_candidate(shortlist_id)
-        return {
-            "status": "success",
-            "deleted": success
-        }
-    except Exception as e:
-        print(f"Error deleting shortlisted candidate: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/recruiter/send-assessment")
-def send_takehome_assessment_endpoint(req: SendAssessmentRequest):
-    try:
-        assessment = recruiter_service.dispatch_takehome_assessment(
-            recruiter_id=req.recruiter_id,
-            candidate_id=req.candidate_id,
-            candidate_name=req.candidate_name,
-            role_title=req.role_title,
-            problem_slug=req.problem_slug,
-            difficulty=req.difficulty,
-            time_limit_minutes=req.time_limit_minutes
-        )
-        return {
-            "status": "success",
-            "assessment": assessment
-        }
-    except Exception as e:
-        print(f"Error dispatching takehome assessment: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/recruiter/assessments")
-def get_assessments_endpoint(recruiter_id: Optional[str] = None):
-    try:
-        assessments = database.get_takehome_assessments(recruiter_id)
-        return {
-            "status": "success",
-            "assessments": assessments
-        }
-    except Exception as e:
-        print(f"Error fetching assessments: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/recruiter/assessments/{assessment_id}")
-def delete_assessment_endpoint(assessment_id: int):
-    try:
-        success = database.delete_takehome_assessment(assessment_id)
-        return {
-            "status": "success",
-            "deleted": success
-        }
-    except Exception as e:
-        print(f"Error deleting assessment: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/recruiter/candidate-resume/{candidate_id}")
-def get_candidate_resume_endpoint(candidate_id: str):
-    try:
-        profile = database.get_candidate_profile(candidate_id)
-        user = database.get_user_by_id(candidate_id)
-        name = user.get("name") if user else f"Candidate #{candidate_id}"
-        email = user.get("email") if user else ""
-        
-        resume_text = profile.get("resume_text", "") if profile else ""
-        resume_name = profile.get("resume_name", "") if profile else ""
-        
-        if not resume_name:
-            resume_name = f"{name.replace(' ', '_')}_Resume.txt"
-            
-        return {
-            "status": "success",
-            "candidate_id": candidate_id,
-            "candidate_name": name,
-            "candidate_email": email,
-            "resume_name": resume_name,
-            "resume_text": resume_text,
-            "skills": profile.get("tech_stack_preferences", []) if profile else [],
-            "github_url": profile.get("github_url", "") if profile else "",
-            "linkedin_url": profile.get("linkedin_url", "") if profile else ""
+def get_candidate_resume_endpoint(candidate_id: str, org: OrgContext = Depends(require_org_member())):
+    """
+    Résumé and contact details. Gated on the candidate having accepted this
+    organization's outreach — a 403 here is the consent model working, not a bug.
+    """
+    candidate = recruiter_service.get_candidate_detail(org.org_id, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="That candidate is not available for sourcing.")
+    if not candidate.get("contact_unlocked"):
+        raise HTTPException(
+            status_code=403,
+            detail="This candidate has not accepted your contact request yet. Send outreach to request their résumé and contact details.",
+        )
+    return {
+        "status": "success",
+        "candidate_id": candidate_id,
+        "candidate_name": candidate.get("name") or candidate.get("display_name"),
+        "candidate_email": candidate.get("email") or "",
+        "resume_name": candidate.get("resume_name") or "",
+        "resume_text": candidate.get("resume_text") or "",
+        "skills": candidate.get("primary_stack") or [],
+        "github_url": candidate.get("github_url") or "",
+        "linkedin_url": candidate.get("linkedin_url") or "",
+        "portfolio_url": candidate.get("portfolio_url") or "",
+    }
+
+
+# -------------------------------------------------------------------------
+# Requisitions
+# -------------------------------------------------------------------------
+
+@app.get("/api/recruiter/jobs")
+def list_recruiter_jobs(org: OrgContext = Depends(require_org_member())):
+    return {"status": "success", "jobs": database.get_recruiter_jobs(org.org_id)}
+
+
+@app.post("/api/recruiter/jobs")
+def create_recruiter_job_endpoint(
+    req: RecruiterJobCreateRequest,
+    org: OrgContext = Depends(require_org_member()),
+):
+    job = database.create_recruiter_job(org.org_id, org.uid, req.model_dump())
+    if not job:
+        raise HTTPException(status_code=500, detail="Could not post the requisition. Please try again.")
+    return {"status": "success", "job": job}
+
+
+@app.patch("/api/recruiter/jobs/{job_id}")
+def update_recruiter_job_endpoint(
+    job_id: int,
+    req: RecruiterJobUpdateRequest,
+    org: OrgContext = Depends(require_org_member()),
+):
+    job = database.update_recruiter_job(org.org_id, job_id, req.model_dump(exclude_none=True))
+    if not job:
+        raise HTTPException(status_code=404, detail="Requisition not found.")
+    return {"status": "success", "job": job}
+
+
+@app.delete("/api/recruiter/jobs/{job_id}")
+def delete_recruiter_job_endpoint(job_id: int, org: OrgContext = Depends(require_org_member("admin"))):
+    if not database.delete_recruiter_job(org.org_id, job_id):
+        raise HTTPException(status_code=404, detail="Requisition not found.")
+    return {"status": "success", "deleted": True}
+
+
+# -------------------------------------------------------------------------
+# Pipeline
+# -------------------------------------------------------------------------
+
+@app.get("/api/recruiter/pipeline-stages")
+def list_pipeline_stages(org: OrgContext = Depends(require_org_member())):
+    return {"status": "success", "stages": list(database.PIPELINE_STAGES)}
+
+
+@app.post("/api/recruiter/shortlist")
+def shortlist_candidate_endpoint(
+    req: ShortlistCandidateRequest,
+    org: OrgContext = Depends(require_org_member()),
+):
+    if req.stage not in database.PIPELINE_STAGES:
+        raise HTTPException(status_code=400, detail=f"Stage must be one of: {', '.join(database.PIPELINE_STAGES)}.")
+    candidate = recruiter_service.get_candidate_detail(org.org_id, req.candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="That candidate is not available for sourcing.")
+    if req.job_id and not database.get_recruiter_job(org.org_id, req.job_id):
+        raise HTTPException(status_code=404, detail="That requisition does not exist.")
+
+    payload = req.model_dump()
+    # The stored label follows the consent gate: an anonymized handle until the
+    # candidate accepts, so the pipeline never becomes a PII side channel.
+    payload["candidate_name"] = candidate.get("name") or candidate.get("display_name")
+    result = database.shortlist_candidate(org.org_id, org.uid, payload)
+    if not result:
+        raise HTTPException(status_code=500, detail="Could not add the candidate to your pipeline.")
+    return {"status": "success", "shortlist": result}
+
+
+@app.get("/api/recruiter/shortlist")
+def get_shortlisted_endpoint(org: OrgContext = Depends(require_org_member())):
+    return {
+        "status": "success",
+        "shortlists": database.get_shortlisted_candidates(org.org_id),
+        "stages": list(database.PIPELINE_STAGES),
+    }
+
+
+@app.patch("/api/recruiter/shortlist/{shortlist_id}")
+def update_shortlist_endpoint(
+    shortlist_id: int,
+    req: ShortlistUpdateRequest,
+    org: OrgContext = Depends(require_org_member()),
+):
+    if req.job_id:
+        if not database.get_recruiter_job(org.org_id, req.job_id):
+            raise HTTPException(status_code=404, detail="That requisition does not exist.")
+    result = database.update_shortlist_stage(
+        org_id=org.org_id, shortlist_id=shortlist_id, actor_user_id=org.uid,
+        stage=req.stage, notes=req.notes, job_id=req.job_id,
+    )
+    reason = result.get("error")
+    if reason:
+        messages = {
+            "invalid_stage": (400, f"Stage must be one of: {', '.join(database.PIPELINE_STAGES)}."),
+            "not_found": (404, "That pipeline entry does not exist."),
+            "no_changes": (400, "Nothing to update."),
+            "server": (500, "Could not update the pipeline. Please try again."),
         }
-    except Exception as e:
-        print(f"Error retrieving candidate resume: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        status_code, detail = messages.get(reason, (400, "Could not update the pipeline."))
+        raise HTTPException(status_code=status_code, detail=detail)
+    return {"status": "success", "shortlist": result}
+
+
+@app.get("/api/recruiter/shortlist/{shortlist_id}/events")
+def get_shortlist_events_endpoint(shortlist_id: int, org: OrgContext = Depends(require_org_member())):
+    return {"status": "success", "events": database.get_shortlist_events(org.org_id, shortlist_id)}
+
+
+@app.delete("/api/recruiter/shortlist/{shortlist_id}")
+def delete_shortlist_endpoint(shortlist_id: int, org: OrgContext = Depends(require_org_member())):
+    if not database.delete_shortlisted_candidate(org.org_id, shortlist_id):
+        raise HTTPException(status_code=404, detail="That pipeline entry does not exist.")
+    return {"status": "success", "deleted": True}
+
+
+# -------------------------------------------------------------------------
+# Outreach (the consent handshake)
+# -------------------------------------------------------------------------
+
+@app.post("/api/recruiter/outreach")
+def send_outreach_endpoint(
+    req: OutreachRequest,
+    background_tasks: BackgroundTasks,
+    org: OrgContext = Depends(require_org_member()),
+):
+    candidate = recruiter_service.get_candidate_detail(org.org_id, req.candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="That candidate is not available for sourcing.")
+
+    result = database.create_outreach_request(
+        org_id=org.org_id, candidate_user_id=req.candidate_id,
+        job_id=req.job_id, message=req.message, sent_by=org.uid,
+    )
+    reason = result.get("error")
+    if reason == "not_open_to_opportunities":
+        raise HTTPException(status_code=409, detail="This candidate is no longer open to opportunities.")
+    if reason:
+        raise HTTPException(status_code=500, detail="Could not send the request. Please try again.")
+
+    # Notify the candidate at their real address without exposing it to the
+    # recruiter — the send happens server-side from the DB row.
+    candidate_user = database.get_user_by_id(req.candidate_id)
+    if candidate_user and candidate_user.get("email"):
+        job = database.get_recruiter_job(org.org_id, req.job_id) if req.job_id else None
+        inbox_base = (os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+        background_tasks.add_task(
+            email_service.send_outreach_notification_email,
+            candidate_email=candidate_user["email"], org_name=org.org_name,
+            role_title=(job or {}).get("role_title", ""), message=req.message or "",
+            inbox_url=f"{inbox_base}/?tab=career-agent",
+        )
+    return {"status": "success", "outreach": result}
+
+
+@app.get("/api/recruiter/outreach")
+def list_outreach_endpoint(org: OrgContext = Depends(require_org_member())):
+    return {"status": "success", "outreach": database.get_org_outreach(org.org_id)}
+
+
+# -------------------------------------------------------------------------
+# Take-home assessments (recruiter side)
+# -------------------------------------------------------------------------
+
+@app.get("/api/recruiter/assessment-problems")
+def list_assessment_problems(org: OrgContext = Depends(require_org_member())):
+    return {
+        "status": "success",
+        "problems": [
+            {"slug": slug, "title": title}
+            for slug, title in recruiter_service.TAKEHOME_PROBLEMS.items()
+        ],
+    }
+
+
+@app.post("/api/recruiter/send-assessment")
+def send_takehome_assessment_endpoint(
+    req: SendAssessmentRequest,
+    background_tasks: BackgroundTasks,
+    org: OrgContext = Depends(require_org_member()),
+):
+    """
+    Dispatches a take-home. Requires the candidate to have accepted outreach —
+    the invite has to reach a real inbox, and this platform will not hand a
+    recruiter an email address the candidate has not agreed to share.
+    """
+    if req.problem_slug not in recruiter_service.TAKEHOME_PROBLEMS:
+        raise HTTPException(status_code=400, detail="Unknown assessment problem.")
+    if not 15 <= req.time_limit_minutes <= 240:
+        raise HTTPException(status_code=400, detail="Time limit must be between 15 and 240 minutes.")
+
+    candidate = recruiter_service.get_candidate_detail(org.org_id, req.candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="That candidate is not available for sourcing.")
+    if not candidate.get("contact_unlocked") or not candidate.get("email"):
+        raise HTTPException(
+            status_code=403,
+            detail="Send an outreach request first. You can invite this candidate to an assessment once they accept.",
+        )
+
+    job = database.get_recruiter_job(org.org_id, req.job_id) if req.job_id else None
+    if req.job_id and not job:
+        raise HTTPException(status_code=404, detail="That requisition does not exist.")
+    role_title = req.role_title or (job or {}).get("role_title") or candidate.get("role") or "Software Engineer"
+
+    assessment = recruiter_service.dispatch_takehome_assessment(
+        org_id=org.org_id, sent_by=org.uid, candidate_id=req.candidate_id,
+        candidate_name=candidate.get("name") or "", candidate_email=candidate.get("email") or "",
+        role_title=role_title, job_id=req.job_id, problem_slug=req.problem_slug,
+        difficulty=req.difficulty, time_limit_minutes=req.time_limit_minutes,
+    )
+    if not assessment:
+        raise HTTPException(status_code=500, detail="Could not create the assessment. Please try again.")
+
+    token = assessment["token"]
+    background_tasks.add_task(
+        _deliver_takehome_invite,
+        token=token, candidate_name=assessment["candidate_name"],
+        candidate_email=assessment["candidate_email"], company=org.org_name,
+        role_title=role_title, problem_title=assessment["problem_title"],
+        difficulty=assessment["difficulty"], time_limit_minutes=assessment["time_limit_minutes"],
+        expires_at=assessment["expires_at"],
+    )
+
+    # The raw token never leaves the server for a recruiter — whoever holds it
+    # can sit the test. Move the candidate into the Assessment stage instead.
+    database.shortlist_candidate(org.org_id, org.uid, {
+        "candidate_id": req.candidate_id,
+        "candidate_name": candidate.get("name") or candidate.get("display_name"),
+        "job_id": req.job_id, "stage": "Assessment",
+        "notes": f"Assessment sent: {assessment['problem_title']}",
+    })
+    return {
+        "status": "success",
+        "assessment": {
+            "id": assessment["id"], "candidate_id": req.candidate_id,
+            "candidate_name": assessment["candidate_name"], "role_title": role_title,
+            "problem_title": assessment["problem_title"], "difficulty": assessment["difficulty"],
+            "time_limit_minutes": assessment["time_limit_minutes"],
+            "status": "Sent", "expires_at": assessment["expires_at"],
+        },
+    }
+
+
+def _deliver_takehome_invite(token: str, candidate_name: str, candidate_email: str,
+                             company: str, role_title: str, problem_title: str,
+                             difficulty: str, time_limit_minutes: int, expires_at: str):
+    """Background task: email the invite, then record that it went out."""
+    result = email_service.send_takehome_invite_email(
+        candidate_name=candidate_name, candidate_email=candidate_email, company=company,
+        role_title=role_title, problem_title=problem_title, difficulty=difficulty,
+        time_limit_minutes=time_limit_minutes,
+        invite_url=recruiter_service.build_invite_url(token), expires_at=expires_at,
+    )
+    if result.get("email_sent"):
+        database.mark_takehome_invite_sent(token)
+
+
+@app.get("/api/recruiter/assessments")
+def get_assessments_endpoint(org: OrgContext = Depends(require_org_member())):
+    return {"status": "success", "assessments": database.get_takehome_assessments(org.org_id)}
+
+
+@app.post("/api/recruiter/assessments/{assessment_id}/resend")
+def resend_assessment_endpoint(
+    assessment_id: int,
+    background_tasks: BackgroundTasks,
+    org: OrgContext = Depends(require_org_member()),
+):
+    record = database.get_assessment_for_resend(org.org_id, assessment_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Assessment not found.")
+    if record.get("submitted_at"):
+        raise HTTPException(status_code=409, detail="This candidate has already submitted.")
+    if not record.get("candidate_email"):
+        raise HTTPException(status_code=409, detail="No email address on file for this candidate.")
+    expires_at = _to_naive_utc(record.get("expires_at"))
+    if expires_at and expires_at < _utcnow():
+        raise HTTPException(status_code=410, detail="This assessment link has expired. Send a new assessment instead.")
+
+    background_tasks.add_task(
+        _deliver_takehome_invite,
+        token=record["token"], candidate_name=record.get("candidate_name") or "",
+        candidate_email=record["candidate_email"], company=org.org_name,
+        role_title=record.get("role_title") or "", problem_title=record.get("problem_title") or "",
+        difficulty=record.get("difficulty") or "Medium",
+        time_limit_minutes=record.get("time_limit_minutes") or 60,
+        expires_at=str(record.get("expires_at") or ""),
+    )
+    return {"status": "success", "resent": True}
+
+
+@app.delete("/api/recruiter/assessments/{assessment_id}")
+def delete_assessment_endpoint(assessment_id: int, org: OrgContext = Depends(require_org_member())):
+    if not database.delete_takehome_assessment(org.org_id, assessment_id):
+        raise HTTPException(status_code=404, detail="Assessment not found.")
+    return {"status": "success", "deleted": True}
+
+
+# -------------------------------------------------------------------------
+# Candidate side of the consent model
+# -------------------------------------------------------------------------
+
+@app.get("/api/candidate/opportunities")
+def get_opportunity_optin(user: AuthUser = Depends(require_user)):
+    return {"status": "success", **database.get_candidate_opportunity_status(user.uid)}
+
+
+@app.patch("/api/candidate/opportunities")
+def set_opportunity_optin(req: OpportunityOptInRequest, user: AuthUser = Depends(require_user)):
+    result = database.set_candidate_opportunity_optin(
+        user.uid, req.open_to_opportunities, req.opportunity_preferences,
+    )
+    if result is None:
+        raise HTTPException(status_code=500, detail="Could not save your preference. Please try again.")
+    return {"status": "success", **result}
+
+
+@app.get("/api/candidate/outreach")
+def list_candidate_outreach(user: AuthUser = Depends(require_user)):
+    return {"status": "success", "outreach": database.get_candidate_outreach(user.uid)}
+
+
+@app.post("/api/candidate/outreach/{outreach_id}/respond")
+def respond_candidate_outreach(
+    outreach_id: int,
+    req: OutreachResponseRequest,
+    user: AuthUser = Depends(require_user),
+):
+    result = database.respond_to_outreach(outreach_id, user.uid, req.accept)
+    reason = result.get("error")
+    if reason == "not_found_or_answered":
+        raise HTTPException(status_code=404, detail="That request no longer needs a response.")
+    if reason:
+        raise HTTPException(status_code=500, detail="Could not record your response. Please try again.")
+    return {"status": "success", "outreach": result}
 
 
 
 # =========================================================================
 # REAL-TIME TAKE-HOME ASSESSMENT CANDIDATE EXECUTION ENDPOINTS
 # =========================================================================
+# The token in the URL is the candidate's only credential. Every handler here
+# re-validates it against expiry and prior submission, and returns only the
+# fields the candidate is allowed to see — never the recruiter id, the score of
+# a previous attempt, or the hidden test expectations.
+# =========================================================================
 
 from code_studio.catalog import get_problem_by_id, PROBLEMS
 from code_studio.runner import run_code_sandbox
 from code_studio.chaos import run_chaos_stress_test
+
+# Legacy assessment slugs mapped onto the current catalog ids.
+PROBLEM_SLUG_MAP = {
+    "lru-cache-ttl": "in-memory-lru-ttl",
+    "concurrent-lru-cache": "in-memory-lru-ttl",
+    "rate-limiter": "rate-limiter-sliding-log",
+    "trapping-rain-water": "container-with-most-water",
+    "stream-median": "longest-substring-without-repeat",
+    "graph-chaos": "number-of-islands-grid",
+}
+
+DEFAULT_FALLBACK_TESTS = [{"input": {"data": [2, 7, 11, 15]}, "expected": [0, 1]}]
+
+
+def _resolve_catalog_problem(raw_slug: str) -> dict:
+    """Maps a stored assessment slug to a catalog problem, with a safe fallback."""
+    raw_slug = raw_slug or "two-sum-sorted"
+    target = PROBLEM_SLUG_MAP.get(raw_slug, raw_slug)
+    return (
+        get_problem_by_id(target)
+        or get_problem_by_id(raw_slug)
+        or get_problem_by_id("in-memory-lru-ttl")
+        or get_problem_by_id("two-sum-sorted")
+        or (PROBLEMS[0] if PROBLEMS else None)
+    )
+
+
+def _load_live_assessment(token: str, grace_seconds: int = 0) -> dict:
+    """
+    Fetches an assessment and asserts it is still open for work.
+    404 unknown token, 410 expired, 409 already submitted.
+
+    `grace_seconds` absorbs clock skew and request latency on submission: a
+    candidate whose timer hits zero must still be able to land their answer.
+    """
+    assessment = database.get_takehome_assessment_by_token(token)
+    if not assessment:
+        raise HTTPException(status_code=404, detail="This assessment link is not valid.")
+
+    if assessment.get("submitted_at") or assessment.get("completed_at"):
+        raise HTTPException(
+            status_code=409,
+            detail="You have already submitted this assessment. The hiring team has your results.",
+        )
+
+    now = _utcnow()
+    grace = timedelta(seconds=max(0, grace_seconds))
+    expires_at = _to_naive_utc(assessment.get("expires_at"))
+    if expires_at and expires_at + grace < now:
+        raise HTTPException(
+            status_code=410,
+            detail="This assessment link has expired. Contact the hiring team for a new one.",
+        )
+
+    started_at = _to_naive_utc(assessment.get("started_at"))
+    if started_at:
+        limit_deadline = started_at + timedelta(minutes=int(assessment.get("time_limit_minutes") or 60))
+        deadline = min(limit_deadline, expires_at) if expires_at else limit_deadline
+        if deadline + grace < now:
+            raise HTTPException(
+                status_code=410,
+                detail="The time limit for this assessment has passed.",
+            )
+        assessment["_remaining_seconds"] = max(0, int((deadline - now).total_seconds()))
+    else:
+        assessment["_remaining_seconds"] = int(assessment.get("time_limit_minutes") or 60) * 60
+    return assessment
+
+
+def _candidate_view(assessment: dict) -> dict:
+    """The whitelist of assessment fields a candidate may see."""
+    return {
+        "id": assessment.get("id"),
+        "candidate_name": assessment.get("candidate_name") or "",
+        "role_title": assessment.get("role_title") or "",
+        "problem_title": assessment.get("problem_title") or "",
+        "problem_slug": assessment.get("problem_slug") or "",
+        "difficulty": assessment.get("difficulty") or "Medium",
+        "time_limit_minutes": int(assessment.get("time_limit_minutes") or 60),
+        "remaining_seconds": assessment.get("_remaining_seconds", 0),
+        "status": assessment.get("status") or "Sent",
+        "expires_at": assessment.get("expires_at"),
+        "started_at": assessment.get("started_at"),
+    }
+
 
 class TakeHomeRunRequest(BaseModel):
     code: str
@@ -1129,75 +1748,57 @@ class TakeHomeSubmitRequest(BaseModel):
 
 @app.get("/api/takehome/{token}")
 def get_takehome_challenge_details(token: str):
-    assessment = database.get_takehome_assessment_by_token(token)
-    if not assessment:
-        raise HTTPException(status_code=404, detail="Assessment session not found or link has expired.")
-    
-    raw_slug = assessment.get("problem_slug", "two-sum-sorted")
-    
-    slug_map = {
-        "lru-cache-ttl": "in-memory-lru-ttl",
-        "concurrent-lru-cache": "in-memory-lru-ttl",
-        "rate-limiter": "rate-limiter-sliding-log",
-        "trapping-rain-water": "container-with-most-water",
-        "stream-median": "longest-substring-without-repeat",
-        "graph-chaos": "number-of-islands-grid"
-    }
-    target_slug = slug_map.get(raw_slug, raw_slug)
-    catalog_problem = get_problem_by_id(target_slug) or get_problem_by_id(raw_slug)
-    
+    assessment = _load_live_assessment(token)
+
+    # Anchor the countdown server-side on first open, so closing the tab or
+    # editing localStorage cannot buy extra time.
+    if not assessment.get("started_at"):
+        database.mark_takehome_started(token)
+        assessment["status"] = "In Progress"
+
+    catalog_problem = _resolve_catalog_problem(assessment.get("problem_slug"))
     if not catalog_problem:
-        catalog_problem = get_problem_by_id("in-memory-lru-ttl") or get_problem_by_id("two-sum-sorted") or PROBLEMS[0]
-    
+        raise HTTPException(status_code=500, detail="This assessment problem is unavailable. Contact the hiring team.")
+
     # Ensure starter code covers all standard languages
     starter_code = dict(catalog_problem.get("starter_code", {}))
     entry_point = catalog_problem.get("entry_point", "solution")
-    
+
     if "python" not in starter_code:
         starter_code["python"] = f"def {entry_point}(*args, **kwargs):\n    # Write your production implementation here\n    pass\n"
     if "cpp" not in starter_code:
-        starter_code["cpp"] = f"#include <iostream>\n#include <vector>\n\nclass Solution {{\npublic:\n    // Write your C++ implementation here\n}};\n"
+        starter_code["cpp"] = "#include <iostream>\n#include <vector>\n\nclass Solution {\npublic:\n    // Write your C++ implementation here\n};\n"
     if "java" not in starter_code:
-        starter_code["java"] = f"public class Solution {{\n    // Write your Java implementation here\n}}\n"
+        starter_code["java"] = "public class Solution {\n    // Write your Java implementation here\n}\n"
     if "go" not in starter_code:
-        starter_code["go"] = f"package main\n\n// Write your Go implementation here\nfunc Solve() {{\n}}\n"
+        starter_code["go"] = "package main\n\n// Write your Go implementation here\nfunc Solve() {\n}\n"
     if "typescript" not in starter_code:
         starter_code["typescript"] = f"export function {entry_point}(...args: any[]): any {{\n    // Write your TypeScript implementation here\n}}\n"
     if "javascript" not in starter_code:
         starter_code["javascript"] = f"function {entry_point}(...args) {{\n    // Write your JavaScript implementation here\n}}\n"
 
-    enriched_problem = dict(catalog_problem)
+    # Hidden test expectations stay on the server.
+    enriched_problem = {
+        k: v for k, v in catalog_problem.items()
+        if k not in ("test_cases", "hidden_test_cases", "reference_solution")
+    }
     enriched_problem["starter_code"] = starter_code
+    enriched_problem["entry_point"] = entry_point
     enriched_problem["supported_languages"] = ["python", "cpp", "java", "go", "typescript", "javascript"]
+    enriched_problem["sample_test_cases"] = (catalog_problem.get("test_cases") or [])[:2]
 
     return {
         "status": "success",
-        "assessment": assessment,
-        "problem": enriched_problem
+        "assessment": _candidate_view(assessment),
+        "problem": enriched_problem,
     }
 
 @app.post("/api/takehome/{token}/run")
 def run_takehome_test(token: str, req: TakeHomeRunRequest):
-    assessment = database.get_takehome_assessment_by_token(token)
-    if not assessment:
-        raise HTTPException(status_code=404, detail="Assessment session not found.")
-    
-    raw_slug = assessment.get("problem_slug", "two-sum-sorted")
-    slug_map = {
-        "lru-cache-ttl": "in-memory-lru-ttl",
-        "concurrent-lru-cache": "in-memory-lru-ttl",
-        "rate-limiter": "rate-limiter-sliding-log",
-        "trapping-rain-water": "container-with-most-water",
-        "stream-median": "longest-substring-without-repeat",
-        "graph-chaos": "number-of-islands-grid"
-    }
-    target_slug = slug_map.get(raw_slug, raw_slug)
-    catalog_problem = get_problem_by_id(target_slug) or get_problem_by_id(raw_slug) or get_problem_by_id("in-memory-lru-ttl") or get_problem_by_id("two-sum-sorted")
-    
-    test_cases = (catalog_problem.get("test_cases") if catalog_problem else []) or [
-        {"input": {"data": [2, 7, 11, 15]}, "expected": [0, 1]}
-    ]
-    
+    assessment = _load_live_assessment(token)
+    catalog_problem = _resolve_catalog_problem(assessment.get("problem_slug"))
+
+    test_cases = (catalog_problem.get("test_cases") if catalog_problem else []) or DEFAULT_FALLBACK_TESTS
     entry_point = req.entry_point or (catalog_problem.get("entry_point") if catalog_problem else "solution")
 
     result = run_code_sandbox(
@@ -1209,32 +1810,20 @@ def run_takehome_test(token: str, req: TakeHomeRunRequest):
     )
     return {
         "status": "success",
+        "remaining_seconds": assessment.get("_remaining_seconds", 0),
         "result": result
     }
 
 @app.post("/api/takehome/{token}/submit")
 def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
-    assessment = database.get_takehome_assessment_by_token(token)
-    if not assessment:
-        raise HTTPException(status_code=404, detail="Assessment session not found.")
-    
-    raw_slug = assessment.get("problem_slug", "two-sum-sorted")
-    slug_map = {
-        "lru-cache-ttl": "in-memory-lru-ttl",
-        "concurrent-lru-cache": "in-memory-lru-ttl",
-        "rate-limiter": "rate-limiter-sliding-log",
-        "trapping-rain-water": "container-with-most-water",
-        "stream-median": "longest-substring-without-repeat",
-        "graph-chaos": "number-of-islands-grid"
-    }
-    target_slug = slug_map.get(raw_slug, raw_slug)
-    catalog_problem = get_problem_by_id(target_slug) or get_problem_by_id(raw_slug) or get_problem_by_id("in-memory-lru-ttl") or get_problem_by_id("two-sum-sorted")
-    
-    test_cases = (catalog_problem.get("test_cases") if catalog_problem else []) or [
-        {"input": {"data": [2, 7, 11, 15]}, "expected": [0, 1]}
-    ]
+    # A generous grace window: the timer expiring is exactly when the client
+    # auto-submits, and refusing that submission would lose the candidate's work.
+    assessment = _load_live_assessment(token, grace_seconds=180)
+    catalog_problem = _resolve_catalog_problem(assessment.get("problem_slug"))
+
+    test_cases = (catalog_problem.get("test_cases") if catalog_problem else []) or DEFAULT_FALLBACK_TESTS
     entry_point = req.entry_point or (catalog_problem.get("entry_point") if catalog_problem else "solution")
-    
+
     # 1. Run Standard Sandbox Tests
     run_res = run_code_sandbox(
         language=req.language,
@@ -1243,7 +1832,7 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         test_cases=test_cases,
         timeout_seconds=8.0
     )
-    
+
     # 2. Run Adversarial Chaos Stress Tests
     chaos_res = run_chaos_stress_test(
         language=req.language,
@@ -1253,19 +1842,19 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         problem_description=catalog_problem.get("description", "") if catalog_problem else "",
         standard_test_cases=test_cases
     )
-    
+
     # 3. Calculate Real DevScore and Resilience
     tests_passed = run_res.get("passed", 0)
     total_tests = max(1, run_res.get("total", len(test_cases)))
     base_accuracy = (tests_passed / total_tests)
-    
+
     chaos_passed = chaos_res.get("chaos_passed", 0)
     chaos_total = max(1, chaos_res.get("chaos_total", 5))
     chaos_resilience_ratio = chaos_passed / chaos_total
-    
+
     overall_score = int((base_accuracy * 600) + (chaos_resilience_ratio * 400))
     resilience_pct = int(chaos_resilience_ratio * 100)
-    
+
     test_results_payload = {
         "sandbox_run": run_res,
         "chaos_stress": chaos_res,
@@ -1281,7 +1870,7 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         "warnings_count": req.warnings_count or 0,
         "time_taken_seconds": req.time_taken_seconds
     }
-    
+
     # 4. Save to Database
     final_status = "Completed"
     if req.submission_reason == "proctoring_violations":
@@ -1291,14 +1880,21 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
     elif req.submission_reason == "time_expired":
         final_status = "Auto-Submitted (Time Limit)"
 
-    database.update_takehome_assessment_result(
+    # The write is guarded on submitted_at IS NULL, so a duplicate submission
+    # (double-click, retried request, or a race) cannot overwrite the result.
+    recorded = database.update_takehome_assessment_result(
         token=token,
         status=final_status,
         score=overall_score,
         chaos_resilience=resilience_pct,
         test_results=test_results_payload
     )
-    
+    if not recorded:
+        raise HTTPException(
+            status_code=409,
+            detail="This assessment has already been submitted.",
+        )
+
     return {
         "status": "success",
         "score": overall_score,
@@ -1308,7 +1904,7 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         "verdict": "Passed & Verified" if overall_score >= 650 else "Under Review",
         "submission_reason": req.submission_reason or "manual",
         "warnings_count": req.warnings_count or 0,
-        "completed_at": datetime.utcnow().isoformat()
+        "completed_at": datetime.now(timezone.utc).isoformat()
     }
 
 

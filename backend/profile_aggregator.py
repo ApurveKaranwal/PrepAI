@@ -354,15 +354,18 @@ def fetch_github_stats(username_or_url: str) -> Dict[str, Any]:
             recent_commits = 0
 
         sorted_langs = sorted(languages_count.keys(), key=lambda l: languages_count[l], reverse=True)
-        primary_languages = sorted_langs[:5] if sorted_langs else ["Python", "JavaScript", "TypeScript"]
+        # No invented language list: an account with no public repos reports none.
+        primary_languages = sorted_langs[:5]
 
-        # Calculate authentic GitHub strength & open-source scores
+        # Authentic GitHub strength & open-source scores. No floor — an account
+        # with no repos, stars or followers genuinely scores zero, and a floor of
+        # 20 would be a number we cannot point at any evidence for.
         repo_score = min(35, public_repos * 2)
         star_score = min(35, stars_total * 5)
         follower_score = min(15, followers * 2)
         lang_score = min(15, len(languages_count) * 3)
-        strength = min(100, max(20, repo_score + star_score + follower_score + lang_score))
-        oss_score = min(100, max(20, (star_score * 1.5) + (forks_total * 4) + repo_score))
+        strength = min(100, repo_score + star_score + follower_score + lang_score)
+        oss_score = int(min(100, (star_score * 1.5) + (forks_total * 4) + repo_score))
 
         return {
             "username": clean_u,

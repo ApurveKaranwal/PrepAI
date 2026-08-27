@@ -6,10 +6,11 @@ import time
 import datetime
 import hashlib
 import threading
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 import database
+from auth_deps import AuthUser, require_user
 from ml.tfidf.tfidf import TFIDFModel
 from browser_agent import AutoApplyAgent
 from dotenv import load_dotenv
@@ -173,32 +174,43 @@ async def onboard_candidate(
             if s.lower() in resume_text.lower() and s not in detected_skills:
                 detected_skills.append(s)
 
-    # Scrape Github statistics (Simulated using repository scanning or standard fallback)
+    # Real GitHub statistics from the public API. The previous version filled
+    # these with random.randint() the moment a URL was present, so a recruiter
+    # reading the profile saw repo, commit and strength numbers that were
+    # invented on the spot.
     github_stats = {
         "repo_count": 0,
         "primary_languages": [],
         "commit_count_30d": 0,
         "github_strength": 0,
-        "open_source_score": 0
+        "open_source_score": 0,
+        "connected": False,
     }
-    
-    if github_url:
-        # Extract repo count & stats
-        github_stats["repo_count"] = random.randint(12, 35)
-        github_stats["primary_languages"] = list(set(["Python", "TypeScript", "Go", "JavaScript"][:random.randint(2, 4)]))
-        github_stats["commit_count_30d"] = random.randint(45, 180)
-        github_stats["github_strength"] = random.randint(72, 94)
-        github_stats["open_source_score"] = random.randint(65, 91)
-    else:
-        # Default empty github profile stats
-        github_stats["github_strength"] = 0
-        github_stats["open_source_score"] = 0
 
-    # Scrape LinkedIn statistics (Simulated)
+    if github_url:
+        try:
+            from profile_aggregator import fetch_github_stats
+            live = fetch_github_stats(github_url)
+            github_stats = {
+                "repo_count": live.get("public_repos", 0),
+                "primary_languages": live.get("primary_languages", []),
+                "commit_count_30d": live.get("commit_count_30d", 0),
+                "github_strength": live.get("github_strength", 0),
+                "open_source_score": live.get("open_source_score", 0),
+                "stars_total": live.get("stars_total", 0),
+                "followers": live.get("followers", 0),
+                "username": live.get("username", ""),
+                "connected": bool(live.get("connected")),
+            }
+        except Exception as e:
+            print(f"[CareerAgent] GitHub stats unavailable for {github_url}: {e}")
+
+    # LinkedIn is not integrated. Skills come from the resume and the candidate's
+    # own stack selection; nothing here is inferred or invented.
     linkedin_data = {
-        "certifications": ["AWS Certified Cloud Practitioner"] if "aws" in [s.lower() for s in detected_skills] else [],
+        "certifications": [],
         "skills": detected_skills,
-        "experience_years": "2-4 years"
+        "experience_years": ""
     }
 
     profile = {
@@ -236,6 +248,63 @@ def get_profile(user_id: str = "", email: str = ""):
 # ----------------------------------------------------
 # 2. AI Job Matching & Readiness Engine
 # ----------------------------------------------------
+def _readiness_score(match_score: float, interview_score: float,
+                     has_interview_signal: bool, skill_score: float = None) -> int:
+    """
+    Averages only the signals we actually measured for this candidate. Someone
+    who has not sat a mock interview has no interview signal, so the term is
+    dropped rather than filled with a placeholder — the old code averaged in a
+    literal 70, which produced a readiness number we could not defend. Likewise
+    a listing with no parsed skill list contributes no skill-coverage term
+    instead of being credited a free 100%.
+    """
+    parts = [match_score]
+    if skill_score is not None:
+        parts.append(skill_score)
+    if has_interview_signal:
+        parts.append(interview_score)
+    return max(0, min(100, int(sum(parts) / len(parts))))
+
+
+@router.post("/jobs/refresh")
+def refresh_external_jobs_feed(user: AuthUser = Depends(require_user)):
+    """
+    Force-refresh the external job feed. The 30-minute auto-refresh on
+    `GET /jobs` is too slow when a candidate opens the page and immediately
+    sees the same old listings; this route runs `run_jobs_fetch` inline
+    (synchronously) so the very next `GET /jobs` reads the new rows. We cap
+    the wait at ~25s with a thread so a flapping upstream provider can't
+    hang the request indefinitely.
+    """
+    with REFRESH_LOCK:
+        container = {"done": False, "error": None}
+
+        def _runner():
+            try:
+                database.run_jobs_fetch()
+            except Exception as e:
+                container["error"] = str(e)
+            finally:
+                container["done"] = True
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        # Wait up to 25s; 30 upstream HTTP calls fit comfortably inside that.
+        t.join(timeout=25)
+
+        if not container["done"]:
+            return {
+                "status": "in_progress",
+                "message": "Refresh is still running in the background; reload in a few seconds.",
+            }
+        if container["error"]:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Job feed refresh failed: {container['error']}",
+            )
+        return {"status": "ok", "message": "Job feed refreshed."}
+
+
 @router.get("/jobs")
 def discover_matched_jobs(user_id: str):
     global LAST_REFRESH_TIME
@@ -250,10 +319,12 @@ def discover_matched_jobs(user_id: str):
     if not profile:
         raise HTTPException(status_code=404, detail="Candidate profile not found. Complete onboarding first.")
 
-    # Fetch candidate interview data from history
-    history_data = database.get_history_data()
-    stats = history_data.get("overall_stats", {})
-    interview_score = stats.get("overall_readiness", 70)  # Default fallback if no interviews done
+    # This candidate's own verified interview performance. The previous version
+    # called `get_history_data()`, which aggregates every user in the database —
+    # so it reported other people's readiness as this candidate's.
+    prep_stats = database.get_user_prepai_stats(user_id)
+    has_interview_signal = int(prep_stats.get("sessions_count") or 0) > 0
+    interview_score = round(float(prep_stats.get("voice_rating") or 0.0) * 10, 1)
 
     # Load candidate skills
     candidate_skills = profile.get("tech_stack_preferences", [])
@@ -263,95 +334,94 @@ def discover_matched_jobs(user_id: str):
     # Prepare corpus for similarity matching
     candidate_corpus = " ".join(candidate_skills) + " " + profile.get("resume_text", "")
     
-    # 0. Fetch Registered Startup Profile and Recruiter Jobs to Feature at Top
+    # 0. Featured requisitions posted by registered hiring organizations.
+    # Each requisition carries ITS OWN organization's branding. The previous
+    # implementation read one arbitrary startup_profiles row and stamped that
+    # founder, website and stage onto every company's jobs.
     startup_jobs = []
     try:
         conn = database.get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM startup_profiles ORDER BY updated_at DESC LIMIT 1")
-        startup_row = cursor.fetchone()
-        
-        cursor.execute("SELECT * FROM recruiter_jobs WHERE status = 'Active' ORDER BY id DESC")
+        cursor.execute("""
+            SELECT j.id, j.role_title, j.company_name, j.location, j.work_mode,
+                   j.salary_range, j.experience_level, j.required_skills, j.description,
+                   o.name AS org_name, o.website_url AS org_website,
+                   sp.company_name AS sp_company, sp.location AS sp_location,
+                   sp.stage AS sp_stage, sp.founder_name, sp.founder_role,
+                   sp.primary_tech_stack, sp.website_url AS sp_website, sp.about
+            FROM recruiter_jobs j
+            JOIN organizations o ON o.id = j.org_id
+            LEFT JOIN startup_profiles sp ON sp.user_id = o.founder_user_id
+            WHERE j.status = 'Active'
+            ORDER BY j.created_at DESC
+        """)
         rec_jobs = cursor.fetchall()
         conn.close()
-        
-        startup_name = startup_row["company_name"] if startup_row else "PrepFlow AI Technologies"
-        startup_loc = startup_row["location"] if startup_row else "Bengaluru, India • Remote-First"
-        startup_stage = startup_row["stage"] if startup_row else "Seed Stage"
-        startup_founder = startup_row["founder_name"] if startup_row else "Apurve Karanwal"
-        startup_role = startup_row["founder_role"] if startup_row else "Founder & CTO"
-        startup_stack = startup_row["primary_tech_stack"] if (startup_row and isinstance(startup_row.get("primary_tech_stack"), list)) else (json.loads(startup_row["primary_tech_stack"]) if (startup_row and startup_row.get("primary_tech_stack") and isinstance(startup_row.get("primary_tech_stack"), str)) else ["Python", "FastAPI", "React", "Next.js", "Go", "PostgreSQL"])
-        startup_url = startup_row["website_url"] if startup_row else "https://prepflow.ai"
-        startup_desc = startup_row["about"] if startup_row else "Building next-generation talent assessment engines with cryptographic DevScore verification."
-        
-        if rec_jobs:
-            for rj in rec_jobs:
-                r_skills = json.loads(rj["required_skills"]) if (rj.get("required_skills") and isinstance(rj["required_skills"], str)) else (rj.get("required_skills") or startup_stack)
-                matched_sk = [s for s in r_skills if any(s.lower() in cs.lower() for cs in candidate_skills)]
-                startup_jobs.append({
-                    "id": 900000 + rj["id"],
-                    "title": rj["role_title"],
-                    "company": rj["company_name"] or startup_name,
-                    "location": rj["location"] or startup_loc,
-                    "work_mode": rj["work_mode"] or "Remote",
-                    "salary": rj["salary_range"] or "$130k - $185k / ₹35-50 LPA",
-                    "experience_required": rj["experience_level"] or "2-5 years",
-                    "skills_required": r_skills,
-                    "match_score": 98,
-                    "readiness_score": 95,
-                    "matched_skills": matched_sk,
-                    "missing_skills": [s for s in r_skills if s not in matched_sk][:2],
-                    "reasons": [
-                        "Direct Founder Review",
-                        f"{startup_stage} Requisition",
-                        "Verified DevScore Pipeline"
-                    ],
-                    "url": startup_url,
-                    "ats_type": "PrepFlow Founder Gateway",
-                    "source": "PrepFlow Verified Requisition",
-                    "is_featured_startup": True,
-                    "is_registered_startup": True,
-                    "can_apply_via_agent": True,
-                    "portal_type": "PrepFlow Partner Gateway",
-                    "stage": startup_stage,
-                    "founder_name": startup_founder,
-                    "founder_role": startup_role,
-                    "description": rj["description"] or startup_desc
-                })
-        else:
-            matched_sk = [s for s in startup_stack if any(s.lower() in cs.lower() for cs in candidate_skills)]
+
+        for rj in rec_jobs:
+            r_skills = rj.get("required_skills")
+            if isinstance(r_skills, str):
+                try:
+                    r_skills = json.loads(r_skills)
+                except Exception:
+                    r_skills = []
+            r_skills = r_skills or []
+
+            matched_sk = [s for s in r_skills if any(s.lower() in cs.lower() for cs in candidate_skills)]
+            missing_sk = [s for s in r_skills if s not in matched_sk]
+
+            description = rj.get("description") or rj.get("about") or ""
+            try:
+                tfidf = TFIDFModel([candidate_corpus, description])
+                similarity = TFIDFModel.cosine_similarity(
+                    tfidf.get_tfidf_vector(candidate_corpus),
+                    tfidf.get_tfidf_vector(description)
+                )
+            except Exception:
+                similarity = 0.0
+
+            if r_skills:
+                skill_score = len(matched_sk) / len(r_skills) * 100
+                match_score = max(0, min(100, int((similarity * 40) + (skill_score * 0.6))))
+            else:
+                skill_score = None
+                match_score = max(0, min(100, int(similarity * 100)))
+            readiness_score = _readiness_score(match_score, interview_score, has_interview_signal, skill_score)
+
+            reasons_list = [f"{ms} match" for ms in matched_sk[:3]]
+            reasons_list += [f"{mis} gap" for mis in missing_sk[:2]]
+            if rj.get("sp_stage"):
+                reasons_list.append(f"{rj['sp_stage']} requisition")
+
             startup_jobs.append({
-                "id": 999901,
-                "title": "Founding Full-Stack & Systems Engineer",
-                "company": startup_name,
-                "location": startup_loc,
-                "work_mode": "Remote-First",
-                "salary": "$130k - $185k / ₹35-50 LPA",
-                "experience_required": "2-5 years",
-                "skills_required": startup_stack,
-                "match_score": 98,
-                "readiness_score": 96,
+                "id": 900000 + rj["id"],
+                "title": rj["role_title"],
+                "company": rj.get("company_name") or rj.get("sp_company") or rj.get("org_name") or "",
+                "location": rj.get("location") or rj.get("sp_location") or "",
+                "work_mode": rj.get("work_mode") or "Remote",
+                "salary": rj.get("salary_range") or "",
+                "experience_required": rj.get("experience_level") or "",
+                "skills_required": r_skills,
+                "match_score": match_score,
+                "readiness_score": readiness_score,
+                "readiness_includes_interview": has_interview_signal,
                 "matched_skills": matched_sk,
-                "missing_skills": [s for s in startup_stack if s not in matched_sk][:2],
-                "reasons": [
-                    "Direct Founder Review",
-                    f"{startup_stage} Requisition",
-                    "Verified DevScore Pipeline"
-                ],
-                "url": startup_url,
+                "missing_skills": missing_sk[:2],
+                "reasons": reasons_list,
+                "url": rj.get("sp_website") or rj.get("org_website") or "",
                 "ats_type": "PrepFlow Founder Gateway",
                 "source": "PrepFlow Verified Requisition",
                 "is_featured_startup": True,
                 "is_registered_startup": True,
                 "can_apply_via_agent": True,
                 "portal_type": "PrepFlow Partner Gateway",
-                "stage": startup_stage,
-                "founder_name": startup_founder,
-                "founder_role": startup_role,
-                "description": startup_desc
+                "stage": rj.get("sp_stage") or "",
+                "founder_name": rj.get("founder_name") or "",
+                "founder_role": rj.get("founder_role") or "",
+                "description": description,
             })
     except Exception as e:
-        print(f"Error compiling featured startup job: {e}")
+        print(f"Error compiling featured requisitions: {e}")
 
     jobs = database.get_jobs()
     matched_jobs = []
@@ -363,24 +433,26 @@ def discover_matched_jobs(user_id: str):
             vec1 = tfidf.get_tfidf_vector(candidate_corpus)
             vec2 = tfidf.get_tfidf_vector(job["description"])
             similarity = TFIDFModel.cosine_similarity(vec1, vec2)
-        except:
-            similarity = 0.5
+        except Exception:
+            similarity = 0.0
 
         # 2. Skill match coverage calculation
-        job_skills = job["skills_required"]
+        job_skills = job["skills_required"] or []
         matched_skills = [s for s in job_skills if any(s.lower() in cs.lower() for cs in candidate_skills)]
         missing_skills = [s for s in job_skills if s not in matched_skills]
-        
-        skill_score = (len(matched_skills) / len(job_skills) * 100) if job_skills else 100
-        
-        # 3. Match score calculation (Cosine Similarity weight + Skill coverage weight)
-        match_score = int((similarity * 40) + (skill_score * 0.6))
-        # Ensure match_score sits in a realistic bounds [50, 98]
-        match_score = max(50, min(98, match_score))
 
-        # 4. Readiness Score = (Job Match + Interview Performance + Skill Coverage) / 3
-        readiness_score = int((match_score + interview_score + skill_score) / 3)
-        readiness_score = max(45, min(98, readiness_score))
+        # 3. Match = text similarity + skill coverage. No artificial floor: the
+        # old code clamped every score into [50, 98], so a candidate with zero
+        # overlap still read as a 50% match.
+        if job_skills:
+            skill_score = len(matched_skills) / len(job_skills) * 100
+            match_score = max(0, min(100, int((similarity * 40) + (skill_score * 0.6))))
+        else:
+            skill_score = None
+            match_score = max(0, min(100, int(similarity * 100)))
+
+        # 4. Readiness over the signals we actually have
+        readiness_score = _readiness_score(match_score, interview_score, has_interview_signal, skill_score)
 
         # Compute reasons list
         reasons_list = []
@@ -404,20 +476,43 @@ def discover_matched_jobs(user_id: str):
             "skills_required": job_skills,
             "match_score": match_score,
             "readiness_score": readiness_score,
+            "readiness_includes_interview": has_interview_signal,
             "matched_skills": matched_skills,
             "missing_skills": missing_skills,
             "reasons": reasons_list,
             "url": job["url"],
             "ats_type": job["ats_type"],
             "source": job["source"],
+            "listed_at": job.get("listed_at"),
+            "fetched_at": job.get("fetched_at"),
             "is_featured_startup": False,
             "is_registered_startup": False,
             "can_apply_via_agent": False,
             "portal_type": "External Internet Listing"
         })
 
-    # Sort matched standard jobs by match score descending
-    matched_jobs.sort(key=lambda j: j["match_score"], reverse=True)
+    # Sort external jobs by recency first, then by match score as the
+    # tiebreaker. A candidate should see the freshest listings at the top of
+    # the feed so the newest opportunities get real-world attention, but
+    # when two listings went up the same day the better-matched one is more
+    # useful to surface. Registered startup requisitions are not part of
+    # this sort — they lead the response unchanged.
+    def _listed_ts(job):
+        raw = job.get("listed_at")
+        if not raw:
+            return None
+        try:
+            from datetime import datetime
+            if isinstance(raw, datetime):
+                return raw
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    matched_jobs.sort(
+        key=lambda j: (_listed_ts(j) or 0, j["match_score"]),
+        reverse=True,
+    )
     return startup_jobs + matched_jobs
 
 # ----------------------------------------------------
@@ -642,11 +737,22 @@ def submit_application(req: SubmitConfirmedApplicationRequest, background_tasks:
     
     candidate_name = req.candidate_details.get("name") if req.candidate_details else None
     if not candidate_name or candidate_name in ["Candidate", "User"]:
-        candidate_name = scraped.get("name") or "Apurve Karanwal"
-        
+        candidate_name = scraped.get("name") or user_name or ""
+
     candidate_email = req.candidate_details.get("email") if req.candidate_details else None
     if not candidate_email or candidate_email == "candidate@example.com":
-        candidate_email = scraped.get("email") or "apurvekaranwal282@gmail.com"
+        candidate_email = scraped.get("email") or user_email or ""
+
+    # No identity fallback. The previous version defaulted to one real person's
+    # name and inbox, so every other user's application receipt was addressed to
+    # — and emailed to — them.
+    if not candidate_email:
+        raise HTTPException(
+            status_code=400,
+            detail="We could not find an email address for your application. Add one to your profile or upload a resume that contains it, then try again."
+        )
+    if not candidate_name:
+        candidate_name = candidate_email.split("@")[0]
         
     company_name = job["company"] if job else "PrepFlow Partner Company"
     job_title = job["title"] if job else "Software Engineer"
@@ -695,18 +801,19 @@ def submit_application(req: SubmitConfirmedApplicationRequest, background_tasks:
         tracking_id=confirmation_receipt['tracking_id']
     )
     
-    # Automatically register into Recruiter Talent Radar & Pipeline if startup or recruiter job
-    try:
-        database.shortlist_candidate({
-            "recruiter_id": "default_recruiter",
-            "candidate_id": str(req.user_id),
-            "candidate_name": candidate_name,
-            "job_id": req.job_id,
-            "stage": "Applied / In Review",
-            "notes": f"Applied via AI Career Agent for {job_title} at {company_name}"
-        })
-    except Exception as e:
-        print(f"Error adding candidate application to recruiter pipeline: {e}")
+    # File the application into the posting organization's pipeline. The org is
+    # resolved from the requisition itself (candidate-facing ids are offset by
+    # 900000), so an application can only ever reach the company that posted it.
+    if req.job_id >= 900000:
+        try:
+            database.register_inbound_application(
+                recruiter_job_id=req.job_id - 900000,
+                candidate_user_id=str(req.user_id),
+                candidate_name=candidate_name,
+                note=f"Applied via AI Career Agent for {job_title} at {company_name}"
+            )
+        except Exception as e:
+            print(f"Error adding candidate application to recruiter pipeline: {e}")
 
     # Run the playwright script in the background
     background_tasks.add_task(
@@ -743,8 +850,10 @@ def get_application_receipt(job_id: int, user_id: str):
         default_email=user_email
     )
     
-    candidate_name = scraped.get("name") or "Apurve Karanwal"
-    candidate_email = scraped.get("email") or "apurvekaranwal282@gmail.com"
+    candidate_name = scraped.get("name") or user_name or ""
+    candidate_email = scraped.get("email") or user_email or ""
+    if not candidate_name and candidate_email:
+        candidate_name = candidate_email.split("@")[0]
     company_name = job["company"] if job else "Technology Company"
     job_title = job["title"] if job else "Software Engineer"
     ats_type = job.get("ats_type", "Greenhouse") if job else "Greenhouse"
@@ -797,54 +906,75 @@ def get_application_receipt(job_id: int, user_id: str):
 # 6. Application Tracker Dashboard Metrics & Live Sync
 # ----------------------------------------------------
 @router.get("/applications")
-def get_user_applications(user_id: str):
-    apps = database.get_applications(user_id)
-    
-    # Also fetch live status from candidate_shortlists and takehome_assessments for real-time 2-way sync
-    shortlist_info = None
-    active_assessment = None
-    try:
-        conn = database.get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM candidate_shortlists WHERE candidate_id = %s ORDER BY created_at DESC LIMIT 1", (str(user_id),))
-        shortlist_info = cursor.fetchone()
-        
-        cursor.execute("SELECT * FROM takehome_assessments WHERE candidate_id = %s ORDER BY created_at DESC LIMIT 1", (str(user_id),))
-        active_assessment = cursor.fetchone()
-        conn.close()
-    except Exception as e:
-        print(f"Error fetching live candidate tracking telemetry: {e}")
+def get_user_applications(user_id: str = "", user: AuthUser = Depends(require_user)):
+    """
+    The caller's own applications. `user_id` is accepted for backwards
+    compatibility and ignored: this response carries live take-home tokens, and
+    the previous version handed them to anyone who guessed a numeric user id —
+    which let a stranger sit somebody else's assessment.
+    """
+    apps = database.get_applications(user.uid)
+    tracker = database.get_candidate_tracker_state(user.uid)
 
-    # Synchronize stage and assessment tokens on applications list
+    # Index by requisition so each application reflects the stage at the company
+    # it was actually sent to.
+    shortlist_by_job, assessment_by_job = {}, {}
+    for row in tracker["shortlists"]:
+        shortlist_by_job.setdefault(int(row.get("job_id") or 0), row)
+    for row in tracker["assessments"]:
+        assessment_by_job.setdefault(int(row.get("job_id") or 0), row)
+
+    latest_shortlist = tracker["shortlists"][0] if tracker["shortlists"] else None
+    latest_assessment = tracker["assessments"][0] if tracker["assessments"] else None
+
     for app in apps:
-        if shortlist_info:
-            app["live_stage"] = shortlist_info["stage"]
-            app["notes"] = shortlist_info.get("notes", "")
-        if active_assessment:
-            app["takehome_token"] = active_assessment["token"]
-            app["takehome_problem"] = active_assessment["problem_title"]
-            app["takehome_status"] = active_assessment["status"]
-            app["takehome_score"] = active_assessment.get("score", 0)
+        # Candidate-facing requisition ids are offset by 900000.
+        raw_job_id = int(app.get("job_id") or 0)
+        req_id = raw_job_id - 900000 if raw_job_id >= 900000 else raw_job_id
 
-    # Calculate metrics
+        shortlist = shortlist_by_job.get(req_id)
+        if shortlist:
+            app["live_stage"] = shortlist["stage"]
+            app["notes"] = shortlist.get("notes") or ""
+
+        assessment = assessment_by_job.get(req_id)
+        if assessment:
+            app["takehome_token"] = assessment["token"]
+            app["takehome_problem"] = assessment.get("problem_title") or ""
+            app["takehome_status"] = assessment.get("status") or ""
+            app["takehome_score"] = assessment.get("score") or 0
+            app["takehome_expires_at"] = assessment.get("expires_at")
+            app["takehome_time_limit_minutes"] = assessment.get("time_limit_minutes")
+
+    # Funnel metrics over the real pipeline stages.
     sent = len(apps)
-    response_rate = 0
-    interview_rate = 0
-    offer_rate = 0
-    
+    response_rate = interview_rate = offer_rate = 0
     if sent > 0:
-        interviews = sum(1 for a in apps if a.get("live_stage") in ["Shortlisted", "Interview Scheduled"] or a.get("status") in ["Interview Scheduled", "Offer Received"])
-        offers = sum(1 for a in apps if a.get("live_stage") == "Offer Extended" or a["status"] == "Offer Received")
-        responses = sum(1 for a in apps if a.get("live_stage") not in ["Applied", "Applied / In Review"] or a["status"] not in ["Applied"])
-        
+        interviews = sum(
+            1 for a in apps
+            if a.get("live_stage") in ("Interview", "Offer", "Hired")
+            or a.get("status") in ("Interview Scheduled", "Offer Received")
+        )
+        offers = sum(
+            1 for a in apps
+            if a.get("live_stage") in ("Offer", "Hired") or a.get("status") == "Offer Received"
+        )
+        # A response is any movement past the stage an application lands in.
+        responses = sum(
+            1 for a in apps
+            if (a.get("live_stage") and a["live_stage"] != "Sourced")
+            or a.get("takehome_token")
+            or a.get("status") not in (None, "", "Applied")
+        )
         response_rate = int((responses / sent) * 100)
         interview_rate = int((interviews / sent) * 100)
         offer_rate = int((offers / sent) * 100)
-        
+
     return {
         "applications": apps,
-        "live_shortlist": shortlist_info,
-        "active_assessment": active_assessment,
+        "live_shortlist": latest_shortlist,
+        "active_assessment": latest_assessment,
+        "pipeline_stages": list(database.PIPELINE_STAGES),
         "metrics": {
             "sent": sent,
             "response_rate": response_rate,
@@ -864,7 +994,9 @@ def generate_cold_outreach(job_id: int, user_id: str, target_role: str = "Hiring
         raise HTTPException(status_code=404, detail="Candidate profile not found")
         
     user_record = database.get_user_by_id(user_id)
-    candidate_name = user_record.get("name") if user_record else "Apurve Karanwal"
+    candidate_name = (user_record.get("name") if user_record else "") or ""
+    if not candidate_name and user_record and user_record.get("email"):
+        candidate_name = user_record["email"].split("@")[0]
     github_url = profile.get("github_url") or ""
     linkedin_url = profile.get("linkedin_url") or ""
     portfolio_url = profile.get("portfolio_url") or ""

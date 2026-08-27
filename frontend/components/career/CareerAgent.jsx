@@ -37,8 +37,54 @@ import {
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
 
+// Sub-tab persistence: a refresh inside the Career Agent should land the user
+// on the same sub-tab they were on, not always the dashboard. localStorage is
+// good enough here — there is no PII in the key, just one of "dashboard",
+// "tracker", or "onboarding".
+const SUB_TAB_STORAGE_KEY = "prepflow_career_subtab";
+const VALID_SUB_TABS = new Set(["dashboard", "tracker", "onboarding"]);
+
+function readInitialSubTab() {
+  if (typeof window === "undefined") return "dashboard";
+  try {
+    const saved = window.localStorage.getItem(SUB_TAB_STORAGE_KEY);
+    return saved && VALID_SUB_TABS.has(saved) ? saved : "dashboard";
+  } catch {
+    return "dashboard";
+  }
+}
+
+// Relative-time formatter for the "Posted X ago" badge on each external
+// listing. We use absolute units (hours/days/weeks) rather than vague
+// words so a candidate can see at a glance whether a job was posted today
+// or six months ago. Returns null when the input is missing or in the
+// future — never fabricate a misleading "today" label.
+function formatListedAgo(isoOrDate) {
+  if (!isoOrDate) return null;
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  const ms = d.getTime();
+  if (Number.isNaN(ms)) return null;
+  const diffMs = Date.now() - ms;
+  if (diffMs < 0) return null;
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) {
+    if (minutes < 1) return "just now";
+    return `${minutes} min ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks} week${weeks === 1 ? "" : "s"} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(days / 365);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
+}
+
 export default function CareerAgent({ user }) {
-  const [activeSubTab, setActiveSubTab] = useState("dashboard"); // dashboard, tracker, onboarding
+  const [activeSubTab, setActiveSubTab] = useState(readInitialSubTab); // dashboard, tracker, onboarding
   const [profile, setProfile] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [applications, setApplications] = useState([]);
@@ -92,6 +138,10 @@ export default function CareerAgent({ user }) {
   const [copiedField, setCopiedField] = useState(null);
 
   const [aiAnswers, setAiAnswers] = useState({});
+  // Manual external-feed refresh state. The 30-minute auto-refresh on the
+  // server is too slow for a candidate who just opened the page; pressing
+  // "Refresh feed" forces an immediate upstream pass and reloads the cards.
+  const [refreshingJobs, setRefreshingJobs] = useState(false);
   const [candidateDetails, setCandidateDetails] = useState({
     name: "",
     email: "",
@@ -180,12 +230,54 @@ export default function CareerAgent({ user }) {
     fetchData();
   }, [user, fetchData]);
 
+  // Force-refresh the external feed on user demand. The server runs
+  // `run_jobs_fetch` synchronously inside the request, so when this resolves
+  // the new rows are already in the table and the subsequent `fetchData()`
+  // sees them. We re-call `fetchData()` instead of just merging one job at a
+  // time so the freshness ordering and dedupe stay the source-of-truth on
+  // the server.
+  const refreshExternalJobs = async () => {
+    if (refreshingJobs) return;
+    setRefreshingJobs(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/career/jobs/refresh`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${window.localStorage.getItem("prepflow_token") || ""}`,
+        },
+      });
+      // 401/500 are surfaced by the toast in the error path; we still reload
+      // jobs after because a partial upstream failure can still leave new
+      // rows in the table.
+      await fetchData();
+      if (!res.ok) {
+        console.warn("Refresh feed request did not complete cleanly.");
+      }
+    } catch (err) {
+      console.error("Failed to refresh external feed:", err);
+    } finally {
+      setRefreshingJobs(false);
+    }
+  };
+
   // Scroll logs container to bottom
   useEffect(() => {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [applyLogs]);
+
+  // Persist sub-tab so a refresh (or tab close) lands the user on the same
+  // sub-view they were using. We only write valid values to avoid trapping
+  // the user in an obsolete state if a future release renames a tab.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SUB_TAB_STORAGE_KEY, activeSubTab);
+    } catch {
+      /* private-browsing modes can throw; in-memory only is fine */
+    }
+  }, [activeSubTab]);
 
   // Onboarding Submit
   const handleOnboardSubmit = async (e) => {
@@ -338,31 +430,31 @@ export default function CareerAgent({ user }) {
         const data = await res.json();
         const extracted = data.candidate_details || {};
         setCandidateDetails({
-          name: extracted.name || user.displayName || "Apurve Karanwal",
-          email: extracted.email || user.email || "apurvekaranwal282@gmail.com",
-          phone: extracted.phone || profile?.phone || "+91 9557867938",
-          linkedin_url: extracted.linkedin_url || profile?.linkedin_url || "https://linkedin.com/in/apurvekaranwal",
-          github_url: extracted.github_url || profile?.github_url || "https://github.com/ApurveKaranwal"
+          name: extracted.name || user.displayName || user.name || "",
+          email: extracted.email || user.email || "",
+          phone: extracted.phone || profile?.phone || "",
+          linkedin_url: extracted.linkedin_url || profile?.linkedin_url || "",
+          github_url: extracted.github_url || profile?.github_url || ""
         });
         setFormFields(data.form_fields || { standard_fields: {}, custom_questions: [] });
         setAiAnswers(data.ai_answers || {});
       } else {
         setCandidateDetails({
-          name: user.displayName || profile?.name || "Apurve Karanwal",
-          email: user.email || "apurvekaranwal282@gmail.com",
-          phone: profile?.phone || "+91 9557867938",
-          linkedin_url: profile?.linkedin_url || "https://linkedin.com/in/apurvekaranwal",
-          github_url: profile?.github_url || "https://github.com/ApurveKaranwal"
+          name: user.displayName || profile?.name || user.name || "",
+          email: user.email || "",
+          phone: profile?.phone || "",
+          linkedin_url: profile?.linkedin_url || "",
+          github_url: profile?.github_url || ""
         });
       }
     } catch (err) {
       console.error("Failed to prepare application details:", err);
       setCandidateDetails({
-        name: user.displayName || profile?.name || "Apurve Karanwal",
-        email: user.email || "apurvekaranwal282@gmail.com",
-        phone: profile?.phone || "+91 9557867938",
-        linkedin_url: profile?.linkedin_url || "https://linkedin.com/in/apurvekaranwal",
-        github_url: profile?.github_url || "https://github.com/ApurveKaranwal"
+        name: user.displayName || profile?.name || user.name || "",
+        email: user.email || "",
+        phone: profile?.phone || "",
+        linkedin_url: profile?.linkedin_url || "",
+        github_url: profile?.github_url || ""
       });
     }
     setLoadingAnswers(false);
@@ -1027,9 +1119,24 @@ export default function CareerAgent({ user }) {
                     Fetched from Greenhouse, Lever, and Ashby portals. Review requirements, prepare targeted roadmaps, or generate cold outreach sequences.
                   </p>
                 </div>
-                <span className="text-xs font-mono font-bold text-[#78716C] bg-[#FAF8F5] px-2.5 py-1 rounded-md border border-[#E7E2DA] self-start sm:self-auto shrink-0">
-                  {jobs.filter((j) => !j.is_registered_startup).length} Opportunities
-                </span>
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                  <button
+                    onClick={refreshExternalJobs}
+                    disabled={refreshingJobs}
+                    className="text-xs font-mono font-semibold text-[#78716C] hover:text-[#C85A32] bg-[#FAF8F5] hover:bg-[#F5F2EC] border border-[#E7E2DA] hover:border-[#C85A32]/40 px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw
+                      className={
+                        "h-3.5 w-3.5 " +
+                        (refreshingJobs ? "animate-spin text-[#C85A32]" : "")
+                      }
+                    />
+                    {refreshingJobs ? "Refreshing…" : "Refresh feed"}
+                  </button>
+                  <span className="text-xs font-mono font-bold text-[#78716C] bg-[#FAF8F5] px-2.5 py-1 rounded-md border border-[#E7E2DA]">
+                    {jobs.filter((j) => !j.is_registered_startup).length} Opportunities
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -1039,10 +1146,34 @@ export default function CareerAgent({ user }) {
                     className="bg-white border border-[#E5DFD7] hover:border-[#D6CCC2] hover:shadow-xs transition-all rounded-xl p-5 space-y-4 text-left shadow-3xs"
                   >
                     {/* Top Meta Bar */}
-                    <div className="flex items-center justify-between gap-2 border-b border-[#F0EBE3] pb-3">
-                      <span className="text-[10px] font-mono font-medium text-[#78716C] bg-[#FAF8F5] border border-[#E7E2DA] px-2 py-0.5 rounded">
-                        External Portal • {job.ats_type}
-                      </span>
+                    <div className="flex items-center justify-between gap-2 border-b border-[#F0EBE3] pb-3 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-mono font-medium text-[#78716C] bg-[#FAF8F5] border border-[#E7E2DA] px-2 py-0.5 rounded">
+                          External Portal • {job.ats_type}
+                        </span>
+                        {(() => {
+                          const ago = formatListedAgo(job.listed_at);
+                          if (!ago) return null;
+                          // Newer-than-3-days listings get a warm accent so the
+                          // candidate can scan for what's fresh without
+                          // reading every card.
+                          const isFresh = (Date.now() - new Date(job.listed_at).getTime()) < 3 * 24 * 60 * 60 * 1000;
+                          return (
+                            <span
+                              className={
+                                "text-[10px] font-mono font-medium px-2 py-0.5 rounded border " +
+                                (isFresh
+                                  ? "text-[#2E5A44] bg-[#EAF2EC] border-[#2E5A44]/25"
+                                  : "text-[#78716C] bg-[#FAF8F5] border-[#E7E2DA]")
+                              }
+                              title={new Date(job.listed_at).toLocaleString()}
+                            >
+                              <span className="inline-block mr-1 align-middle">●</span>
+                              Posted {ago}
+                            </span>
+                          );
+                        })()}
+                      </div>
 
                       {/* Match & Readiness Metrics */}
                       <div className="flex items-center gap-1.5 shrink-0 font-mono text-xs">
@@ -1169,7 +1300,7 @@ export default function CareerAgent({ user }) {
                   </div>
                   <div className="p-2 bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg">
                     <span className="text-[9px] text-[#6E6359] block">DevScore</span>
-                    <strong className="text-[#C85A32]">{profile.devscore || 850}+</strong>
+                    <strong className="text-[#C85A32]">{profile.devscore != null ? profile.devscore : 'N/A'}</strong>
                   </div>
                 </div>
               </div>

@@ -36,12 +36,12 @@ import {
   Settings,
   ShieldAlert,
   Download,
-  FileText
+  FileText,
+  AlertCircle,
 } from "lucide-react";
+import { apiFetch, apiPost, apiGet, errorMessage } from "@/lib/api";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
-
-export default function RecruiterPortal({ user, onNavigate }) {
+export default function RecruiterPortal({ user, organization, orgResolved, onOrganizationChange, section, onSectionChange, onNavigate }) {
   const [activeTab, setActiveTab] = useState("sourcing"); // 'sourcing' | 'requisitions' | 'pipeline' | 'assessments'
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -51,74 +51,82 @@ export default function RecruiterPortal({ user, onNavigate }) {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [showEditStartupModal, setShowEditStartupModal] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState("");
 
   const [startupForm, setStartupForm] = useState({
     company_name: "",
-    founder_name: user?.displayName || user?.name || "Apurve Karanwal",
+    founder_name: user?.displayName || user?.name || "",
     founder_role: "Founder & CTO",
-    tagline: "Next-gen AI infrastructure & distributed systems",
-    stage: "Series A",
-    website_url: "https://hyperscale.ai",
-    industry: "AI & DevTools",
-    location: "Global / Remote",
-    team_size: "11-50",
-    primary_tech_stack: "Go, Rust, Python, React, Kubernetes",
-    about: "We build ultra high-throughput distributed systems and developer tooling."
+    tagline: "",
+    stage: "Seed",
+    website_url: "",
+    industry: "",
+    location: "Remote",
+    team_size: "1-10",
+    primary_tech_stack: "",
+    about: ""
   });
 
   // Fetch Startup Profile on mount & user change
   const fetchStartupProfile = async () => {
     setLoadingProfile(true);
+    setProfileError("");
     try {
-      const uid = user?.uid || user?.email || "default_recruiter";
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/startup-profile?user_id=${uid}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.profile) {
-          setStartupProfile(data.profile);
-          setStartupForm({
-            company_name: data.profile.company_name || "",
-            founder_name: data.profile.founder_name || user?.displayName || user?.name || "",
-            founder_role: data.profile.founder_role || "Founder & CTO",
-            tagline: data.profile.tagline || "",
-            stage: data.profile.stage || "Seed",
-            website_url: data.profile.website_url || "",
-            industry: data.profile.industry || "AI & DevTools",
-            location: data.profile.location || "Remote",
-            team_size: data.profile.team_size || "1-10",
-            primary_tech_stack: Array.isArray(data.profile.primary_tech_stack)
-              ? data.profile.primary_tech_stack.join(", ")
-              : (data.profile.primary_tech_stack || ""),
-            about: data.profile.about || ""
-          });
-          setNewJob((prev) => ({ ...prev, company_name: data.profile.company_name }));
-        } else {
-          setStartupProfile(null);
-        }
+      const data = await apiGet("/api/recruiter/startup-profile");
+      if (data?.profile) {
+        setStartupProfile(data.profile);
+        setStartupForm({
+          company_name: data.profile.company_name || "",
+          founder_name: data.profile.founder_name || user?.displayName || user?.name || "",
+          founder_role: data.profile.founder_role || "Founder & CTO",
+          tagline: data.profile.tagline || "",
+          stage: data.profile.stage || "Seed",
+          website_url: data.profile.website_url || "",
+          industry: data.profile.industry || "AI & DevTools",
+          location: data.profile.location || "Remote",
+          team_size: data.profile.team_size || "1-10",
+          primary_tech_stack: Array.isArray(data.profile.primary_tech_stack)
+            ? data.profile.primary_tech_stack.join(", ")
+            : (data.profile.primary_tech_stack || ""),
+          about: data.profile.about || ""
+        });
+        setNewJob((prev) => ({ ...prev, company_name: data.profile.company_name }));
+      } else {
+        setStartupProfile(null);
       }
     } catch (err) {
-      console.warn("Error fetching startup profile:", err);
+      // A 401 here is the apiFetch 401 handler kicking the user out — don't
+      // clobber that with a registration form. Anything else, let the user
+      // try again.
+      if (err?.isAuthError) return;
+      setProfileError(errorMessage(err));
+      setStartupProfile(null);
     } finally {
       setLoadingProfile(false);
     }
   };
 
   useEffect(() => {
-    fetchStartupProfile();
+    if (user) fetchStartupProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const handleSaveStartupProfile = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
-    if (!startupForm.company_name.trim()) return;
+    if (!startupForm.company_name.trim()) {
+      setProfileError("Startup / company name is required.");
+      return;
+    }
     setSavingProfile(true);
+    setProfileError("");
     try {
-      const uid = user?.uid || user?.email || "default_recruiter";
       const techArray = typeof startupForm.primary_tech_stack === "string"
         ? startupForm.primary_tech_stack.split(",").map((s) => s.trim()).filter(Boolean)
         : startupForm.primary_tech_stack;
 
+      // The user_id is resolved server-side from the bearer token; never send
+      // one from the client. Org/role also come from the token.
       const payload = {
-        user_id: uid,
         company_name: startupForm.company_name.trim(),
         founder_name: startupForm.founder_name.trim(),
         founder_role: startupForm.founder_role.trim(),
@@ -132,19 +140,17 @@ export default function RecruiterPortal({ user, onNavigate }) {
         about: startupForm.about.trim()
       };
 
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/startup-profile`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiPost("/api/recruiter/startup-profile", payload);
+      if (data?.profile) {
         setStartupProfile(data.profile);
         setShowEditStartupModal(false);
         setNewJob((prev) => ({ ...prev, company_name: data.profile.company_name }));
+      } else {
+        setProfileError("The server accepted the request but returned no profile. Please refresh and try again.");
       }
     } catch (err) {
-      console.error("Error saving startup profile:", err);
+      if (err?.isAuthError) return;
+      setProfileError(errorMessage(err));
     } finally {
       setSavingProfile(false);
     }
@@ -160,7 +166,7 @@ export default function RecruiterPortal({ user, onNavigate }) {
   const [jobs, setJobs] = useState([]);
   const [showCreateJobModal, setShowCreateJobModal] = useState(false);
   const [newJob, setNewJob] = useState({
-    company_name: "HyperScale AI",
+    company_name: "",
     role_title: "Senior Distributed Systems Engineer",
     work_mode: "Remote",
     location: "Global / Remote",
@@ -188,25 +194,24 @@ export default function RecruiterPortal({ user, onNavigate }) {
 
   const handleDownloadResume = async (cand) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/candidate-resume/${cand.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        const content = data.resume_text || `${data.candidate_name}\n${data.candidate_email}\nSkills: ${(data.skills || []).join(', ')}\nGitHub: ${data.github_url}`;
-        const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        const filename = data.resume_name && (data.resume_name.endsWith(".txt") || data.resume_name.endsWith(".pdf"))
-          ? data.resume_name
-          : `${(data.candidate_name || "Candidate").replace(/\s+/g, "_")}_Resume.txt`;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }
+      const data = await apiGet(`/api/recruiter/candidate-resume/${cand.id}`);
+      if (!data) return;
+      const content = data.resume_text || `${data.candidate_name}\n${data.candidate_email}\nSkills: ${(data.skills || []).join(', ')}\nGitHub: ${data.github_url}`;
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const filename = data.resume_name && (data.resume_name.endsWith(".txt") || data.resume_name.endsWith(".pdf"))
+        ? data.resume_name
+        : `${(data.candidate_name || "Candidate").replace(/\s+/g, "_")}_Resume.txt`;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (err) {
-      console.error("Failed to download resume:", err);
+      if (err?.isAuthError) return;
+      console.error("Failed to download resume:", errorMessage(err));
     }
   };
 
@@ -221,13 +226,10 @@ export default function RecruiterPortal({ user, onNavigate }) {
           primary_stack: selectedStack,
           tier: selectedTier
         });
-        const res = await fetch(`${BACKEND_URL}/api/recruiter/candidates?${queryParams.toString()}`);
-        if (res.ok) {
-          const data = await res.json();
-          setCandidates(data.candidates || []);
-        }
+        const data = await apiGet(`/api/recruiter/candidates?${queryParams.toString()}`);
+        if (data) setCandidates(data.candidates || []);
       } catch (err) {
-        console.warn("Error fetching candidates:", err);
+        if (!err?.isAuthError) console.warn("Error fetching candidates:", errorMessage(err));
       } finally {
         setLoading(false);
       }
@@ -239,25 +241,16 @@ export default function RecruiterPortal({ user, onNavigate }) {
   // Fetch jobs, shortlists, and assessments in real-time
   const fetchMetadata = async () => {
     try {
-      const [jobsRes, shortlistsRes, assessmentsRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/recruiter/jobs`),
-        fetch(`${BACKEND_URL}/api/recruiter/shortlist?recruiter_id=${user?.uid || "default_recruiter"}`),
-        fetch(`${BACKEND_URL}/api/recruiter/assessments`)
+      const [jobsData, shortlistsData, assessmentsData] = await Promise.all([
+        apiGet("/api/recruiter/jobs"),
+        apiGet(`/api/recruiter/shortlist`),
+        apiGet("/api/recruiter/assessments"),
       ]);
-      if (jobsRes.ok) {
-        const data = await jobsRes.json();
-        setJobs(data.jobs || []);
-      }
-      if (shortlistsRes.ok) {
-        const data = await shortlistsRes.json();
-        setShortlists(data.shortlists || []);
-      }
-      if (assessmentsRes.ok) {
-        const data = await assessmentsRes.json();
-        setAssessments(data.assessments || []);
-      }
+      if (jobsData) setJobs(jobsData.jobs || []);
+      if (shortlistsData) setShortlists(shortlistsData.shortlists || []);
+      if (assessmentsData) setAssessments(assessmentsData.assessments || []);
     } catch (err) {
-      console.warn("Error fetching recruiter metadata:", err);
+      if (!err?.isAuthError) console.warn("Error fetching recruiter metadata:", errorMessage(err));
     }
   };
 
@@ -269,47 +262,36 @@ export default function RecruiterPortal({ user, onNavigate }) {
     e.preventDefault();
     try {
       const skillsArray = newJob.required_skills.split(",").map((s) => s.trim()).filter(Boolean);
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/jobs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recruiter_id: user?.uid || "default_recruiter",
-          company_name: newJob.company_name,
-          role_title: newJob.role_title,
-          work_mode: newJob.work_mode,
-          location: newJob.location,
-          salary_range: newJob.salary_range,
-          min_devscore: parseInt(newJob.min_devscore) || 700,
-          required_skills: skillsArray,
-          experience_level: newJob.experience_level,
-          description: newJob.description
-        })
+      const data = await apiPost("/api/recruiter/jobs", {
+        company_name: newJob.company_name,
+        role_title: newJob.role_title,
+        work_mode: newJob.work_mode,
+        location: newJob.location,
+        salary_range: newJob.salary_range,
+        min_devscore: parseInt(newJob.min_devscore) || 700,
+        required_skills: skillsArray,
+        experience_level: newJob.experience_level,
+        description: newJob.description,
       });
-      if (res.ok) {
-        const data = await res.json();
+      if (data?.job) {
         setJobs([data.job, ...jobs]);
         setShowCreateJobModal(false);
       }
     } catch (err) {
-      console.error("Error creating job:", err);
+      if (err?.isAuthError) return;
+      console.error("Error creating job:", errorMessage(err));
     }
   };
 
   const handleShortlist = async (candidate, stage = "Shortlisted") => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/shortlist`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recruiter_id: user?.uid || "default_recruiter",
-          candidate_id: candidate.id,
-          candidate_name: candidate.name,
-          stage: stage,
-          notes: `Added with DevScore ${candidate.devscore}`
-        })
+      const data = await apiPost("/api/recruiter/shortlist", {
+        candidate_id: candidate.id,
+        candidate_name: candidate.name,
+        stage: stage,
+        notes: `Added with DevScore ${candidate.devscore}`,
       });
-      if (res.ok) {
-        const data = await res.json();
+      if (data?.shortlist) {
         setShortlists((prev) => {
           const existingIdx = prev.findIndex((s) => s.candidate_id === candidate.id);
           if (existingIdx >= 0) {
@@ -321,21 +303,19 @@ export default function RecruiterPortal({ user, onNavigate }) {
         });
       }
     } catch (err) {
-      console.error("Error shortlisting candidate:", err);
+      if (err?.isAuthError) return;
+      console.error("Error shortlisting candidate:", errorMessage(err));
     }
   };
 
   const handleDeleteShortlist = async (shortlistId) => {
     if (!confirm("Are you sure you want to remove this candidate from your shortlist pipeline?")) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/shortlist/${shortlistId}`, {
-        method: "DELETE"
-      });
-      if (res.ok) {
-        setShortlists((prev) => prev.filter((s) => s.id !== shortlistId));
-      }
+      await apiFetch(`/api/recruiter/shortlist/${shortlistId}`, { method: "DELETE" });
+      setShortlists((prev) => prev.filter((s) => s.id !== shortlistId));
     } catch (err) {
-      console.error("Error deleting shortlist:", err);
+      if (err?.isAuthError) return;
+      console.error("Error deleting shortlist:", errorMessage(err));
     }
   };
 
@@ -346,27 +326,22 @@ export default function RecruiterPortal({ user, onNavigate }) {
     if (!takehomeCandidate || isDispatching) return;
     setIsDispatching(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/send-assessment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recruiter_id: user?.uid || "default_recruiter",
-          candidate_id: takehomeCandidate.id,
-          candidate_name: takehomeCandidate.name,
-          role_title: takehomeCandidate.headline?.split("•")[0]?.trim() || "Software Engineer",
-          problem_slug: takehomeTrack,
-          difficulty: takehomeDifficulty,
-          time_limit_minutes: 45
-        })
+      const data = await apiPost("/api/recruiter/send-assessment", {
+        candidate_id: takehomeCandidate.id,
+        candidate_name: takehomeCandidate.name,
+        role_title: takehomeCandidate.headline?.split("•")[0]?.trim() || "Software Engineer",
+        problem_slug: takehomeTrack,
+        difficulty: takehomeDifficulty,
+        time_limit_minutes: 45,
       });
-      if (res.ok) {
-        const data = await res.json();
+      if (data?.assessment) {
         setGeneratedAssessment(data.assessment);
         handleShortlist(takehomeCandidate, "Take-Home Dispatched");
         fetchMetadata();
       }
     } catch (err) {
-      console.error("Error sending assessment:", err);
+      if (err?.isAuthError) return;
+      console.error("Error sending assessment:", errorMessage(err));
     } finally {
       setIsDispatching(false);
     }
@@ -375,14 +350,11 @@ export default function RecruiterPortal({ user, onNavigate }) {
   const handleDeleteAssessment = async (assessmentId) => {
     if (!confirm("Are you sure you want to cancel / remove this take-home invitation?")) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/api/recruiter/assessments/${assessmentId}`, {
-        method: "DELETE"
-      });
-      if (res.ok) {
-        setAssessments((prev) => prev.filter((a) => a.id !== assessmentId));
-      }
+      await apiFetch(`/api/recruiter/assessments/${assessmentId}`, { method: "DELETE" });
+      setAssessments((prev) => prev.filter((a) => a.id !== assessmentId));
     } catch (err) {
-      console.error("Error deleting assessment:", err);
+      if (err?.isAuthError) return;
+      console.error("Error deleting assessment:", errorMessage(err));
     }
   };
 
@@ -437,7 +409,7 @@ export default function RecruiterPortal({ user, onNavigate }) {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. HyperScale AI"
+                  placeholder="e.g. Your Startup Name"
                   value={startupForm.company_name}
                   onChange={(e) => setStartupForm({ ...startupForm, company_name: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] font-mono focus:outline-none focus:border-[#C85A32]"
@@ -539,7 +511,7 @@ export default function RecruiterPortal({ user, onNavigate }) {
                 </label>
                 <input
                   type="url"
-                  placeholder="https://hyperscale.ai"
+                  placeholder="https://your-startup-domain.com"
                   value={startupForm.website_url}
                   onChange={(e) => setStartupForm({ ...startupForm, website_url: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] font-mono focus:outline-none focus:border-[#C85A32]"
@@ -590,6 +562,12 @@ export default function RecruiterPortal({ user, onNavigate }) {
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#DFD5C6]/60">
+              {profileError && (
+                <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-[#FEF2F2] border border-[#B91C1C]/30 text-[#B91C1C] text-[11px] font-mono">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{profileError}</span>
+                </div>
+              )}
               <button
                 type="submit"
                 disabled={savingProfile}
@@ -635,7 +613,10 @@ export default function RecruiterPortal({ user, onNavigate }) {
                 {startupProfile?.company_name}
               </h1>
               <button
-                onClick={() => setShowEditStartupModal(true)}
+                onClick={() => {
+                  setProfileError("");
+                  setShowEditStartupModal(true);
+                }}
                 className="px-2.5 py-1 hover:bg-[#FAF6F0] text-[#6E6359] hover:text-[#C85A32] border border-[#DFD5C6] rounded-lg text-xs font-mono transition-colors cursor-pointer flex items-center gap-1.5"
                 title="Edit Startup Profile"
               >
@@ -679,7 +660,7 @@ export default function RecruiterPortal({ user, onNavigate }) {
             </span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-black font-mono text-[#C85A32]">
-                {candidates.length > 0 ? Math.round(candidates.reduce((acc, c) => acc + c.devscore, 0) / candidates.length) : 780}
+                {candidates.length > 0 ? Math.round(candidates.reduce((acc, c) => acc + c.devscore, 0) / candidates.length) : 0}
               </span>
               <span className="text-[10px] font-mono text-[#6E6359] font-bold">/ 1000</span>
             </div>
@@ -691,7 +672,7 @@ export default function RecruiterPortal({ user, onNavigate }) {
             </span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-black font-mono text-[#262626]">
-                {jobs.length || 3}
+                {jobs.length}
               </span>
               <span className="text-[10px] font-mono text-[#6E6359] font-bold">Active</span>
             </div>
@@ -736,7 +717,7 @@ export default function RecruiterPortal({ user, onNavigate }) {
           }`}
         >
           <Briefcase className="h-3.5 w-3.5" />
-          <span>Engineering Requisitions ({jobs.length || 3})</span>
+          <span>Engineering Requisitions ({jobs.length})</span>
         </button>
 
         <button

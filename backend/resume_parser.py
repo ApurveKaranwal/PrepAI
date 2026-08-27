@@ -115,17 +115,18 @@ def extract_candidate_entities(resume_text: str, filename: str = "", default_nam
         name = name_from_file
     elif not name and default_name and default_name not in ["User", "Candidate"]:
         name = default_name
-    elif not name:
-        name = "Apurve Karanwal"
 
     # Clean trailing city / country words that get concatenated in PDFs
     for suffix in ["ghaziabad", "ghaziab", "delhi", "noida", "bengaluru", "bangalore", "mumbai", "india", "pune", "gurgaon", "hyderabad"]:
         if name.lower().endswith(suffix) and len(name) > len(suffix) + 3:
             name = name[:-len(suffix)].strip()
 
-    # Fallback to smart defaults if still missing
-    if not email:
-        email = "apurvekaranwal282@gmail.com" if "apurve" in name.lower() or "apurve" in (filename or "").lower() else (default_email or "candidate@gmail.com")
+    # No invented identity. If the resume and the account both fail to yield a
+    # name or an email, the caller gets an empty string and decides what to do —
+    # the previous version substituted one real person's name and inbox, so every
+    # unparseable resume was attributed to (and emailed to) them.
+    if not email and default_email:
+        email = default_email
 
     # If text is available, attempt JSON extraction with LLM
     if text and len(text) > 30:

@@ -1,16 +1,14 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
-  updateProfile,
   signInWithRedirect,
   getRedirectResult,
   signOut,
   onAuthStateChanged
 } from "firebase/auth";
+import { apiPost, setToken, setStoredUser, clearSession, getStoredUser, errorMessage } from "./api";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -21,8 +19,6 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
-
 const hasFirebaseConfig =
   firebaseConfig.apiKey &&
   firebaseConfig.authDomain &&
@@ -30,7 +26,7 @@ const hasFirebaseConfig =
 
 if (!hasFirebaseConfig) {
   console.warn(
-    "Firebase config keys are missing in .env.local. Real database authentication is required. Please set up your .env.local file."
+    "Firebase config keys are missing in .env.local. Google sign-in will be unavailable; email and password sign-in still works."
   );
 }
 
@@ -41,146 +37,139 @@ const googleProvider = app ? new GoogleAuthProvider() : null;
 function ensureFirebase() {
   if (!auth) {
     throw new Error(
-      "Firebase is not configured. Please define your Firebase API keys in frontend/.env.local to enable real database authentication."
+      "Google sign-in is not configured on this deployment. Use your email and password, or set the Firebase keys in frontend/.env.local."
     );
   }
 }
 
-// Wrapper for Email/Password Sign Up using local DB
+/**
+ * Every backend auth response carries `{ user, session_token, expires_at }`.
+ * The session token is the only thing that authenticates later requests — the
+ * backend does not accept a client-supplied user id anywhere — so dropping it
+ * (which the previous version did) left the app signed in visually while every
+ * authenticated call came back 401. Store both, always through here.
+ */
+function persistSession(data) {
+  if (!data?.session_token) {
+    throw new Error("The server did not return a session. Please try signing in again.");
+  }
+  setToken(data.session_token);
+  setStoredUser(data.user);
+  return data.user;
+}
+
+// -----------------------------------------------------------------------------
+// Email + password (backend-owned; Firebase is not involved)
+// -----------------------------------------------------------------------------
+
 export async function authSignUp(email, password, name) {
-  const res = await fetch(`${BACKEND_URL}/api/auth/signup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name })
-  });
-  if (!res.ok) {
-    const errData = await res.json();
-    throw new Error(errData.detail || "Sign up failed");
-  }
-  const data = await res.json();
-  return data.user;
+  const data = await apiPost("/api/auth/signup", { email, password, name }, { auth: false });
+  return persistSession(data);
 }
 
-// Wrapper for Email/Password Sign In using local DB
 export async function authSignIn(email, password) {
-  const res = await fetch(`${BACKEND_URL}/api/auth/signin`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password })
-  });
-  if (!res.ok) {
-    const errData = await res.json();
-    throw new Error(errData.detail || "Sign in failed");
-  }
-  const data = await res.json();
-  return data.user;
+  const data = await apiPost("/api/auth/signin", { email, password }, { auth: false });
+  return persistSession(data);
 }
 
-// Wrapper for Google OAuth Login using Firebase as client, storing locally
+// -----------------------------------------------------------------------------
+// Google OAuth — Firebase verifies the identity, the backend issues the session
+// -----------------------------------------------------------------------------
+
 export async function authSignInWithGoogle() {
   ensureFirebase();
   const userCredential = await signInWithPopup(auth, googleProvider);
   const fbUser = userCredential.user;
-  
-  const res = await fetch(`${BACKEND_URL}/api/auth/google`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email: fbUser.email,
-      name: fbUser.displayName || "Google User",
-      uid: fbUser.uid
-    })
-  });
-  if (!res.ok) {
-    const errData = await res.json();
-    throw new Error(errData.detail || "Google authentication failed on local database");
-  }
-  const data = await res.json();
-  return data.user;
+
+  const data = await apiPost(
+    "/api/auth/google",
+    { email: fbUser.email, name: fbUser.displayName || "Google User", uid: fbUser.uid },
+    { auth: false }
+  );
+  return persistSession(data);
 }
 
-// Fallback Google Sign-In via Redirect
 export async function authSignInWithGoogleRedirect() {
   ensureFirebase();
   await signInWithRedirect(auth, googleProvider);
 }
 
-// Check redirect login results on app load, syncing with local DB
+/** Called once on boot to finish a redirect-based Google sign-in. */
 export async function checkRedirectResult() {
   if (!auth) return null;
-  try {
-    const userCredential = await getRedirectResult(auth);
-    if (userCredential && userCredential.user) {
-      const fbUser = userCredential.user;
-      const res = await fetch(`${BACKEND_URL}/api/auth/google`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: fbUser.email,
-          name: fbUser.displayName || "Google User",
-          uid: fbUser.uid
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.user;
-      }
-    }
-  } catch (error) {
-    console.error("Redirect login result check failed:", error);
-    throw error;
-  }
-  return null;
+  const userCredential = await getRedirectResult(auth);
+  if (!userCredential?.user) return null;
+
+  const fbUser = userCredential.user;
+  const data = await apiPost(
+    "/api/auth/google",
+    { email: fbUser.email, name: fbUser.displayName || "Google User", uid: fbUser.uid },
+    { auth: false }
+  );
+  return persistSession(data);
 }
 
-// Log out user
+// -----------------------------------------------------------------------------
+// Sign out
+// -----------------------------------------------------------------------------
+
 export async function authSignOut() {
+  // Revoke server-side first, while the token is still in storage. The endpoint
+  // is idempotent and always returns success, so a stale token is not an error.
+  try {
+    await apiPost("/api/auth/signout", {});
+  } catch (err) {
+    // A failed revoke must not trap the user in a signed-in shell. The local
+    // session is cleared regardless; the token expires server-side on its own.
+    console.warn("Sign-out could not reach the server:", errorMessage(err));
+  }
+  clearSession();
   if (auth) {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn("Firebase sign-out failed:", errorMessage(err));
+    }
   }
 }
 
-// Listen for authentication state changes to preserve session, syncing with local DB
+// -----------------------------------------------------------------------------
+// Session restoration
+// -----------------------------------------------------------------------------
+
+/**
+ * Watches Firebase for Google sessions. Email and password users have no
+ * Firebase session at all, so a null user here does not mean signed out — the
+ * cached `provider === "password"` user is left alone and validated instead by
+ * `GET /api/auth/me` on boot.
+ */
 export function authOnAuthStateChanged(callback) {
   if (!auth) return () => {};
   return onAuthStateChanged(auth, async (user) => {
     if (user) {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/auth/google`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const data = await apiPost(
+          "/api/auth/google",
+          {
             email: user.email,
             name: user.displayName || user.email.split("@")[0],
-            uid: user.uid
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          callback(data.user);
-        } else {
-          callback(null);
-        }
+            uid: user.uid,
+          },
+          { auth: false }
+        );
+        callback(persistSession(data));
       } catch (err) {
-        console.error("Failed to sync auth state change with local DB:", err);
+        console.error("Could not restore the Google session:", errorMessage(err));
         callback(null);
       }
-    } else {
-      // For email/password users logged in via local DB (provider === "password"),
-      // Firebase auth state is null. We must check localStorage before clearing session.
-      const cachedUserStr = typeof window !== "undefined" ? localStorage.getItem("prepflow_user") : null;
-      if (cachedUserStr) {
-        try {
-          const cachedUser = JSON.parse(cachedUserStr);
-          if (cachedUser && cachedUser.provider === "password") {
-            // Keep the local email/password user logged in
-            return;
-          }
-        } catch (e) {
-          console.error("Error reading cached user", e);
-        }
-      }
-      callback(null);
+      return;
     }
+
+    const cachedUser = getStoredUser();
+    if (cachedUser?.provider === "password") {
+      // Keep the backend-owned email/password session; Firebase never had one.
+      return;
+    }
+    callback(null);
   });
 }
