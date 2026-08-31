@@ -54,7 +54,7 @@ const SUPPORTED_LANGUAGES = [
   { code: "od-IN", name: "Odia (ଓଡ଼ିଆ)" }
 ];
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
 
 export default function VoiceCopilot({ user }) {
   // Navigation & session state

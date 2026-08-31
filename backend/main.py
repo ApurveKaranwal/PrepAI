@@ -24,7 +24,7 @@ import database
 from ml.evaluation.evaluation import InterviewMLModel
 from config import GROQ_HEAVY_MODEL, GROQ_LIGHT_MODEL
 from llm_client import call_llm, call_llm_json
-from auth_deps import AuthUser, OrgContext, require_user, require_org_member
+from auth_deps import AuthUser, OrgContext, require_user, require_org_member, optional_user, role_at_least
 import resume_analyser
 
 # Load environment variables
@@ -51,7 +51,8 @@ app.include_router(career_agent_router, prefix="/api/career")
 # Set ALLOWED_ORIGINS in the environment for deployed frontends.
 # ---------------------------------------------------------------------------
 _DEFAULT_ORIGINS = (
-    "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,"
+    "http://localhost:3000,http://localhost:3001,http://localhost:3002,"
+    "http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,"
     "https://prepai.apurve.xyz"
 )
 ALLOWED_ORIGINS = [
@@ -61,9 +62,10 @@ ALLOWED_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Instantiate local ML engine
@@ -97,6 +99,7 @@ class SignUpRequest(BaseModel):
     email: str
     password: str
     name: str
+    role: Optional[str] = "candidate"
 
 class SignInRequest(BaseModel):
     email: str
@@ -106,6 +109,10 @@ class GoogleSignInRequest(BaseModel):
     email: str
     name: str
     uid: str
+    role: Optional[str] = None
+
+class UpdateRoleRequest(BaseModel):
+    role: str
 
 class PlatformSyncRequest(BaseModel):
     # user_id is accepted for backwards compatibility but ignored: the target
@@ -534,7 +541,7 @@ def _issue_session(user: dict, user_agent: str = "") -> dict:
 @app.post("/api/auth/signup")
 def signup(req: SignUpRequest, user_agent: Optional[str] = Header(None)):
     try:
-        user = database.create_user(req.email, req.password, req.name)
+        user = database.create_user(req.email, req.password, req.name, req.role or "candidate")
         return _issue_session(user, user_agent or "")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -554,7 +561,7 @@ def signin(req: SignInRequest, user_agent: Optional[str] = Header(None)):
 @app.post("/api/auth/google")
 def google_auth(req: GoogleSignInRequest, user_agent: Optional[str] = Header(None)):
     try:
-        user = database.get_or_create_google_user(req.email, req.name, req.uid)
+        user = database.get_or_create_google_user(req.email, req.name, req.uid, req.role or "candidate")
         return _issue_session(user, user_agent or "")
     except HTTPException:
         raise
@@ -580,12 +587,24 @@ def whoami(user: AuthUser = Depends(require_user)):
     org = database.get_user_org(user.uid)
     return {
         "status": "success",
-        "user": {"uid": user.uid, "email": user.email, "name": user.name},
+        "user": {"uid": user.uid, "email": user.email, "name": user.name, "role": user.role},
         "organization": (
             {"id": org["id"], "name": org["name"], "slug": org["slug"], "role": org["role"]}
             if org else None
         ),
     }
+
+@app.patch("/api/auth/role")
+def update_role(req: UpdateRoleRequest, user: AuthUser = Depends(require_user)):
+    """Updates the caller's role (candidate or recruiter)."""
+    try:
+        result = database.update_user_role(user.uid, req.role)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"Error updating role: {e}")
+        raise HTTPException(status_code=500, detail="Could not update role. Please try again.")
 
 # Load OpenCV cascades for gaze tracking
 face_cascade = None
@@ -876,12 +895,15 @@ async def sync_candidate_platforms(payload: PlatformSyncRequest, user: AuthUser 
 
 
 @app.get("/api/profile/devscore")
-async def get_candidate_devscore(user: AuthUser = Depends(require_user)):
-    user_id = user.uid
+async def get_candidate_devscore(
+    user_id: Optional[str] = None,
+    auth_user: Optional[AuthUser] = Depends(optional_user),
+):
+    uid = (auth_user.uid if auth_user else None) or user_id or "anonymous"
 
     try:
-        profile = database.get_candidate_profile(user_id)
-        prepai_stats = database.get_user_prepai_stats(user_id)
+        profile = database.get_candidate_profile(uid)
+        prepai_stats = database.get_user_prepai_stats(uid)
         if not profile:
             default_ds = profile_aggregator.calculate_devscore({}, {}, {}, prepai_stats)
             return {
@@ -903,13 +925,12 @@ async def get_candidate_devscore(user: AuthUser = Depends(require_user)):
                 "profile": profile
             }
 
-        # If profile exists but devscore not calculated yet
-        lc_stats = profile.get("leetcode_stats") or (profile_aggregator.fetch_leetcode_stats(profile.get("leetcode_handle", "")) if profile.get("leetcode_handle") else {})
-        cf_stats = profile.get("codeforces_stats") or (profile_aggregator.fetch_codeforces_stats(profile.get("codeforces_handle", "")) if profile.get("codeforces_handle") else {})
-        gh_stats = profile.get("github_stats") or (profile_aggregator.fetch_github_stats(profile.get("github_url", "")) if profile.get("github_url") else {})
-
+        lc_stats = profile.get("leetcode_stats") or {}
+        cf_stats = profile.get("codeforces_stats") or {}
+        gh_stats = profile.get("github_stats") or {}
         devscore_data = profile_aggregator.calculate_devscore(lc_stats, cf_stats, gh_stats, prepai_stats)
-        database.update_candidate_platform_stats(user_id, {
+
+        database.update_candidate_platform_stats(uid, {
             "leetcode_handle": profile.get("leetcode_handle", ""),
             "leetcode_stats": lc_stats,
             "codeforces_handle": profile.get("codeforces_handle", ""),
@@ -928,7 +949,12 @@ async def get_candidate_devscore(user: AuthUser = Depends(require_user)):
         }
     except Exception as e:
         print(f"Error fetching devscore: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "status": "success",
+            "devscore": 0,
+            "devscore_data": {"devscore": 0, "tier": "Bronze", "overall_percentile": 0},
+            "profile": None
+        }
 
 
 # =========================================================================
@@ -943,6 +969,201 @@ async def get_candidate_devscore(user: AuthUser = Depends(require_user)):
 
 import recruiter_service
 import email_service
+
+
+def _to_naive_utc(value) -> Optional[datetime]:
+    """Normalizes a DB timestamp (datetime or ISO string) for comparison."""
+    if not value:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    return None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class OrgCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    website_url: Optional[str] = ""
+    description: Optional[str] = ""
+
+class OrgUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    website_url: Optional[str] = None
+    description: Optional[str] = None
+
+class OrgInviteRequest(BaseModel):
+    email: str
+    role: str = "member"
+
+class OrgInviteAcceptRequest(BaseModel):
+    invite_token: str
+
+class OrgMemberRoleRequest(BaseModel):
+    role: str
+
+class RecruiterJobCreateRequest(BaseModel):
+    company_name: str = Field(min_length=1, max_length=160)
+    role_title: str = Field(min_length=1, max_length=160)
+    work_mode: str = "Remote"
+    location: str = ""
+    salary_range: str = ""
+    min_devscore: int = 0
+    required_skills: List[str] = []
+    experience_level: str = "Mid-Level"
+    description: str = ""
+    status: str = "Active"
+
+class RecruiterJobUpdateRequest(BaseModel):
+    company_name: Optional[str] = None
+    role_title: Optional[str] = None
+    work_mode: Optional[str] = None
+    location: Optional[str] = None
+    salary_range: Optional[str] = None
+    min_devscore: Optional[int] = None
+    required_skills: Optional[List[str]] = None
+    experience_level: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+class ShortlistCandidateRequest(BaseModel):
+    candidate_id: str
+    job_id: int = 0
+    stage: str = "Sourced"
+    notes: str = ""
+
+class ShortlistUpdateRequest(BaseModel):
+    stage: Optional[str] = None
+    notes: Optional[str] = None
+    job_id: Optional[int] = None
+
+class StartupProfileRequest(BaseModel):
+    company_name: str
+    founder_name: Optional[str] = ""
+    founder_role: Optional[str] = ""
+    tagline: Optional[str] = ""
+    stage: Optional[str] = ""
+    website_url: Optional[str] = ""
+    industry: Optional[str] = ""
+    location: Optional[str] = ""
+    team_size: Optional[str] = ""
+    primary_tech_stack: Optional[List[str]] = []
+    about: Optional[str] = ""
+    logo_url: Optional[str] = ""
+
+class SendAssessmentRequest(BaseModel):
+    candidate_id: str
+    job_id: int = 0
+    role_title: Optional[str] = None
+    problem_slug: str = "lru-cache-ttl"
+    difficulty: str = "Medium"
+    time_limit_minutes: int = 60
+
+class OutreachRequest(BaseModel):
+    candidate_id: str
+    job_id: int = 0
+    message: str = ""
+
+class OpportunityOptInRequest(BaseModel):
+    open_to_opportunities: bool
+    opportunity_preferences: Optional[str] = None
+
+class OutreachResponseRequest(BaseModel):
+    accept: bool
+
+
+# -------------------------------------------------------------------------
+# Organization lifecycle
+# -------------------------------------------------------------------------
+
+@app.get("/api/org")
+def get_my_org(user: AuthUser = Depends(require_user)):
+    """
+    Returns the caller's organization, or null. The frontend uses a null result
+    to route to the create-organization screen instead of the portal.
+    """
+    org = database.get_user_org(user.uid)
+    if not org:
+        return {"status": "success", "organization": None, "members": [], "pending_invites": []}
+    members = database.get_org_members(org["id"])
+    invites = (
+        database.get_pending_org_invites(org["id"])
+        if database.role_at_least(org["role"], "admin") else []
+    )
+    return {
+        "status": "success",
+        "organization": org,
+        "members": members,
+        "pending_invites": invites,
+    }
+
+
+@app.post("/api/org")
+def create_org(req: OrgCreateRequest, user: AuthUser = Depends(require_user)):
+    existing = database.get_user_org(user.uid)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"You already belong to {existing['name']}. Leave it before creating another organization.",
+        )
+    try:
+        org = database.create_organization(
+            name=req.name, founder_user_id=user.uid,
+            website_url=req.website_url or "", description=req.description or "",
+        )
+    except Exception as e:
+        print(f"Error creating organization: {e}")
+        raise HTTPException(status_code=500, detail="Could not create the organization. Please try again.")
+    return {"status": "success", "organization": org}
+
+
+@app.patch("/api/org")
+def update_org(req: OrgUpdateRequest, org: OrgContext = Depends(require_org_member("admin"))):
+    updated = database.update_organization(org.org_id, req.model_dump(exclude_none=True))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    return {"status": "success", "organization": updated}
+
+
+@app.post("/api/org/invite")
+def invite_teammate(
+    req: OrgInviteRequest,
+    background_tasks: BackgroundTasks,
+    org: OrgContext = Depends(require_org_member("admin")),
+):
+    email = (req.email or "").strip().lower()
+    if "@" not in email or len(email) < 5:
+        raise HTTPException(status_code=400, detail="Enter a valid email address.")
+    if req.role not in ("admin", "member"):
+        raise HTTPException(status_code=400, detail="Role must be 'admin' or 'member'.")
+
+    invite = database.create_org_invite(org.org_id, email, req.role, org.uid)
+    if not invite:
+        raise HTTPException(status_code=500, detail="Could not create the invitation. Please try again.")
+
+    accept_base = (os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+    accept_url = f"{accept_base}/join?invite={invite['invite_token']}"
+    background_tasks.add_task(
+        email_service.send_org_invite_email,
+        org_name=org.org_name, inviter_name=org.user.name or org.user.email,
+        role=req.role, recipient_email=email, accept_url=accept_url,
+    )
+    # The raw invite token goes to the invitee by email and is echoed here so an
+    # admin can copy the link manually when SMTP is not configured.
+    return {
+        "status": "success",
+        "invite": {
+            "id": invite["id"], "email": invite["email"], "role": invite["role"],
+            "expires_at": invite["expires_at"], "accept_url": accept_url,
+        },
+    }
 
 
 def _to_naive_utc(value) -> Optional[datetime]:
@@ -1192,37 +1413,77 @@ def remove_member(member_user_id: str, org: OrgContext = Depends(require_org_mem
 # -------------------------------------------------------------------------
 
 @app.get("/api/recruiter/startup-profile")
-def get_startup_profile_endpoint(org: OrgContext = Depends(require_org_member())):
+def get_startup_profile_endpoint(user: AuthUser = Depends(require_user)):
     """
     One company profile per organization, so every teammate sees and edits the
-    same branding. It is keyed on the founder's user id for backwards
-    compatibility with profiles created before organizations existed.
+    same branding. If user has an organization, guarantees the startup profile
+    is persisted in the database.
     """
-    record = database.get_organization(org.org_id) or {}
-    owner_id = record.get("founder_user_id") or org.uid
-    profile = database.get_startup_profile(owner_id) or {}
-    profile.setdefault("company_name", org.org_name)
-    profile.setdefault("website_url", record.get("website_url") or "")
-    return {"status": "success", "profile": profile, "role": org.role}
+    org = database.get_user_org(user.uid)
+    if not org:
+        profile = database.get_startup_profile(user.uid)
+        return {"status": "success", "profile": profile, "role": "owner"}
+    
+    org_id = org.get("id") or org.get("org_id")
+    record = database.get_organization(org_id) or {} if org_id else {}
+    owner_id = record.get("founder_user_id") or user.uid
+    profile = database.get_startup_profile(owner_id)
+    
+    if not profile:
+        profile_data = {
+            "user_id": owner_id,
+            "company_name": org.get("name") or "My Startup",
+            "founder_name": user.name or "Founder",
+            "founder_role": "Founder & CTO",
+            "tagline": record.get("description") or "Building next-generation software.",
+            "stage": "Seed",
+            "website_url": record.get("website_url") or "",
+            "industry": "AI & Machine Learning",
+            "location": "Remote",
+            "team_size": "1-10",
+            "primary_tech_stack": ["Python", "FastAPI", "React", "PostgreSQL"],
+            "about": record.get("description") or "Engineering-driven product team."
+        }
+        profile = database.create_or_update_startup_profile(profile_data) or profile_data
+
+    return {"status": "success", "profile": profile, "role": org.get("role", "owner")}
 
 
 @app.post("/api/recruiter/startup-profile")
 def save_startup_profile_endpoint(
     req: StartupProfileRequest,
-    org: OrgContext = Depends(require_org_member("admin")),
+    user: AuthUser = Depends(require_user),
 ):
-    record = database.get_organization(org.org_id) or {}
-    owner_id = record.get("founder_user_id") or org.uid
+    org = database.get_user_org(user.uid)
+    if not org:
+        # First-time onboarding: create their organization automatically
+        try:
+            new_org = database.create_organization(
+                name=req.company_name or f"{user.name or 'My'} Startup",
+                founder_user_id=user.uid,
+                website_url=req.website_url or "",
+                description=req.about or "",
+            )
+            org = database.get_user_org(user.uid) or new_org
+        except Exception as e:
+            print(f"Error auto-creating organization for startup profile: {e}")
+            raise HTTPException(status_code=500, detail="Could not initialize your company organization. Please try again.")
+    elif not database.role_at_least(org.get("role"), "admin"):
+        raise HTTPException(status_code=403, detail="This action requires the admin role or higher.")
+
+    org_id = org.get("id") or org.get("org_id")
+    record = database.get_organization(org_id) or {} if org_id else {}
+    owner_id = record.get("founder_user_id") or user.uid
     payload = req.model_dump()
     payload["user_id"] = owner_id
     try:
         profile = database.create_or_update_startup_profile(payload)
-        # Keep the organization row in step so invites and outreach use one name.
-        database.update_organization(org.org_id, {
-            "name": req.company_name or org.org_name,
-            "website_url": req.website_url,
-        })
-        return {"status": "success", "profile": profile}
+        if org_id:
+            database.update_organization(org_id, {
+                "name": req.company_name or org.get("name"),
+                "website_url": req.website_url,
+            })
+        return {"status": "success", "profile": profile, "organization": org}
     except Exception as e:
         print(f"Error saving startup profile: {e}")
         raise HTTPException(status_code=500, detail="Could not save the company profile. Please try again.")
@@ -1247,6 +1508,8 @@ def get_recruiter_candidates(
             org_id=org.org_id, query=query, min_devscore=min_devscore,
             primary_stack=primary_stack, tier=tier, limit=limit, offset=offset,
         )
+        if page.get("error"):
+            raise HTTPException(status_code=500, detail="Talent search is temporarily unavailable.")
         return {
             "status": "success",
             "candidates": page["items"],
@@ -1399,6 +1662,39 @@ def update_shortlist_endpoint(
         }
         status_code, detail = messages.get(reason, (400, "Could not update the pipeline."))
         raise HTTPException(status_code=status_code, detail=detail)
+
+    # Notify the candidate about their pipeline stage change
+    candidate_id = result.get("candidate_id")
+    from_stage = result.get("from_stage")
+    to_stage = result.get("stage")
+    if candidate_id and from_stage and to_stage and from_stage != to_stage:
+        # Get org name for the notification
+        org_info = database.get_organization(org.org_id)
+        org_name = org_info.get("name", "the company") if org_info else "the company"
+
+        # Get job title if associated with a requisition
+        job_title = ""
+        if req.job_id:
+            job = database.get_recruiter_job(org.org_id, req.job_id)
+            if job:
+                job_title = f" for {job.get('role_title', 'the role')}"
+
+        notification_title = f"Moved to {to_stage} stage"
+        notification_message = f"{org_name} has advanced your application{job_title} from {from_stage} to {to_stage}."
+        if req.notes:
+            notification_message += f" Note: {req.notes}"
+
+        database.create_candidate_notification(
+            user_id=candidate_id,
+            org_id=org.org_id,
+            org_name=org_name,
+            title=notification_title,
+            message=notification_message,
+            notification_type="pipeline_update",
+            related_id=shortlist_id,
+            related_type="shortlist",
+        )
+
     return {"status": "success", "shortlist": result}
 
 
@@ -1524,12 +1820,25 @@ def send_takehome_assessment_endpoint(
 
     # The raw token never leaves the server for a recruiter — whoever holds it
     # can sit the test. Move the candidate into the Assessment stage instead.
-    database.shortlist_candidate(org.org_id, org.uid, {
+    shortlist_result = database.shortlist_candidate(org.org_id, org.uid, {
         "candidate_id": req.candidate_id,
         "candidate_name": candidate.get("name") or candidate.get("display_name"),
         "job_id": req.job_id, "stage": "Assessment",
         "notes": f"Assessment sent: {assessment['problem_title']}",
     })
+
+    # Notify candidate about the assessment
+    database.create_candidate_notification(
+        user_id=req.candidate_id,
+        org_id=org.org_id,
+        org_name=org.org_name,
+        title=f"Take-home assessment sent: {role_title}",
+        message=f"You've been sent a take-home assessment from {org.org_name}: \"{assessment['problem_title']}\" ({assessment['difficulty']}, {assessment['time_limit_minutes']} minutes). Check your email for the private link.",
+        notification_type="assessment_sent",
+        related_id=assessment["id"],
+        related_type="takehome_assessment",
+    )
+
     return {
         "status": "success",
         "assessment": {
@@ -1539,6 +1848,7 @@ def send_takehome_assessment_endpoint(
             "time_limit_minutes": assessment["time_limit_minutes"],
             "status": "Sent", "expires_at": assessment["expires_at"],
         },
+        "shortlist_id": shortlist_result.get("id") if shortlist_result else None,
     }
 
 
@@ -1910,4 +2220,8 @@ def submit_takehome_assessment(token: str, req: TakeHomeSubmitRequest):
         "completed_at": datetime.now(timezone.utc).isoformat()
     }
 
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
 

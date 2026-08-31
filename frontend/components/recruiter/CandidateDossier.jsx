@@ -21,7 +21,6 @@ import {
   ExternalLink,
   FileCode2,
   FileText,
-  Github,
   Lock,
   Mail,
   MapPin,
@@ -33,6 +32,13 @@ import {
 } from "lucide-react";
 import { apiGet, errorMessage } from "@/lib/api";
 import { Chip, ErrorBanner, LoadingBlock, Modal, StatTile, formatDate, styles } from "./ui";
+
+const GithubIcon = ({ className = "h-4 w-4", ...props }) => (
+  <svg className={className} viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+    <path d="M9 18c-4.51 2-5-2-7-2" />
+  </svg>
+);
 
 /** Fallback maxima, so an older stored breakdown still renders a sane bar. */
 const BREAKDOWN_ROWS = [
@@ -154,7 +160,7 @@ function VerifiedPlatforms({ stats }) {
           ]}
         />
         <PlatformCard
-          icon={Github}
+          icon={GithubIcon}
           title="GitHub"
           connected={Boolean(github.connected)}
           handle={github.username}
@@ -280,9 +286,29 @@ function ContactSection({ candidate, onRequestContact }) {
 
       {candidate.resume_text ? (
         <div className="space-y-1.5">
-          <p className={styles.microLabel}>
-            Résumé{candidate.resume_name ? ` · ${candidate.resume_name}` : ""}
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className={styles.microLabel}>
+              Résumé{candidate.resume_name ? ` · ${candidate.resume_name}` : ""}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const content = candidate.resume_text;
+                const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${(candidate.name || candidate.display_name || "Candidate").replace(/\s+/g, "_")}_Resume.txt`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+              }}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-bold text-[#C85A32] bg-[#FAF4EB] border border-[#C85A32]/20 rounded hover:bg-[#F5EDE3] transition-colors ${styles.focusRing}`}
+            >
+              <FileText className="h-3 w-3" />
+              Download
+            </button>
+          </div>
           <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl p-3 text-[11px] font-mono text-[#262626] leading-relaxed">
             {candidate.resume_text}
           </pre>

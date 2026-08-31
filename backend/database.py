@@ -221,8 +221,8 @@ def _get_connection_pool():
         
     from psycopg2.pool import ThreadedConnectionPool
     try:
-        # Initialize connection pool with min 1 and max 15 connections
-        _connection_pool = ThreadedConnectionPool(1, 15, database_url)
+        # Initialize connection pool with min 1 and max 30 connections
+        _connection_pool = ThreadedConnectionPool(1, 30, database_url)
         print("PgConnectionPool: Threaded pool successfully initialized.")
         return _connection_pool
     except Exception as e:
@@ -334,6 +334,7 @@ def init_db():
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             name TEXT NOT NULL,
+            role TEXT DEFAULT 'candidate',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -817,6 +818,43 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Candidate notifications for pipeline stage changes, assessment results, etc.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS candidate_notifications (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            org_id INTEGER NOT NULL,
+            org_name TEXT DEFAULT '',
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            notification_type TEXT NOT NULL,
+            related_id INTEGER DEFAULT NULL,
+            related_type TEXT DEFAULT NULL,
+            is_read BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Custom assessments — owner writes question + reference answer, others take it and get AI evaluation
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS custom_assessments (
+            id SERIAL PRIMARY KEY,
+            owner_user_id TEXT NOT NULL,
+            job_id INTEGER DEFAULT 0,
+            question TEXT NOT NULL,
+            reference_answer TEXT NOT NULL,
+            take_token TEXT,
+            submitted BOOLEAN DEFAULT FALSE,
+            score INTEGER DEFAULT 0,
+            summary TEXT DEFAULT '',
+            strengths TEXT DEFAULT '[]',
+            gaps TEXT DEFAULT '[]',
+            verdict TEXT DEFAULT '',
+            submitted_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
 
     # -------------------------------------------------------------------------
@@ -837,6 +875,8 @@ def init_db():
         ("takehome_assessments", "candidate_email", "TEXT DEFAULT ''"),
         ("takehome_assessments", "job_id", "INTEGER DEFAULT 0"),
         ("takehome_assessments", "invite_sent_at", "TIMESTAMP"),
+        # User role (candidate / recruiter)
+        ("users", "role", "TEXT DEFAULT 'candidate'"),
         # Candidate sourcing opt-in
         ("candidate_profiles", "open_to_opportunities", "BOOLEAN DEFAULT FALSE"),
         ("candidate_profiles", "opportunity_preferences", "TEXT DEFAULT ''"),
@@ -936,14 +976,15 @@ def init_db():
 
 
 # User authentication logic
-def create_user(email: str, password: str, name: str) -> dict:
+def create_user(email: str, password: str, name: str, role: str = "candidate") -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     hashed = hash_password(password)
+    user_role = role.strip().lower() if role and role.strip().lower() in ("candidate", "recruiter") else "candidate"
     try:
         cursor.execute(
-            "INSERT INTO users (email, password, name) VALUES (?, ?, ?)",
-            (email.strip().lower(), hashed, name.strip())
+            "INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)",
+            (email.strip().lower(), hashed, name.strip(), user_role)
         )
         conn.commit()
         user_id = cursor.lastrowid
@@ -952,6 +993,7 @@ def create_user(email: str, password: str, name: str) -> dict:
             "uid": str(user_id),
             "email": email.strip().lower(),
             "name": name.strip(),
+            "role": user_role,
             "provider": "password"
         }
     except Exception as e:
@@ -969,15 +1011,17 @@ def verify_user(email: str, password: str) -> dict:
     conn.close()
     
     if row and verify_password(row["password"], password):
+        user_role = row["role"] if ("role" in row.keys() and row["role"]) else "candidate"
         return {
             "uid": str(row["id"]),
             "email": row["email"],
             "name": row["name"],
+            "role": user_role,
             "provider": "password"
         }
     return None
 
-def get_or_create_google_user(email: str, name: str, uid: str) -> dict:
+def get_or_create_google_user(email: str, name: str, uid: str, role: str = "candidate") -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE email = ?", (email.strip().lower(),))
@@ -985,18 +1029,21 @@ def get_or_create_google_user(email: str, name: str, uid: str) -> dict:
     
     if row:
         conn.close()
+        user_role = row["role"] if ("role" in row.keys() and row["role"]) else "candidate"
         return {
             "uid": str(row["id"]),
             "email": row["email"],
             "name": row["name"],
+            "role": user_role,
             "provider": "google"
         }
     
     dummy_pass = os.urandom(32).hex()
     hashed = hash_password(dummy_pass)
+    user_role = role.strip().lower() if role and role.strip().lower() in ("candidate", "recruiter") else "candidate"
     cursor.execute(
-        "INSERT INTO users (email, password, name) VALUES (?, ?, ?)",
-        (email.strip().lower(), hashed, name.strip())
+        "INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)",
+        (email.strip().lower(), hashed, name.strip(), user_role)
     )
     conn.commit()
     user_id = cursor.lastrowid
@@ -1005,6 +1052,7 @@ def get_or_create_google_user(email: str, name: str, uid: str) -> dict:
         "uid": str(user_id),
         "email": email.strip().lower(),
         "name": name.strip(),
+        "role": user_role,
         "provider": "google"
     }
 
@@ -1015,10 +1063,12 @@ def get_user_by_id(user_id: str) -> dict:
         cursor.execute("SELECT * FROM users WHERE id = ?", (int(user_id),))
         row = cursor.fetchone()
         if row:
+            user_role = row["role"] if ("role" in row.keys() and row["role"]) else "candidate"
             return {
                 "id": str(row["id"]),
                 "email": row["email"],
-                "name": row["name"]
+                "name": row["name"],
+                "role": user_role
             }
     except Exception:
         pass
@@ -1031,10 +1081,11 @@ def get_user_by_email(email: str) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id, email, name FROM users WHERE email = %s", (email.strip().lower(),))
+        cursor.execute("SELECT id, email, name, role FROM users WHERE email = %s", (email.strip().lower(),))
         row = cursor.fetchone()
         if row:
-            return {"id": str(row["id"]), "email": row["email"], "name": row["name"]}
+            user_role = row["role"] if ("role" in row.keys() and row["role"]) else "candidate"
+            return {"id": str(row["id"]), "email": row["email"], "name": row["name"], "role": user_role}
     except Exception as e:
         print(f"Error looking up user by email: {e}")
     finally:
@@ -1096,7 +1147,7 @@ def get_auth_session_user(raw_token: str) -> dict:
                   AND expires_at > CURRENT_TIMESTAMP
                 RETURNING user_id, expires_at
             )
-            SELECT u.id, u.email, u.name, t.expires_at
+            SELECT u.id, u.email, u.name, u.role, t.expires_at
             FROM touched t
             JOIN users u ON CAST(u.id AS TEXT) = t.user_id
         """, (hash_token(raw_token),))
@@ -1104,11 +1155,13 @@ def get_auth_session_user(raw_token: str) -> dict:
         conn.commit()
         if not row:
             return None
+        user_role = row["role"] if ("role" in row.keys() and row["role"]) else "candidate"
         return {
             "uid": str(row["id"]),
             "id": str(row["id"]),
             "email": row["email"],
             "name": row["name"],
+            "role": user_role,
             "expires_at": row["expires_at"],
         }
     except Exception as e:
@@ -1118,6 +1171,37 @@ def get_auth_session_user(raw_token: str) -> dict:
         except Exception:
             pass
         return None
+    finally:
+        conn.close()
+
+
+def update_user_role(user_id: str, role: str) -> dict:
+    """
+    Updates the user's role to either 'candidate' or 'recruiter'.
+    """
+    target_role = (role or "").strip().lower()
+    if target_role not in ("candidate", "recruiter"):
+        raise ValueError("Role must be either 'candidate' or 'recruiter'")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        try:
+            uid_val = int(user_id)
+        except (ValueError, TypeError):
+            uid_val = str(user_id)
+        cursor.execute(
+            "UPDATE users SET role = %s WHERE CAST(id AS TEXT) = %s",
+            (target_role, str(uid_val))
+        )
+        conn.commit()
+        return {"status": "success", "role": target_role}
+    except Exception as e:
+        print(f"Error updating user role: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -3340,6 +3424,105 @@ def _serialize_recruiter_job(r) -> dict:
     }
 
 
+def get_public_recruiter_jobs() -> list:
+    """
+    Public-facing feed of all open requisitions across organizations.
+    Returns only "Active" jobs; we never surface paused/closed requisitions to
+    candidates. Company names and org metadata are included so the candidate
+    job board can render cards without an extra round-trip per row.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT j.*,
+                   o.name AS org_name,
+                   o.slug AS org_slug,
+                   o.website_url AS org_website,
+                   o.description AS org_description,
+                   (SELECT COUNT(*) FROM candidate_shortlists s
+                     WHERE s.job_id = j.id AND s.org_id = j.org_id) AS shortlist_count
+            FROM recruiter_jobs j
+            JOIN organizations o ON o.id = j.org_id
+            WHERE j.status = 'Active'
+            ORDER BY j.created_at DESC
+        """)
+        return [_serialize_recruiter_job(r) for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error getting public recruiter jobs: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_public_recruiter_job(job_id: int) -> dict:
+    """Public single-job view. Returns None if missing or non-Active."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT j.*,
+                   o.name AS org_name,
+                   o.slug AS org_slug,
+                   o.website_url AS org_website,
+                   o.description AS org_description
+            FROM recruiter_jobs j
+            JOIN organizations o ON o.id = j.org_id
+            WHERE j.id = %s AND j.status = 'Active'
+        """, (job_id,))
+        row = cursor.fetchone()
+        return _serialize_recruiter_job(row) if row else None
+    except Exception as e:
+        print(f"Error getting public recruiter job: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def create_job_application(
+    job_id: int,
+    candidate_name: str,
+    candidate_email: str,
+    candidate_id: str = None,
+    message: str = "",
+    resume_url: str = "",
+) -> dict:
+    """
+    Submit an application to a public job. candidate_id is optional — for
+    signed-in candidates we link to their profile, otherwise we accept the
+    application on the strength of the email and create a guest row.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Confirm the job is still open before accepting the application.
+        cursor.execute(
+            "SELECT id, org_id FROM recruiter_jobs WHERE id = %s AND status = 'Active'",
+            (job_id,),
+        )
+        job = cursor.fetchone()
+        if not job:
+            return None
+
+        cursor.execute(
+            """
+            INSERT INTO job_applications
+                (job_id, org_id, candidate_id, candidate_name, candidate_email,
+                 message, resume_url, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'Applied', NOW())
+            RETURNING id, job_id, status, created_at
+            """,
+            (job["id"], job["org_id"], candidate_id or None, candidate_name, candidate_email,
+             message, resume_url or None),
+        )
+        return cursor.fetchone()
+    except Exception as e:
+        print(f"Error creating job application: {e}")
+        return None
+    finally:
+        conn.close()
+
+
 def get_recruiter_jobs(org_id: int) -> list:
     """
     Requisitions for one organization, with live pipeline counts. org_id is
@@ -3656,13 +3839,14 @@ def update_shortlist_stage(org_id: int, shortlist_id: int, actor_user_id: str,
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "SELECT stage FROM candidate_shortlists WHERE id = %s AND org_id = %s",
+            "SELECT stage, candidate_id, job_id FROM candidate_shortlists WHERE id = %s AND org_id = %s",
             (shortlist_id, org_id)
         )
         row = cursor.fetchone()
         if not row:
             return {"error": "not_found"}
         from_stage = row["stage"]
+        candidate_id = row["candidate_id"]
 
         updates, params = [], []
         if stage is not None:
@@ -3689,7 +3873,12 @@ def update_shortlist_stage(org_id: int, shortlist_id: int, actor_user_id: str,
                 RETURNING id
             """, (shortlist_id, org_id, str(actor_user_id), from_stage, stage, notes or ""))
         conn.commit()
-        return {"id": shortlist_id, "stage": stage or from_stage, "from_stage": from_stage}
+        return {
+            "id": shortlist_id,
+            "stage": stage or from_stage,
+            "from_stage": from_stage,
+            "candidate_id": candidate_id,
+        }
     except Exception as e:
         print(f"Error updating shortlist stage: {e}")
         try:
@@ -3715,6 +3904,316 @@ def get_shortlist_events(org_id: int, shortlist_id: int) -> list:
         return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         print(f"Error fetching shortlist events: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+# -------------------------------------------------------------------------
+# Candidate Notifications
+# -------------------------------------------------------------------------
+
+def create_candidate_notification(
+    user_id: str,
+    org_id: int,
+    org_name: str,
+    title: str,
+    message: str,
+    notification_type: str,
+    related_id: int = None,
+    related_type: str = None,
+) -> dict:
+    """Creates a notification for a candidate."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO candidate_notifications
+                (user_id, org_id, org_name, title, message, notification_type, related_id, related_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (
+            str(user_id),
+            int(org_id),
+            org_name or "",
+            title,
+            message,
+            notification_type,
+            related_id,
+            related_type,
+        ))
+        result = cursor.fetchone()
+        conn.commit()
+        return {"id": result["id"], "created_at": result["created_at"]} if result else None
+    except Exception as e:
+        print(f"Error creating notification: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+
+def get_candidate_notifications(user_id: str, limit: int = 20, offset: int = 0) -> dict:
+    """Fetches notifications for a candidate with unread count."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM candidate_notifications
+            WHERE user_id = %s AND is_read = FALSE
+        """, (str(user_id),))
+        unread_count = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT id, org_name, title, message, notification_type,
+                   related_id, related_type, is_read, created_at
+            FROM candidate_notifications
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (str(user_id), limit, offset))
+        notifications = [dict(r) for r in cursor.fetchall()]
+        return {"notifications": notifications, "unread_count": unread_count}
+    except Exception as e:
+        print(f"Error fetching notifications: {e}")
+        return {"notifications": [], "unread_count": 0}
+    finally:
+        conn.close()
+
+
+def mark_notification_read(user_id: str, notification_id: int) -> bool:
+    """Marks a single notification as read."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE candidate_notifications
+            SET is_read = TRUE
+            WHERE id = %s AND user_id = %s
+        """, (notification_id, str(user_id)))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"Error marking notification read: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def mark_all_notifications_read(user_id: str) -> int:
+    """Marks all notifications as read for a candidate. Returns count of updated rows."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE candidate_notifications
+            SET is_read = TRUE
+            WHERE user_id = %s AND is_read = FALSE
+        """, (str(user_id),))
+        conn.commit()
+        return cursor.rowcount
+    except Exception as e:
+        print(f"Error marking all notifications read: {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+# -------------------------------------------------------------------------
+# Custom Assessments
+# -------------------------------------------------------------------------
+
+def create_custom_assessment(owner_user_id: str, question: str, reference_answer: str, job_id: int = 0) -> dict:
+    """Creates a custom assessment owned by a user."""
+    import secrets
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO custom_assessments (owner_user_id, job_id, question, reference_answer)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (str(owner_user_id), int(job_id), question, reference_answer))
+        result = cursor.fetchone()
+        conn.commit()
+        return {
+            "id": result["id"],
+            "owner_user_id": str(owner_user_id),
+            "job_id": int(job_id),
+            "question": question,
+            "reference_answer": reference_answer,
+            "submitted": False,
+            "score": 0,
+            "summary": "",
+            "strengths": [],
+            "gaps": [],
+            "verdict": "",
+            "created_at": result["created_at"],
+        }
+    except Exception as e:
+        print(f"Error creating custom assessment: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {}
+    finally:
+        conn.close()
+
+
+def list_custom_assessments_for_owner(owner_user_id: str) -> list:
+    """Lists all custom assessments owned by a user."""
+    import secrets
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT id, job_id, question, submitted, score, summary, verdict, created_at
+            FROM custom_assessments
+            WHERE owner_user_id = %s
+            ORDER BY created_at DESC
+        """, (str(owner_user_id),))
+        rows = cursor.fetchall()
+        items = []
+        for row in rows:
+            items.append({
+                "id": row["id"],
+                "job_id": row.get("job_id") or 0,
+                "question": row["question"],
+                "submitted": bool(row["submitted"]),
+                "score": row.get("score") or 0,
+                "summary": row.get("summary") or "",
+                "verdict": row.get("verdict") or "",
+                "created_at": row["created_at"],
+            })
+        return items
+    except Exception as e:
+        print(f"Error listing custom assessments: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_custom_assessment(assessment_id: int, owner_user_id: str) -> dict:
+    """Gets one assessment, scoped to the owner."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT * FROM custom_assessments WHERE id = %s AND owner_user_id = %s
+        """, (assessment_id, str(owner_user_id)))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return dict(row)
+    except Exception as e:
+        print(f"Error getting custom assessment: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def issue_custom_assessment_token(assessment_id: int) -> str:
+    """Generates and stores a one-time take token for a custom assessment."""
+    import secrets
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        token = secrets.token_urlsafe(24)
+        cursor.execute("""
+            UPDATE custom_assessments SET take_token = %s WHERE id = %s
+        """, (token, assessment_id))
+        conn.commit()
+        return token if cursor.rowcount > 0 else None
+    except Exception as e:
+        print(f"Error issuing custom assessment token: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_custom_assessment_by_token(token: str) -> dict:
+    """Looks up an assessment by its take token (no owner check — public endpoint)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT * FROM custom_assessments WHERE take_token = %s
+        """, (token,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"Error looking up custom assessment by token: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def submit_custom_assessment(token: str, candidate_answer: str, score: int,
+                             summary: str, strengths: list, gaps: list, verdict: str) -> bool:
+    """Records a submission and AI evaluation result."""
+    import json
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE custom_assessments
+            SET submitted = TRUE,
+                score = %s,
+                summary = %s,
+                strengths = %s,
+                gaps = %s,
+                verdict = %s,
+                submitted_at = CURRENT_TIMESTAMP
+            WHERE take_token = %s AND submitted = FALSE
+        """, (
+            max(0, min(100, int(score))),
+            summary,
+            json.dumps(strengths or []),
+            json.dumps(gaps or []),
+            verdict,
+            token,
+        ))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"Error submitting custom assessment: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def list_custom_assessment_submissions(assessment_id: int) -> list:
+    """Returns the single submission for an assessment (one taker per token)."""
+    import json
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT score, summary, strengths, gaps, verdict, submitted_at
+            FROM custom_assessments
+            WHERE id = %s AND submitted = TRUE
+        """, (assessment_id,))
+        row = cursor.fetchone()
+        if not row:
+            return []
+        return [{
+            "score": row.get("score") or 0,
+            "summary": row.get("summary") or "",
+            "strengths": json.loads(row.get("strengths") or "[]"),
+            "gaps": json.loads(row.get("gaps") or "[]"),
+            "verdict": row.get("verdict") or "",
+            "submitted_at": row.get("submitted_at"),
+        }]
+    except Exception as e:
+        print(f"Error listing custom assessment submissions: {e}")
         return []
     finally:
         conn.close()

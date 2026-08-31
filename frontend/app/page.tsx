@@ -14,6 +14,7 @@ import RecruiterPortal from "@/components/recruiter/RecruiterPortal";
 import { checkRedirectResult, authSignOut, authOnAuthStateChanged } from "@/lib/firebase";
 import {
   apiGet,
+  apiPatch,
   getToken,
   getStoredUser,
   setStoredUser,
@@ -24,10 +25,12 @@ import {
 
 interface UserProfile {
   uid?: string;
+  id?: string;
   email?: string | null;
   displayName?: string | null;
   photoURL?: string | null;
   name?: string | null;
+  role?: string | null;
   provider?: string | null;
 }
 
@@ -150,48 +153,71 @@ export default function Home() {
     async function initializeAuth() {
       try {
         // 2. Finish a Google sign-in that used the redirect flow.
-        const loggedInUser = await checkRedirectResult();
-        if (loggedInUser && !cancelled) {
-          setUser(loggedInUser);
-          setActiveTab("dashboard");
-          setAuthLoading(false);
+        try {
+          const loggedInUser = await checkRedirectResult();
+          if (loggedInUser && !cancelled) {
+            setUser(loggedInUser);
+            setActiveTab(loggedInUser.role === "recruiter" ? "recruiter-portal" : "dashboard");
+            setAuthLoading(false);
+            await refreshIdentity();
+            return;
+          }
+        } catch (err) {
+          console.error("Google redirect sign-in failed:", errorMessage(err));
+        }
+
+        if (cancelled) return;
+
+        // 3. Validate whatever session we have against the server.
+        try {
           await refreshIdentity();
-          return;
+        } catch (err) {
+          console.warn("Session validation error:", errorMessage(err));
+        }
+
+        if (cancelled) return;
+
+        // 4. Keep following Firebase for Google sessions.
+        try {
+          unsubscribe = authOnAuthStateChanged((currentUser: UserProfile | null) => {
+            if (cancelled) return;
+            if (currentUser) {
+              setUser(currentUser);
+              refreshIdentity();
+            } else {
+              const currentCached = getStoredUser();
+              if (!currentCached || currentCached.provider !== "password") {
+                clearSession();
+                setUser(null);
+                setOrganization(null);
+              }
+            }
+            setAuthLoading(false);
+          });
+        } catch (err) {
+          console.error("Firebase auth listener error:", err);
         }
       } catch (err) {
-        console.error("Google redirect sign-in failed:", errorMessage(err));
-      }
-
-      if (cancelled) return;
-
-      // 3. Validate whatever session we have against the server.
-      await refreshIdentity();
-      if (cancelled) return;
-
-      // 4. Keep following Firebase for Google sessions.
-      unsubscribe = authOnAuthStateChanged((currentUser: UserProfile | null) => {
-        if (cancelled) return;
-        if (currentUser) {
-          setUser(currentUser);
-          refreshIdentity();
-        } else {
-          clearSession();
-          setUser(null);
-          setOrganization(null);
+        console.error("Auth initialization error:", err);
+      } finally {
+        if (!cancelled) {
+          setAuthLoading(false);
         }
-        setAuthLoading(false);
-      });
-
-      // Firebase never reports for email/password users — and is absent
-      // entirely when unconfigured — so the loading gate is released here
-      // rather than waiting on a callback that may never arrive.
-      setAuthLoading(false);
+      }
     }
 
     initializeAuth();
 
+    // Safety fallback timer: ensure auth loading never blocks UI indefinitely
+    const safetyTimer = setTimeout(() => {
+      if (!cancelled) {
+        setAuthLoading(false);
+      }
+    }, 1500);
+
     return () => {
       cancelled = true;
+      clearTimeout(safetyTimer);
       unsubscribe();
     };
   }, [refreshIdentity]);
@@ -199,9 +225,31 @@ export default function Home() {
   const handleLoginSuccess = (userData: UserProfile) => {
     setStoredUser(userData);
     setUser(userData);
-    setActiveTab("dashboard");
+    const initialTab = userData.role === "recruiter" ? "recruiter-portal" : "dashboard";
+    setActiveTab(initialTab);
     setOrgResolved(false);
     refreshIdentity();
+  };
+
+  const handleRoleChange = async (newRole: "candidate" | "recruiter") => {
+    if (!newRole || user?.role === newRole) return;
+    const updatedUser = { ...(user || {}), role: newRole };
+    setUser(updatedUser);
+    setStoredUser(updatedUser);
+
+    if (newRole === "recruiter") {
+      setActiveTab("recruiter-portal");
+    } else {
+      setActiveTab("dashboard");
+    }
+
+    try {
+      if (getToken()) {
+        await apiPatch("/api/auth/role", { role: newRole });
+      }
+    } catch (err) {
+      console.warn("Failed to persist role change to server:", errorMessage(err));
+    }
   };
 
   const handleEndInterview = () => {
@@ -251,6 +299,7 @@ export default function Home() {
         orgResolved={orgResolved}
         recruiterSection={recruiterSection}
         onRecruiterSection={setRecruiterSection}
+        onRoleChange={handleRoleChange}
         onLogout={handleLogout}
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
@@ -267,9 +316,14 @@ export default function Home() {
           >
             <Menu className="h-4 w-4" />
           </button>
-          <span className="font-serif font-semibold text-base tracking-tight text-[#262626]">
-            PrepFlow <span className="text-[#C85A32]">AI</span>
-          </span>
+          <div className="flex flex-col items-center">
+            <span className="font-serif font-semibold text-base tracking-tight text-[#262626]">
+              PrepFlow <span className="text-[#C85A32]">AI</span>
+            </span>
+            <span className="text-[8px] font-mono text-[#6E6359]/70 uppercase tracking-widest -mt-0.5">
+              {activeTab === "recruiter-portal" ? "Recruiter Portal" : "Candidate Portal"}
+            </span>
+          </div>
           <div className="h-7 w-7 rounded-full bg-[#C85A32] text-[#FCFAF7] flex items-center justify-center text-xs font-bold uppercase shadow-sm">
             {user?.name ? user.name.slice(0, 2) : "US"}
           </div>

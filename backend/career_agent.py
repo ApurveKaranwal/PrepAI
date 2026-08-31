@@ -513,7 +513,23 @@ def discover_matched_jobs(user_id: str):
         key=lambda j: (_listed_ts(j) or 0, j["match_score"]),
         reverse=True,
     )
-    return startup_jobs + matched_jobs
+
+    # Deduplicate: prefer startup_jobs (registered companies) over external listings
+    # that might overlap. Use (title, company) as the dedupe key.
+    seen_keys = set()
+    deduped = []
+    for job in startup_jobs:
+        key = (job["title"].lower().strip(), job["company"].lower().strip())
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(job)
+    for job in matched_jobs:
+        key = (job["title"].lower().strip(), job["company"].lower().strip())
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(job)
+
+    return deduped
 
 # ----------------------------------------------------
 # 3. Company-Specific Preparation Roadmap Engine
@@ -1163,4 +1179,219 @@ def verify_application_tracking(tracking_id: str):
         "audit_hash": audit_hash,
         "verification_status": "Cryptographically Verified",
         "custom_responses": app.get("custom_responses", {})
+    }
+
+
+# ----------------------------------------------------
+# 7. Candidate Notifications
+# ----------------------------------------------------
+@router.get("/notifications")
+def get_notifications_endpoint(
+    limit: int = 20,
+    offset: int = 0,
+    user: AuthUser = Depends(require_user),
+):
+    """Fetches the candidate's notifications (most recent first) with unread count."""
+    result = database.get_candidate_notifications(user.uid, limit=limit, offset=offset)
+    return {"status": "success", **result}
+
+
+@router.post("/notifications/{notification_id}/read")
+def mark_notification_read_endpoint(
+    notification_id: int,
+    user: AuthUser = Depends(require_user),
+):
+    if not database.mark_notification_read(user.uid, notification_id):
+        raise HTTPException(status_code=404, detail="Notification not found.")
+    return {"status": "success"}
+
+
+@router.post("/notifications/mark-all-read")
+def mark_all_notifications_read_endpoint(user: AuthUser = Depends(require_user)):
+    count = database.mark_all_notifications_read(user.uid)
+    return {"status": "success", "marked": count}
+
+
+# ----------------------------------------------------
+# 8. Custom Assessment Workflow (AI Evaluated)
+# ----------------------------------------------------
+class CustomAssessmentCreateRequest(BaseModel):
+    job_id: int = 0
+    question: str
+    reference_answer: str
+
+
+class CustomAssessmentSubmitRequest(BaseModel):
+    answer: str
+
+
+@router.post("/custom-assessments")
+def create_custom_assessment(
+    req: CustomAssessmentCreateRequest,
+    user: AuthUser = Depends(require_user),
+):
+    """
+    A candidate creates a custom written assessment. The candidate supplies the
+    question and their own reference answer; later an interviewer can take it
+    and the AI evaluates the interviewer's response against the reference.
+    """
+    if not req.question.strip() or not req.reference_answer.strip():
+        raise HTTPException(status_code=400, detail="Question and reference answer are required.")
+    assessment = database.create_custom_assessment(
+        owner_user_id=user.uid,
+        question=req.question.strip(),
+        reference_answer=req.reference_answer.strip(),
+        job_id=int(req.job_id or 0),
+    )
+    if not assessment:
+        raise HTTPException(status_code=500, detail="Could not save the assessment.")
+    return {"status": "success", "assessment": assessment}
+
+
+@router.get("/custom-assessments")
+def list_custom_assessments(
+    user: AuthUser = Depends(require_user),
+):
+    items = database.list_custom_assessments_for_owner(user.uid)
+    return {"status": "success", "assessments": items}
+
+
+@router.post("/custom-assessments/{assessment_id}/dispatch")
+def dispatch_custom_assessment(
+    assessment_id: int,
+    user: AuthUser = Depends(require_user),
+):
+    """Returns a public take URL for the assessment."""
+    item = database.get_custom_assessment(assessment_id, owner_user_id=user.uid)
+    if not item:
+        raise HTTPException(status_code=404, detail="Assessment not found.")
+    token = database.issue_custom_assessment_token(assessment_id)
+    if not token:
+        raise HTTPException(status_code=500, detail="Could not dispatch the assessment.")
+    return {"status": "success", "token": token, "assessment": item}
+
+
+@router.get("/custom-assessments/take/{token}")
+def take_custom_assessment(token: str):
+    """Public endpoint for the taker to fetch the question (no reference answer)."""
+    item = database.get_custom_assessment_by_token(token)
+    if not item:
+        raise HTTPException(status_code=404, detail="Assessment link is invalid or has expired.")
+    if item.get("submitted"):
+        raise HTTPException(status_code=410, detail="This assessment has already been submitted.")
+    return {
+        "status": "success",
+        "question": item["question"],
+        "submitted": False,
+    }
+
+
+@router.post("/custom-assessments/take/{token}/submit")
+def submit_custom_assessment(
+    token: str,
+    req: CustomAssessmentSubmitRequest,
+):
+    """Taker submits their answer. AI evaluates it against the reference answer."""
+    if not req.answer.strip():
+        raise HTTPException(status_code=400, detail="Answer is required.")
+
+    item = database.get_custom_assessment_by_token(token)
+    if not item:
+        raise HTTPException(status_code=404, detail="Assessment link is invalid or has expired.")
+    if item.get("submitted"):
+        raise HTTPException(status_code=410, detail="This assessment has already been submitted.")
+
+    evaluation = _evaluate_custom_answer(
+        question=item["question"],
+        reference_answer=item["reference_answer"],
+        candidate_answer=req.answer,
+    )
+
+    saved = database.submit_custom_assessment(
+        token=token,
+        candidate_answer=req.answer,
+        score=evaluation.get("score", 0),
+        summary=evaluation.get("summary", ""),
+        strengths=evaluation.get("strengths", []),
+        gaps=evaluation.get("gaps", []),
+        verdict=evaluation.get("verdict", "evaluated"),
+    )
+    if not saved:
+        raise HTTPException(status_code=500, detail="Could not record the submission.")
+
+    return {
+        "status": "success",
+        "score": evaluation.get("score", 0),
+        "summary": evaluation.get("summary", ""),
+        "strengths": evaluation.get("strengths", []),
+        "gaps": evaluation.get("gaps", []),
+        "verdict": evaluation.get("verdict", "evaluated"),
+    }
+
+
+@router.get("/custom-assessments/{assessment_id}/submissions")
+def list_custom_assessment_submissions(
+    assessment_id: int,
+    user: AuthUser = Depends(require_user),
+):
+    item = database.get_custom_assessment(assessment_id, owner_user_id=user.uid)
+    if not item:
+        raise HTTPException(status_code=404, detail="Assessment not found.")
+    submissions = database.list_custom_assessment_submissions(assessment_id)
+    return {"status": "success", "submissions": submissions}
+
+
+# ----------------------------------------------------
+
+def _evaluate_custom_answer(question: str, reference_answer: str, candidate_answer: str) -> dict:
+    """
+    Uses the configured LLM to compare a candidate's answer to the reference.
+    Returns a structured evaluation with score (0-100), summary, strengths, gaps, verdict.
+    """
+    from llm_client import call_llm_json
+
+    prompt = f"""You are an expert technical interviewer evaluating a written response.
+
+QUESTION:
+{question}
+
+REFERENCE ANSWER (the model answer the interviewer is looking for):
+{reference_answer}
+
+CANDIDATE'S ANSWER (the response you must grade):
+{candidate_answer}
+
+Grade the candidate's answer against the reference. Be strict but fair. Focus on:
+- Factual accuracy compared to the reference
+- Coverage of the key points the reference makes
+- Reasoning and depth
+- Clarity
+
+Return a JSON object with these fields:
+- "score": integer 0-100 representing the answer quality
+- "summary": one short paragraph explaining the score
+- "strengths": array of 1-4 specific things the candidate got right
+- "gaps": array of 1-4 specific things the candidate missed or got wrong
+- "verdict": one of "strong", "adequate", "weak", "off_topic"
+
+Do not include anything outside the JSON object. Do not wrap in markdown fences."""
+
+    result = call_llm_json(prompt, max_tokens=900, temperature=0.2)
+    if not isinstance(result, dict):
+        try:
+            result = json.loads(str(result))
+        except Exception:
+            result = {}
+
+    try:
+        score = max(0, min(100, int(round(float(result.get("score", 0))))))
+    except Exception:
+        score = 0
+
+    return {
+        "score": score,
+        "summary": str(result.get("summary", "")).strip(),
+        "strengths": [str(s) for s in (result.get("strengths") or [])][:4],
+        "gaps": [str(s) for s in (result.get("gaps") or [])][:4],
+        "verdict": str(result.get("verdict", "evaluated")).strip().lower() or "evaluated",
     }

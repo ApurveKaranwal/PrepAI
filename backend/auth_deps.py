@@ -26,6 +26,7 @@ class AuthUser:
     uid: str
     email: str
     name: str
+    role: str = "candidate"
 
 
 @dataclass
@@ -66,7 +67,12 @@ def require_user(authorization: Optional[str] = Header(None)) -> AuthUser:
             detail="Your session has expired. Please sign in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return AuthUser(uid=record["uid"], email=record.get("email") or "", name=record.get("name") or "")
+    return AuthUser(
+        uid=record["uid"],
+        email=record.get("email") or "",
+        name=record.get("name") or "",
+        role=record.get("role") or "candidate",
+    )
 
 
 def optional_user(authorization: Optional[str] = Header(None)) -> Optional[AuthUser]:
@@ -77,7 +83,12 @@ def optional_user(authorization: Optional[str] = Header(None)) -> Optional[AuthU
     record = get_auth_session_user(token)
     if not record:
         return None
-    return AuthUser(uid=record["uid"], email=record.get("email") or "", name=record.get("name") or "")
+    return AuthUser(
+        uid=record["uid"],
+        email=record.get("email") or "",
+        name=record.get("name") or "",
+        role=record.get("role") or "candidate",
+    )
 
 
 def require_org_member(minimum_role: str = "member"):

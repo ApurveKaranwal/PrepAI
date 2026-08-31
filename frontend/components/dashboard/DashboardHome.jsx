@@ -29,7 +29,8 @@ import {
   Star,
   Check,
   Edit3,
-  Trash2
+  Trash2,
+  Building2
 } from "lucide-react";
 import {
   Radar,
@@ -54,7 +55,7 @@ const CustomRadarTooltip = ({ active, payload }) => {
   return null;
 };
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
 
 export default function DashboardHome({ onNavigate, user }) {
   const [voiceHistory, setVoiceHistory] = useState([]);
@@ -93,10 +94,14 @@ export default function DashboardHome({ onNavigate, user }) {
   });
 
   useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
     async function fetchHistory() {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/history`);
-        if (res.ok) {
+        const res = await fetch(`${BACKEND_URL}/api/history`, { signal: controller.signal });
+        if (res.ok && !cancelled) {
           const data = await res.json();
           if (data) {
             if (data.voice_history) {
@@ -111,18 +116,18 @@ export default function DashboardHome({ onNavigate, user }) {
           }
         }
       } catch (err) {
-        console.warn("Backend not active:", err);
+        if (!cancelled) console.warn("Backend not active:", err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     async function fetchDevScore() {
-      setLoadingDevScore(true);
+      if (!cancelled) setLoadingDevScore(true);
       try {
         const userId = user?.uid || "anonymous";
-        const res = await fetch(`${BACKEND_URL}/api/profile/devscore?user_id=${userId}`);
-        if (res.ok) {
+        const res = await fetch(`${BACKEND_URL}/api/profile/devscore?user_id=${userId}`, { signal: controller.signal });
+        if (res.ok && !cancelled) {
           const data = await res.json();
           if (data.devscore_data) {
             setDevScoreData(data.devscore_data);
@@ -134,14 +139,28 @@ export default function DashboardHome({ onNavigate, user }) {
           }
         }
       } catch (err) {
-        console.warn("DevScore fetch error:", err);
+        if (!cancelled) console.warn("DevScore fetch error:", err);
       } finally {
-        setLoadingDevScore(false);
+        if (!cancelled) setLoadingDevScore(false);
       }
     }
 
     fetchHistory();
     fetchDevScore();
+
+    const fallbackTimer = setTimeout(() => {
+      if (!cancelled) {
+        setLoading(false);
+        setLoadingDevScore(false);
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+      clearTimeout(fallbackTimer);
+      controller.abort();
+    };
   }, [user]);
 
   const handleSyncPlatforms = async (e) => {
@@ -208,7 +227,15 @@ export default function DashboardHome({ onNavigate, user }) {
             className="w-full pl-9 pr-4 py-1.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded-lg text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#C85A32] transition-colors placeholder-[#6E6359]/40"
           />
         </div>
-        <div className="hidden sm:flex items-center gap-4 text-[#6E6359]">
+        <div className="hidden sm:flex items-center gap-3 text-[#6E6359]">
+          <button
+            onClick={() => onNavigate && onNavigate("recruiter-portal")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#DFD5C6] bg-[#FAF6F0] hover:bg-[#FCFAF7] hover:border-[#C85A32]/50 text-xs font-bold text-[#6E6359] hover:text-[#262626] transition-all cursor-pointer shadow-3xs"
+            title="Switch to Recruiter Portal"
+          >
+            <Building2 className="h-3.5 w-3.5 text-[#C85A32]" />
+            <span>Recruiter Portal</span>
+          </button>
           <div className="h-7 w-7 rounded-full bg-[#C85A32] text-[#FCFAF7] flex items-center justify-center text-xs font-bold uppercase shadow-sm border border-[#C85A32]/20">
             {user?.name ? user.name.slice(0, 2) : "US"}
           </div>

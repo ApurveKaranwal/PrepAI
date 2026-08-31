@@ -60,7 +60,7 @@ async function requestFullscreenElement(): Promise<boolean> {
   }
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
 
 const SUPPORTED_LANGUAGES = [
   { id: "python", label: "Python 3.11", ext: ".py" },
@@ -661,14 +661,17 @@ export default function TakeHomeAssessmentPage() {
           ========================================================================= */}
       <header className="border-b border-[#DFD5C6] bg-[#FCFAF7] px-6 py-3 flex items-center justify-between shadow-2xs z-20">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="font-serif font-black text-lg tracking-tight text-[#262626]">
-              PrepFlow <span className="text-[#C85A32]">Take-Home</span>
-            </span>
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#2E5A44]/10 text-[#2E5A44] border border-[#2E5A44]/20 uppercase">
-              Production Benchmark
-            </span>
+          <div className="min-w-0">
+            <h1 className="font-serif font-semibold text-lg tracking-tight text-[#262626] flex items-center gap-1.5 select-none">
+              PrepFlow <span className="text-[#C85A32]">AI</span>
+            </h1>
+            <p className="text-[9px] font-mono text-[#6E6359]/70 uppercase tracking-widest -mt-0.5 truncate">
+              Take-Home Portal
+            </p>
           </div>
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#2E5A44]/10 text-[#2E5A44] border border-[#2E5A44]/20 uppercase">
+            {assessment?.company_name ? `${assessment.company_name} Assessment` : "Production Benchmark"}
+          </span>
 
           <span className="h-4 w-px bg-[#DFD5C6]" />
 
@@ -1200,7 +1203,7 @@ export default function TakeHomeAssessmentPage() {
               className="w-full py-2.5 bg-[#262626] hover:bg-black text-white rounded-xl text-xs font-mono font-bold cursor-pointer transition-all shadow-sm flex items-center justify-center gap-1.5"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
-              <span>Return to Career Portal</span>
+              <span>Return to Candidate Portal</span>
             </button>
           </div>
         </div>

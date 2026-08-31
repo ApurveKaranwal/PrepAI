@@ -478,8 +478,11 @@ def get_candidate_detail(org_id: int, candidate_id: str) -> dict:
         row = cursor.fetchone()
         if not row:
             return None
+        # Keep detail consistent with search. Returning an error dictionary is
+        # truthy, so callers could treat a non-sourceable profile as a valid
+        # candidate and still shortlist it.
         if not row.get("open_to_opportunities"):
-            return {"error": "not_sourceable"}
+            return None
 
         cursor.execute("""
             SELECT COUNT(*) AS sessions_count,

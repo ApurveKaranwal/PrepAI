@@ -24,7 +24,18 @@
  * the app drops to the sign-in screen instead of each caller reinventing it.
  */
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
+export function getBackendBaseUrl() {
+  const envUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (envUrl) {
+    if (typeof window !== "undefined" && (envUrl.includes("localhost:8001") || envUrl.includes("127.0.0.1:8001"))) {
+      return "http://127.0.0.1:8001";
+    }
+    return envUrl;
+  }
+  return "http://127.0.0.1:8001";
+}
+
+const BACKEND_URL = getBackendBaseUrl();
 
 export const TOKEN_STORAGE_KEY = "prepflow_token";
 export const USER_STORAGE_KEY = "prepflow_user";
@@ -188,7 +199,9 @@ function readDetail(data) {
  */
 export async function apiFetch(path, options = {}) {
   const { method = "GET", body, signal, auth = true, headers = {} } = options;
-  const url = /^https?:\/\//i.test(path) ? path : `${BACKEND_URL}${path}`;
+  const baseUrl = getBackendBaseUrl();
+  const isFullUrl = /^https?:\/\//i.test(path);
+  const primaryUrl = isFullUrl ? path : `${baseUrl}${path}`;
 
   const requestHeaders = { ...headers };
   let serializedBody;
@@ -203,13 +216,50 @@ export async function apiFetch(path, options = {}) {
   }
 
   let response;
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), 10000);
+  const activeSignal = signal || timeoutController.signal;
+
   try {
-    response = await fetch(url, { method, headers: requestHeaders, body: serializedBody, signal });
+    try {
+      response = await fetch(primaryUrl, { method, headers: requestHeaders, body: serializedBody, signal: activeSignal });
+    } catch (primaryErr) {
+      // Tier 1 fallback: Try localhost:8001 if 127.0.0.1 failed, or vice versa
+      let fallbackUrl = null;
+      if (primaryUrl.includes("127.0.0.1:8001")) {
+        fallbackUrl = primaryUrl.replace("127.0.0.1:8001", "localhost:8001");
+      } else if (primaryUrl.includes("localhost:8001")) {
+        fallbackUrl = primaryUrl.replace("localhost:8001", "127.0.0.1:8001");
+      } else if (!isFullUrl) {
+        fallbackUrl = path;
+      }
+
+      if (fallbackUrl && fallbackUrl !== primaryUrl && (!signal || !signal.aborted)) {
+        try {
+          response = await fetch(fallbackUrl, { method, headers: requestHeaders, body: serializedBody, signal: activeSignal });
+        } catch {
+          // Tier 2 fallback: Try relative path (Next.js rewrites proxy)
+          if (!isFullUrl && fallbackUrl !== path) {
+            try {
+              response = await fetch(path, { method, headers: requestHeaders, body: serializedBody, signal: activeSignal });
+            } catch {
+              throw primaryErr;
+            }
+          } else {
+            throw primaryErr;
+          }
+        }
+      } else {
+        throw primaryErr;
+      }
+    }
   } catch (err) {
-    // A caller-initiated abort is not a failure; let it propagate as itself so
-    // effects can quietly ignore it.
-    if (err?.name === "AbortError") throw err;
+    clearTimeout(timeoutId);
+    if (err?.name === "AbortError" && signal && signal.aborted) throw err;
+    console.warn(`apiFetch transport failure [${method} ${primaryUrl}]:`, err);
     throw new ApiError(STATUS_FALLBACKS[0], { status: 0 });
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   let data = null;

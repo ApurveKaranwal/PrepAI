@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
-import { Mail, Lock, ArrowRight, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { Mail, Lock, ArrowRight, Eye, EyeOff, AlertCircle, User, Building2 } from "lucide-react";
 import { authSignIn, authSignUp, authSignInWithGoogle, authSignInWithGoogleRedirect } from "@/lib/firebase";
 
 
 export default function AuthPage({ onLoginSuccess }) {
   const [isSignUp, setIsSignUp] = useState(false);
+  const [role, setRole] = useState("candidate"); // 'candidate' | 'recruiter'
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -21,7 +22,7 @@ export default function AuthPage({ onLoginSuccess }) {
     setLoading(true);
     try {
       if (isSignUp) {
-        const user = await authSignUp(email, password, name);
+        const user = await authSignUp(email, password, name, role);
         onLoginSuccess(user);
       } else {
         const user = await authSignIn(email, password);
@@ -44,14 +45,28 @@ export default function AuthPage({ onLoginSuccess }) {
     setError("");
     setLoading(true);
     try {
-      const user = await authSignInWithGoogle();
-      onLoginSuccess(user);
+      const user = await authSignInWithGoogle(isSignUp ? role : null);
+      if (user) {
+        onLoginSuccess(user);
+      }
     } catch (err) {
+      const errMsg = err?.message || "";
+      const errCode = err?.code || "";
+
+      // User closed the popup or cancelled the sign-in flow intentionally
+      if (
+        errCode === "auth/popup-closed-by-user" ||
+        errMsg.includes("popup-closed-by-user") ||
+        errCode === "auth/cancelled-popup-request" ||
+        errMsg.includes("cancelled-popup-request")
+      ) {
+        return;
+      }
+
       console.error("Google auth error:", err);
-      const errMsg = err.message || "";
-      if (err.code === "auth/configuration-not-found" || errMsg.includes("configuration-not-found")) {
+      if (errCode === "auth/configuration-not-found" || errMsg.includes("configuration-not-found")) {
         setError("Google Sign-In is not enabled. Please enable Google provider in the Firebase Console.");
-      } else if (err.code === "auth/popup-blocked" || errMsg.includes("popup-blocked")) {
+      } else if (errCode === "auth/popup-blocked" || errMsg.includes("popup-blocked")) {
         setError("Popup blocked. Redirecting to Google...");
         try {
           await authSignInWithGoogleRedirect();
@@ -96,19 +111,74 @@ export default function AuthPage({ onLoginSuccess }) {
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             {isSignUp && (
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FAF6F0] py-2 px-3.5 text-sm text-[#262626] placeholder-[#6E6359]/35 focus:border-[#C85A32] focus:bg-[#FCFAF7] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all duration-200"
-                  placeholder="Jane Doe"
-                />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">
+                    I want to join as
+                  </label>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setRole("candidate")}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        role === "candidate"
+                          ? "border-[#C85A32] bg-[#FAF4EB] ring-1 ring-[#C85A32] shadow-xs"
+                          : "border-[#DFD5C6] bg-[#FAF6F0] hover:border-[#C85A32]/40 hover:bg-[#FAF6F0]/80"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full mb-1.5">
+                        <div className={`p-1.5 rounded-lg transition-colors ${role === "candidate" ? "bg-[#C85A32] text-white" : "bg-[#DFD5C6]/60 text-[#6E6359]"}`}>
+                          <User className="h-4 w-4" />
+                        </div>
+                        {role === "candidate" && (
+                          <span className="text-[9px] font-mono font-bold text-[#C85A32] uppercase px-1.5 py-0.5 rounded bg-[#C85A32]/10">Selected</span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-[#262626]">Candidate</p>
+                        <p className="text-[10px] text-[#6E6359] leading-tight mt-0.5">Practice interviews & build skills</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setRole("recruiter")}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        role === "recruiter"
+                          ? "border-[#C85A32] bg-[#FAF4EB] ring-1 ring-[#C85A32] shadow-xs"
+                          : "border-[#DFD5C6] bg-[#FAF6F0] hover:border-[#C85A32]/40 hover:bg-[#FAF6F0]/80"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full mb-1.5">
+                        <div className={`p-1.5 rounded-lg transition-colors ${role === "recruiter" ? "bg-[#C85A32] text-white" : "bg-[#DFD5C6]/60 text-[#6E6359]"}`}>
+                          <Building2 className="h-4 w-4" />
+                        </div>
+                        {role === "recruiter" && (
+                          <span className="text-[9px] font-mono font-bold text-[#C85A32] uppercase px-1.5 py-0.5 rounded bg-[#C85A32]/10">Selected</span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-[#262626]">Recruiter</p>
+                        <p className="text-[10px] text-[#6E6359] leading-tight mt-0.5">Source talent & hire engineers</p>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[#6E6359] uppercase tracking-wider font-mono">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="block w-full rounded-xl border border-[#DFD5C6] bg-[#FAF6F0] py-2 px-3.5 text-sm text-[#262626] placeholder-[#6E6359]/35 focus:border-[#C85A32] focus:bg-[#FCFAF7] focus:ring-1 focus:ring-[#C85A32] focus:outline-none transition-all duration-200"
+                    placeholder="Jane Doe"
+                  />
+                </div>
+              </>
             )}
 
             <div className="space-y-1.5">

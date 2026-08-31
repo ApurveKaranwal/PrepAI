@@ -43,19 +43,30 @@ export default function Sidebar({
   orgResolved = true,
   recruiterSection = "sourcing",
   onRecruiterSection,
+  onRoleChange,
   onLogout,
   sidebarOpen,
   setSidebarOpen,
 }) {
-  const [roleMode, setRoleMode] = useState("candidate"); // 'candidate' | 'recruiter'
+  const [roleMode, setRoleMode] = useState(() => {
+    return user?.role === "recruiter" || activeTab === "recruiter-portal" ? "recruiter" : "candidate";
+  });
 
-  // Leaving the portal by any other route (a dashboard deep-link, for example)
-  // should not leave the sidebar showing recruiter navigation.
   useEffect(() => {
-    if (activeTab !== "recruiter-portal" && roleMode === "recruiter") {
+    if (activeTab === "recruiter-portal") {
+      setRoleMode("recruiter");
+    } else if (roleMode === "recruiter" && activeTab !== "recruiter-portal") {
       setRoleMode("candidate");
     }
-  }, [activeTab, roleMode]);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (user?.role && (user.role === "candidate" || user.role === "recruiter")) {
+      if (activeTab === "recruiter-portal" && user.role === "recruiter") {
+        setRoleMode("recruiter");
+      }
+    }
+  }, [user?.role, activeTab]);
 
   const inRecruiterMode = roleMode === "recruiter";
   const menuItems = inRecruiterMode ? RECRUITER_MENU : CANDIDATE_MENU;
@@ -93,9 +104,7 @@ export default function Sidebar({
                 PrepFlow <span className="text-[#C85A32]">AI</span>
               </h1>
               <p className="text-[10px] font-mono text-[#6E6359]/70 uppercase tracking-widest mt-0.5 truncate">
-                {inRecruiterMode
-                  ? organization?.name || "Hiring Workspace"
-                  : "Candidate Workspace"}
+                {inRecruiterMode ? "Recruiter Portal" : "Candidate Portal"}
               </p>
             </div>
             {setSidebarOpen && (
@@ -119,6 +128,7 @@ export default function Sidebar({
               role="tab"
               aria-selected={!inRecruiterMode}
               onClick={() => {
+                if (onRoleChange) onRoleChange("candidate");
                 setRoleMode("candidate");
                 setActiveTab("dashboard");
                 closeOnMobile();
@@ -134,14 +144,17 @@ export default function Sidebar({
             <button
               role="tab"
               aria-selected={inRecruiterMode}
-              onClick={() => openRecruiter(organization ? "sourcing" : "organization")}
+              onClick={() => {
+                if (onRoleChange) onRoleChange("recruiter");
+                openRecruiter(organization ? "sourcing" : "organization");
+              }}
               className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer text-center flex items-center justify-center gap-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C85A32] ${
                 inRecruiterMode
                   ? "bg-[#C85A32] text-white shadow-3xs"
                   : "text-[#6E6359] hover:text-[#262626]"
               }`}
             >
-              <span>Hiring</span>
+              <span>Recruiter</span>
               {/* Only claim the workspace exists once the server has confirmed a
                   membership. Anything else invites a founder into a portal that
                   will immediately ask them to create an organization. */}
@@ -191,7 +204,7 @@ export default function Sidebar({
         </div>
 
         {/* Bottom Section */}
-        <div className="p-6 space-y-6 border-t border-[#DFD5C6]/60">
+        <div className="p-6 space-y-4 border-t border-[#DFD5C6]/60">
           {/* Action CTA */}
           {inRecruiterMode ? (
             <button

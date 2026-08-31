@@ -225,7 +225,7 @@ function AssessmentDialog({ open, candidate, jobs, assessments, pipeline, toast,
   const [timeError, setTimeError] = useState("");
   const [sending, setSending] = useState(false);
 
-  const problems = assessments.problems || [];
+  const problems = useMemo(() => assessments.problems || [], [assessments.problems]);
 
   useEffect(() => {
     if (!open) return;

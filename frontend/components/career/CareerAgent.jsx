@@ -32,10 +32,12 @@ import {
   CheckCheck,
   Globe,
   Mail,
-  Building2
+  Building2,
+  Bell,
+  BellRing
 } from "lucide-react";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
 
 // Sub-tab persistence: a refresh inside the Career Agent should land the user
 // on the same sub-tab they were on, not always the dashboard. localStorage is
@@ -90,6 +92,12 @@ export default function CareerAgent({ user }) {
   const [applications, setApplications] = useState([]);
   const [metrics, setMetrics] = useState({ sent: 0, response_rate: 0, interview_rate: 0, offer_rate: 0 });
   const [loading, setLoading] = useState(true);
+
+  // Notifications state
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
 
   // Application Email Confirmation Receipt Modal States
   const [confirmationReceipt, setConfirmationReceipt] = useState(null);
@@ -229,6 +237,83 @@ export default function CareerAgent({ user }) {
   useEffect(() => {
     fetchData();
   }, [user, fetchData]);
+
+  // Fetch notifications on load and refresh every 60s
+  const fetchNotifications = useCallback(async () => {
+    if (!user?.uid) return;
+    setLoadingNotifications(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/career/notifications?user_id=${user.uid}`, {
+        headers: { Authorization: `Bearer ${window.localStorage.getItem("prepflow_token") || ""}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications || []);
+        setUnreadCount(data.unread_count || 0);
+      }
+    } catch (err) {
+      console.warn("Error fetching notifications:", err);
+    } finally {
+      setLoadingNotifications(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 60_000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
+
+  const markNotificationRead = async (notificationId) => {
+    try {
+      await fetch(`${BACKEND_URL}/api/career/notifications/${notificationId}/read?user_id=${user.uid}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${window.localStorage.getItem("prepflow_token") || ""}` },
+      });
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notificationId ? { ...n, is_read: true } : n))
+      );
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch (err) {
+      console.warn("Error marking notification read:", err);
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await fetch(`${BACKEND_URL}/api/career/notifications/mark-all-read?user_id=${user.uid}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${window.localStorage.getItem("prepflow_token") || ""}` },
+      });
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.warn("Error marking all notifications read:", err);
+    }
+  };
+
+  const timeAgo = (dateStr) => {
+    if (!dateStr) return "just now";
+    const date = new Date(dateStr);
+    const diffMs = Date.now() - date.getTime();
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  const iconForNotificationType = (type) => {
+    switch (type) {
+      case "pipeline_update": return "→";
+      case "assessment_sent": return "✎";
+      case "interview_scheduled": return "📅";
+      default: return "•";
+    }
+  };
 
   // Force-refresh the external feed on user demand. The server runs
   // `run_jobs_fetch` synchronously inside the request, so when this resolves
@@ -607,6 +692,104 @@ export default function CareerAgent({ user }) {
             Discover matched roles, evaluate interview readiness, and submit automated ATS applications.
           </p>
         </div>
+
+        {/* Notification Bell */}
+        {profile && (
+          <div className="relative self-start md:self-auto">
+            <button
+              type="button"
+              onClick={() => setShowNotifications((s) => !s)}
+              className="relative p-2.5 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl hover:border-[#C85A32]/60 transition-colors shadow-2xs"
+              aria-label="Notifications"
+            >
+              {unreadCount > 0 ? (
+                <BellRing className="h-4 w-4 text-[#C85A32]" />
+              ) : (
+                <Bell className="h-4 w-4 text-[#6E6359]" />
+              )}
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-[#C85A32] text-white text-[9px] font-bold font-mono rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {showNotifications && (
+              <>
+                <div
+                  className="fixed inset-0 z-30"
+                  onClick={() => setShowNotifications(false)}
+                />
+                <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white border border-[#DFD5C6] rounded-2xl shadow-2xl z-40 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-[#DFD5C6]/60 bg-[#FCFAF7]">
+                    <h3 className="text-sm font-serif font-bold text-[#262626]">Notifications</h3>
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={markAllNotificationsRead}
+                        className="text-[10px] font-mono font-bold text-[#C85A32] hover:text-[#B83A14] transition-colors"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-96 overflow-y-auto">
+                    {loadingNotifications && notifications.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-[#6E6359] font-mono">
+                        Loading...
+                      </div>
+                    ) : notifications.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-[#6E6359] font-mono">
+                        No notifications yet.
+                      </div>
+                    ) : (
+                      <ul className="divide-y divide-[#DFD5C6]/40">
+                        {notifications.map((n) => (
+                          <li
+                            key={n.id}
+                            onClick={() => !n.is_read && markNotificationRead(n.id)}
+                            className={`px-4 py-3 cursor-pointer transition-colors ${
+                              n.is_read ? "bg-white" : "bg-[#FAF4EB]"
+                            } hover:bg-[#FCFAF7]`}
+                          >
+                            <div className="flex items-start gap-2.5">
+                              <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${
+                                n.is_read
+                                  ? "bg-[#DFD5C6]/50 text-[#6E6359]"
+                                  : "bg-[#C85A32] text-white"
+                              }`}>
+                                {iconForNotificationType(n.notification_type)}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <p className={`text-xs font-bold ${n.is_read ? "text-[#6E6359]" : "text-[#262626]"}`}>
+                                    {n.title}
+                                  </p>
+                                  <span className="text-[9px] font-mono text-[#6E6359] shrink-0">
+                                    {timeAgo(n.created_at)}
+                                  </span>
+                                </div>
+                                {n.org_name && (
+                                  <p className="text-[10px] font-mono text-[#C85A32] mt-0.5">
+                                    {n.org_name}
+                                  </p>
+                                )}
+                                <p className="text-[11px] text-[#6E6359] leading-relaxed mt-0.5">
+                                  {n.message}
+                                </p>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Sub-tab navigation */}
         {profile && (

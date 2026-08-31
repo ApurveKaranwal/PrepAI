@@ -40,7 +40,7 @@ const CustomAreaTooltip = ({ active, payload }) => {
   return null;
 };
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
 
 export default function PerformanceAnalytics({ user }) {
   const [history, setHistory] = useState([]);

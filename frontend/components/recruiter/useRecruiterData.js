@@ -494,11 +494,12 @@ function useAssessments({ enabled }) {
   const resend = useCallback(async (assessmentId) => {
     try {
       await apiPost(`/api/recruiter/assessments/${assessmentId}/resend`, {});
+      await reload();
       return ok(true);
     } catch (err) {
       return fail(err, "Could not resend the invite.");
     }
-  }, []);
+  }, [reload]);
 
   const remove = useCallback(async (assessmentId) => {
     const snapshot = itemsRef.current;

@@ -62,8 +62,8 @@ function persistSession(data) {
 // Email + password (backend-owned; Firebase is not involved)
 // -----------------------------------------------------------------------------
 
-export async function authSignUp(email, password, name) {
-  const data = await apiPost("/api/auth/signup", { email, password, name }, { auth: false });
+export async function authSignUp(email, password, name, role = "candidate") {
+  const data = await apiPost("/api/auth/signup", { email, password, name, role }, { auth: false });
   return persistSession(data);
 }
 
@@ -76,14 +76,21 @@ export async function authSignIn(email, password) {
 // Google OAuth — Firebase verifies the identity, the backend issues the session
 // -----------------------------------------------------------------------------
 
-export async function authSignInWithGoogle() {
+export async function authSignInWithGoogle(role = null) {
   ensureFirebase();
   const userCredential = await signInWithPopup(auth, googleProvider);
   const fbUser = userCredential.user;
 
+  const payload = {
+    email: fbUser.email,
+    name: fbUser.displayName || "Google User",
+    uid: fbUser.uid,
+  };
+  if (role) payload.role = role;
+
   const data = await apiPost(
     "/api/auth/google",
-    { email: fbUser.email, name: fbUser.displayName || "Google User", uid: fbUser.uid },
+    payload,
     { auth: false }
   );
   return persistSession(data);
@@ -159,8 +166,13 @@ export function authOnAuthStateChanged(callback) {
         );
         callback(persistSession(data));
       } catch (err) {
-        console.error("Could not restore the Google session:", errorMessage(err));
-        callback(null);
+        console.warn("Could not restore the Google session:", errorMessage(err));
+        const cachedUser = getStoredUser();
+        if (cachedUser && cachedUser.email === user.email) {
+          callback(cachedUser);
+        } else {
+          callback(null);
+        }
       }
       return;
     }

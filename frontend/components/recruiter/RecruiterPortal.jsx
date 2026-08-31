@@ -3,50 +3,140 @@
 import React, { useState, useEffect } from "react";
 import {
   Search,
-  Filter,
   Users,
   Briefcase,
-  Award,
-  ShieldCheck,
-  Code2,
-  Terminal,
   Send,
   Plus,
   CheckCircle2,
-  Clock,
-  ExternalLink,
   ChevronRight,
-  Sparkles,
   Building2,
-  MapPin,
-  DollarSign,
-  Layers,
-  ArrowUpRight,
-  SlidersHorizontal,
   X,
   Copy,
   Check,
-  FileCode2,
   RefreshCw,
   Cpu,
-  Trash2,
   Rocket,
   Edit3,
-  Globe,
-  Settings,
-  ShieldAlert,
   Download,
   FileText,
   AlertCircle,
 } from "lucide-react";
-import { apiFetch, apiPost, apiGet, errorMessage } from "@/lib/api";
+import { apiPost, apiGet, errorMessage } from "@/lib/api";
+import RequisitionsPanel from "./RequisitionsPanel";
+import PipelineBoard from "./PipelineBoard";
+import OrgSettings from "./OrgSettings";
+import AssessmentsTracker from "./AssessmentsTracker";
+import TalentSearch from "./TalentSearch";
+import { useRecruiterData } from "./useRecruiterData";
+import { useToasts, ToastStack } from "./ui";
 
 export default function RecruiterPortal({ user, organization, orgResolved, onOrganizationChange, section, onSectionChange, onNavigate }) {
-  const [activeTab, setActiveTab] = useState("sourcing"); // 'sourcing' | 'requisitions' | 'pipeline' | 'assessments'
+  // Kept in the public component contract for the shell; organization
+  // resolution and navigation are owned by the parent/sidebar.
+  void orgResolved;
+  void onNavigate;
+  // Data layer — all from useRecruiterData for consistency across tabs
+  const data = useRecruiterData({ organization, onOrganizationChange });
+  const { organization: orgData, hasOrg, isAdmin, isOwner, org, profile, jobs, pipeline, assessments, outreach } = data;
+
+  // Toast system shared by all panels
+  const toast = useToasts();
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState(section || "sourcing"); // 'sourcing' | 'requisitions' | 'pipeline' | 'assessments' | 'organization'
+
+  // The sidebar owns the persisted section. Keep the portal in sync when the
+  // user changes sections from either navigation surface.
+  useEffect(() => {
+    if (section && section !== activeTab) setActiveTab(section);
+  }, [section, activeTab]);
+
+  const selectSection = (nextSection) => {
+    setActiveTab(nextSection);
+    onSectionChange?.(nextSection);
+  };
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  // Startup Profile State
+
+  // Keep the legacy sourcing cards and the extracted panels functional while
+  // accounts migrate to the shared TalentSearch component.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStack, setSelectedStack] = useState("All");
+  const [selectedMinScore, setSelectedMinScore] = useState(0);
+  const [selectedTier, setSelectedTier] = useState("All");
+  const [selectedCandidateDossier, setSelectedCandidateDossier] = useState(null);
+  const [selectedAssessmentInspect, setSelectedAssessmentInspect] = useState(null);
+  const [showCreateJobModal, setShowCreateJobModal] = useState(false);
+  const [newJob, setNewJob] = useState({
+    company_name: "",
+    role_title: "",
+    work_mode: "Remote",
+    location: "",
+    salary_range: "",
+    min_devscore: 0,
+    required_skills: "",
+    experience_level: "Mid-Level",
+    description: "",
+  });
+  const [showTakehomeModal, setShowTakehomeModal] = useState(false);
+  const [takehomeCandidate, setTakehomeCandidate] = useState(null);
+  const [takehomeTrack, setTakehomeTrack] = useState("two-sum-sorted");
+  const [takehomeDifficulty, setTakehomeDifficulty] = useState("Medium");
+  const [generatedAssessment, setGeneratedAssessment] = useState(null);
+  const [showResumeText, setShowResumeText] = useState(false);
+
+  const handleDownloadResume = async (candidate) => {
+    try {
+      const data = await apiGet(`/api/recruiter/candidate-resume/${candidate.id}`);
+      const content = data?.resume_text || `${data?.candidate_name || candidate.name || "Candidate"}\n${data?.candidate_email || candidate.email || ""}`;
+      const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${(data?.candidate_name || candidate.name || "Candidate").replace(/\s+/g, "_")}_Resume.txt`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      if (!err?.isAuthError) toast.error(errorMessage(err, "Could not download the résumé."));
+    }
+  };
+
+  useEffect(() => {
+    // TalentSearch owns the visible sourcing query. Keep this compatibility
+    // query only while that tab is active; otherwise every recruiter tab
+    // change causes a second candidates request and can surface duplicate
+    // error toasts unrelated to the screen the user is using.
+    if (!hasOrg || activeTab !== "sourcing") {
+      setCandidates([]);
+      setLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const query = new URLSearchParams({
+          query: searchQuery,
+          min_devscore: String(selectedMinScore),
+          primary_stack: selectedStack,
+          tier: selectedTier,
+        });
+        const result = await apiGet(`/api/recruiter/candidates?${query}`);
+        if (!cancelled) setCandidates(result?.candidates || []);
+      } catch (err) {
+        if (!cancelled && !err?.isAuthError) toast.error(errorMessage(err, "Could not load candidates."));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // toast is intentionally omitted: useToasts returns a new view object when
+    // a toast is added, and including it would re-run a failed request forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, hasOrg, searchQuery, selectedStack, selectedMinScore, selectedTier]);
+
+  // Startup Profile State — kept for backward compat with the onboarding flow
   const [startupProfile, setStartupProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [showEditStartupModal, setShowEditStartupModal] = useState(false);
@@ -96,10 +186,8 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
       }
     } catch (err) {
       // A 401 here is the apiFetch 401 handler kicking the user out — don't
-      // clobber that with a registration form. Anything else, let the user
-      // try again.
+      // clobber that with a registration form.
       if (err?.isAuthError) return;
-      setProfileError(errorMessage(err));
       setStartupProfile(null);
     } finally {
       setLoadingProfile(false);
@@ -107,7 +195,15 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
   };
 
   useEffect(() => {
-    if (user) fetchStartupProfile();
+    if (user) {
+      fetchStartupProfile();
+    } else {
+      setLoadingProfile(false);
+    }
+    const safetyTimer = setTimeout(() => {
+      setLoadingProfile(false);
+    }, 2000);
+    return () => clearTimeout(safetyTimer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -145,6 +241,9 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
         setStartupProfile(data.profile);
         setShowEditStartupModal(false);
         setNewJob((prev) => ({ ...prev, company_name: data.profile.company_name }));
+        if (data.organization && onOrganizationChange) {
+          onOrganizationChange(data.organization);
+        }
       } else {
         setProfileError("The server accepted the request but returned no profile. Please refresh and try again.");
       }
@@ -156,215 +255,9 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
     }
   };
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedStack, setSelectedStack] = useState("All");
-  const [selectedMinScore, setSelectedMinScore] = useState(0);
-  const [selectedTier, setSelectedTier] = useState("All");
+  const effectiveProfile = startupProfile || profile?.profile || (organization?.id ? { company_name: organization.name, stage: "Seed", website_url: organization.website_url } : null);
 
-  // Requisitions state
-  const [jobs, setJobs] = useState([]);
-  const [showCreateJobModal, setShowCreateJobModal] = useState(false);
-  const [newJob, setNewJob] = useState({
-    company_name: "",
-    role_title: "Senior Distributed Systems Engineer",
-    work_mode: "Remote",
-    location: "Global / Remote",
-    salary_range: "$140k - $185k",
-    min_devscore: 750,
-    required_skills: "Go, Rust, Distributed Systems, Kubernetes",
-    experience_level: "Senior",
-    description: "Architecting high-throughput distributed message brokers and consensus engines."
-  });
-
-  // Shortlists & Pipeline
-  const [shortlists, setShortlists] = useState([]);
-  const [selectedCandidateDossier, setSelectedCandidateDossier] = useState(null);
-
-  // Take-Home Dispatcher & Tracker
-  const [assessments, setAssessments] = useState([]);
-  const [selectedAssessmentInspect, setSelectedAssessmentInspect] = useState(null);
-  const [showTakehomeModal, setShowTakehomeModal] = useState(false);
-  const [takehomeCandidate, setTakehomeCandidate] = useState(null);
-  const [takehomeTrack, setTakehomeTrack] = useState("two-sum-sorted");
-  const [takehomeDifficulty, setTakehomeDifficulty] = useState("Medium");
-  const [generatedAssessment, setGeneratedAssessment] = useState(null);
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [showResumeText, setShowResumeText] = useState(false);
-
-  const handleDownloadResume = async (cand) => {
-    try {
-      const data = await apiGet(`/api/recruiter/candidate-resume/${cand.id}`);
-      if (!data) return;
-      const content = data.resume_text || `${data.candidate_name}\n${data.candidate_email}\nSkills: ${(data.skills || []).join(', ')}\nGitHub: ${data.github_url}`;
-      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      const filename = data.resume_name && (data.resume_name.endsWith(".txt") || data.resume_name.endsWith(".pdf"))
-        ? data.resume_name
-        : `${(data.candidate_name || "Candidate").replace(/\s+/g, "_")}_Resume.txt`;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      if (err?.isAuthError) return;
-      console.error("Failed to download resume:", errorMessage(err));
-    }
-  };
-
-  // Fetch candidates and jobs on mount & filter change
-  useEffect(() => {
-    async function fetchTalent() {
-      setLoading(true);
-      try {
-        const queryParams = new URLSearchParams({
-          query: searchQuery,
-          min_devscore: selectedMinScore.toString(),
-          primary_stack: selectedStack,
-          tier: selectedTier
-        });
-        const data = await apiGet(`/api/recruiter/candidates?${queryParams.toString()}`);
-        if (data) setCandidates(data.candidates || []);
-      } catch (err) {
-        if (!err?.isAuthError) console.warn("Error fetching candidates:", errorMessage(err));
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchTalent();
-  }, [searchQuery, selectedStack, selectedMinScore, selectedTier]);
-
-  // Fetch jobs, shortlists, and assessments in real-time
-  const fetchMetadata = async () => {
-    try {
-      const [jobsData, shortlistsData, assessmentsData] = await Promise.all([
-        apiGet("/api/recruiter/jobs"),
-        apiGet(`/api/recruiter/shortlist`),
-        apiGet("/api/recruiter/assessments"),
-      ]);
-      if (jobsData) setJobs(jobsData.jobs || []);
-      if (shortlistsData) setShortlists(shortlistsData.shortlists || []);
-      if (assessmentsData) setAssessments(assessmentsData.assessments || []);
-    } catch (err) {
-      if (!err?.isAuthError) console.warn("Error fetching recruiter metadata:", errorMessage(err));
-    }
-  };
-
-  useEffect(() => {
-    fetchMetadata();
-  }, [user]);
-
-  const handleCreateJob = async (e) => {
-    e.preventDefault();
-    try {
-      const skillsArray = newJob.required_skills.split(",").map((s) => s.trim()).filter(Boolean);
-      const data = await apiPost("/api/recruiter/jobs", {
-        company_name: newJob.company_name,
-        role_title: newJob.role_title,
-        work_mode: newJob.work_mode,
-        location: newJob.location,
-        salary_range: newJob.salary_range,
-        min_devscore: parseInt(newJob.min_devscore) || 700,
-        required_skills: skillsArray,
-        experience_level: newJob.experience_level,
-        description: newJob.description,
-      });
-      if (data?.job) {
-        setJobs([data.job, ...jobs]);
-        setShowCreateJobModal(false);
-      }
-    } catch (err) {
-      if (err?.isAuthError) return;
-      console.error("Error creating job:", errorMessage(err));
-    }
-  };
-
-  const handleShortlist = async (candidate, stage = "Shortlisted") => {
-    try {
-      const data = await apiPost("/api/recruiter/shortlist", {
-        candidate_id: candidate.id,
-        candidate_name: candidate.name,
-        stage: stage,
-        notes: `Added with DevScore ${candidate.devscore}`,
-      });
-      if (data?.shortlist) {
-        setShortlists((prev) => {
-          const existingIdx = prev.findIndex((s) => s.candidate_id === candidate.id);
-          if (existingIdx >= 0) {
-            const updated = [...prev];
-            updated[existingIdx] = data.shortlist;
-            return updated;
-          }
-          return [data.shortlist, ...prev];
-        });
-      }
-    } catch (err) {
-      if (err?.isAuthError) return;
-      console.error("Error shortlisting candidate:", errorMessage(err));
-    }
-  };
-
-  const handleDeleteShortlist = async (shortlistId) => {
-    if (!confirm("Are you sure you want to remove this candidate from your shortlist pipeline?")) return;
-    try {
-      await apiFetch(`/api/recruiter/shortlist/${shortlistId}`, { method: "DELETE" });
-      setShortlists((prev) => prev.filter((s) => s.id !== shortlistId));
-    } catch (err) {
-      if (err?.isAuthError) return;
-      console.error("Error deleting shortlist:", errorMessage(err));
-    }
-  };
-
-  const [isDispatching, setIsDispatching] = useState(false);
-
-  const handleDispatchTakehome = async (e) => {
-    e.preventDefault();
-    if (!takehomeCandidate || isDispatching) return;
-    setIsDispatching(true);
-    try {
-      const data = await apiPost("/api/recruiter/send-assessment", {
-        candidate_id: takehomeCandidate.id,
-        candidate_name: takehomeCandidate.name,
-        role_title: takehomeCandidate.headline?.split("•")[0]?.trim() || "Software Engineer",
-        problem_slug: takehomeTrack,
-        difficulty: takehomeDifficulty,
-        time_limit_minutes: 45,
-      });
-      if (data?.assessment) {
-        setGeneratedAssessment(data.assessment);
-        handleShortlist(takehomeCandidate, "Take-Home Dispatched");
-        fetchMetadata();
-      }
-    } catch (err) {
-      if (err?.isAuthError) return;
-      console.error("Error sending assessment:", errorMessage(err));
-    } finally {
-      setIsDispatching(false);
-    }
-  };
-
-  const handleDeleteAssessment = async (assessmentId) => {
-    if (!confirm("Are you sure you want to cancel / remove this take-home invitation?")) return;
-    try {
-      await apiFetch(`/api/recruiter/assessments/${assessmentId}`, { method: "DELETE" });
-      setAssessments((prev) => prev.filter((a) => a.id !== assessmentId));
-    } catch (err) {
-      if (err?.isAuthError) return;
-      console.error("Error deleting assessment:", errorMessage(err));
-    }
-  };
-
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2500);
-  };
-
-  if (loadingProfile) {
+  if (loadingProfile && !hasOrg && !organization?.id && !effectiveProfile) {
     return (
       <div className="flex-1 flex items-center justify-center p-12 bg-[#FAF6F0] min-h-[60vh]">
         <div className="text-center space-y-3 bg-[#FCFAF7] border border-[#DFD5C6] p-8 rounded-2xl shadow-sm">
@@ -376,7 +269,7 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
     );
   }
 
-  if (!startupProfile) {
+  if (!effectiveProfile && !hasOrg && !organization?.id) {
     return (
       <div className="flex-1 overflow-y-auto bg-[#FAF6F0] p-4 sm:p-6 lg:p-10 flex items-center justify-center min-h-screen">
         <div className="max-w-3xl w-full bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl shadow-xl p-6 sm:p-10 space-y-8 animate-in fade-in duration-300">
@@ -602,15 +495,15 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-[#C85A32]/10 border border-[#C85A32]/25 text-[#C85A32] uppercase tracking-wider">
-                {startupProfile?.stage || "Seed"} Stage
+                {effectiveProfile?.stage || "Seed"} Stage
               </span>
               <span className="text-[10px] font-mono text-[#6E6359]">
-                {startupProfile?.industry || "AI & Tech"} • {startupProfile?.location || "Remote"}
+                {effectiveProfile?.industry || "AI & Tech"} • {effectiveProfile?.location || "Remote"}
               </span>
             </div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl sm:text-3xl font-serif font-bold text-[#262626] tracking-tight">
-                {startupProfile?.company_name}
+                {effectiveProfile?.company_name || organization?.name || "My Startup"}
               </h1>
               <button
                 onClick={() => {
@@ -625,7 +518,7 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
               </button>
             </div>
             <p className="text-xs text-[#6E6359] font-medium max-w-2xl leading-relaxed">
-              {startupProfile?.tagline || `Founded by ${startupProfile?.founder_name || 'Founder'} (${startupProfile?.founder_role || 'CTO'}). Verified talent sourcing radar.`}
+              {effectiveProfile?.tagline || `Founded by ${effectiveProfile?.founder_name || 'Founder'} (${effectiveProfile?.founder_role || 'CTO'}). Verified talent sourcing radar.`}
             </p>
           </div>
 
@@ -672,7 +565,7 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
             </span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-black font-mono text-[#262626]">
-                {jobs.length}
+                {jobs.items.length}
               </span>
               <span className="text-[10px] font-mono text-[#6E6359] font-bold">Active</span>
             </div>
@@ -684,7 +577,7 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
             </span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-black font-mono text-[#2563EB]">
-                {assessments.length}
+                {assessments.items.length}
               </span>
               <span className="text-[10px] font-mono text-[#6E6359] font-bold">Assessments</span>
             </div>
@@ -697,7 +590,7 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           ========================================================================= */}
       <div className="flex items-center gap-2 border-b border-[#DFD5C6] pb-2 select-none overflow-x-auto">
         <button
-          onClick={() => setActiveTab("sourcing")}
+          onClick={() => selectSection("sourcing")}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
             activeTab === "sourcing"
               ? "bg-[#262626] text-white shadow-2xs"
@@ -709,7 +602,7 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
         </button>
 
         <button
-          onClick={() => setActiveTab("requisitions")}
+          onClick={() => selectSection("requisitions")}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
             activeTab === "requisitions"
               ? "bg-[#262626] text-white shadow-2xs"
@@ -717,11 +610,11 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           }`}
         >
           <Briefcase className="h-3.5 w-3.5" />
-          <span>Engineering Requisitions ({jobs.length})</span>
+            <span>Engineering Requisitions ({jobs.items.length})</span>
         </button>
 
         <button
-          onClick={() => setActiveTab("pipeline")}
+          onClick={() => selectSection("pipeline")}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
             activeTab === "pipeline"
               ? "bg-[#262626] text-white shadow-2xs"
@@ -729,11 +622,11 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           }`}
         >
           <Users className="h-3.5 w-3.5" />
-          <span>Pipeline & Shortlists ({shortlists.length})</span>
+          <span>Pipeline & Shortlists ({pipeline.items.length})</span>
         </button>
 
         <button
-          onClick={() => setActiveTab("assessments")}
+          onClick={() => selectSection("assessments")}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
             activeTab === "assessments"
               ? "bg-[#262626] text-white shadow-2xs"
@@ -741,7 +634,19 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           }`}
         >
           <Cpu className="h-3.5 w-3.5" />
-          <span>Live Assessments Tracker ({assessments.length})</span>
+          <span>Live Assessments Tracker ({assessments.items.length})</span>
+        </button>
+
+        <button
+          onClick={() => selectSection("organization")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === "organization"
+              ? "bg-[#262626] text-white shadow-2xs"
+              : "bg-[#FCFAF7] text-[#6E6359] hover:text-[#262626] border border-[#DFD5C6]"
+          }`}
+        >
+          <Building2 className="h-3.5 w-3.5" />
+          <span>Organisation</span>
         </button>
       </div>
 
@@ -749,6 +654,19 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           TAB 1: TALENT SOURCING RADAR (REAL DATABASE USERS)
           ========================================================================= */}
       {activeTab === "sourcing" && (
+        <TalentSearch
+          enabled={hasOrg}
+          jobs={jobs}
+          pipeline={pipeline}
+          outreach={outreach}
+          assessments={assessments}
+          toast={toast}
+        />
+      )}
+
+      {/* Retained temporarily for backwards-compatible modal markup; the
+          shared TalentSearch above is the only active sourcing experience. */}
+      {activeTab === "__legacy-sourcing-disabled" && (
         <div className="space-y-5 select-none">
           {/* Sourcing Filters Bar */}
           <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-4 sm:p-5 shadow-3xs space-y-4">
@@ -939,7 +857,11 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
                         <span className="hidden sm:inline font-bold">Resume</span>
                       </button>
                       <button
-                        onClick={() => handleShortlist(cand)}
+                        onClick={async () => {
+                          const result = await pipeline.add({ candidateId: cand.id, jobId: 0, stage: "Sourced" });
+                          if (result.ok) toast.success(`${cand.name} added to pipeline.`);
+                          else toast.error(result.message);
+                        }}
                         className="px-3 py-1.5 bg-[#FAF6F0] hover:bg-[#FAF4EB] text-[#262626] border border-[#DFD5C6] rounded-xl text-xs font-mono font-bold transition-all cursor-pointer shadow-3xs"
                       >
                         Shortlist
@@ -967,95 +889,29 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           TAB 2: ENGINEERING REQUISITIONS
           ========================================================================= */}
       {activeTab === "requisitions" && (
-        <div className="space-y-5 select-none">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="font-serif text-xl font-bold text-[#262626]">
-                Active Startup Requisitions
-              </h2>
-              <p className="text-xs text-[#6E6359] font-medium">
-                Engineering roles configured with algorithmic DevScore thresholds and custom take-home challenges.
-              </p>
-            </div>
-            <button
-              onClick={() => setShowCreateJobModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-[#C85A32] hover:bg-[#B83A14] text-white rounded-xl text-xs font-bold transition-all shadow-3xs cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              <span>New Requisition</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {jobs.map((job) => (
-              <div
-                key={job.id}
-                className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl p-6 space-y-4 shadow-3xs flex flex-col justify-between"
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#C85A32]/10 border border-[#C85A32]/25 text-[#C85A32] uppercase tracking-wider">
-                      {job.experience_level}
-                    </span>
-                    <span className="text-[10px] font-mono font-bold text-[#2E5A44] bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
-                      {job.status}
-                    </span>
-                  </div>
-
-                  <h3 className="font-serif text-lg font-bold text-[#262626]">
-                    {job.role_title}
-                  </h3>
-                  <p className="text-xs font-mono font-bold text-[#C85A32]">
-                    {job.company_name}
-                  </p>
-                  <p className="text-[11px] text-[#6E6359] font-mono">
-                    {job.location} • {job.work_mode}
-                  </p>
-                </div>
-
-                <div className="space-y-3 pt-3 border-t border-[#DFD5C6]/60">
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-[#6E6359]">DevScore Req:</span>
-                    <strong className="text-[#C85A32]">{job.min_devscore}+</strong>
-                  </div>
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-[#6E6359]">Compensation:</span>
-                    <strong className="text-[#262626]">{job.salary_range}</strong>
-                  </div>
-
-                  <div className="flex items-center gap-1 flex-wrap pt-1">
-                    {(job.required_skills || []).map((sk, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2 py-0.5 bg-[#FAF6F0] border border-[#DFD5C6] rounded text-[10px] font-mono text-[#6E6359]"
-                      >
-                        {sk}
-                      </span>
-                    ))}
-                  </div>
-
-                  <div className="pt-2">
-                    <button
-                      onClick={() => {
-                        setSelectedStack(job.required_skills?.[0] || "All");
-                        setActiveTab("sourcing");
-                      }}
-                      className="w-full py-2 bg-[#FAF6F0] hover:bg-[#FAF4EB] border border-[#DFD5C6] text-[#262626] rounded-xl text-xs font-mono font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <Users className="h-3.5 w-3.5 text-[#C85A32]" />
-                      <span>Source Candidates for Role</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <RequisitionsPanel
+          organization={orgData || organization}
+          profile={profile}
+          jobs={jobs}
+          isAdmin={isAdmin}
+          toast={toast}
+        />
       )}
 
       {/* =========================================================================
           TAB 3: PIPELINE & SHORTLISTS
           ========================================================================= */}
+      {activeTab === "pipeline" && (
+        <PipelineBoard
+          jobs={jobs}
+          pipeline={pipeline}
+          outreach={outreach}
+          assessments={assessments}
+          toast={toast}
+        />
+      )}
+
+      {/* OLD: Pipeline tab replaced by PipelineBoard component
       {activeTab === "pipeline" && (
         <div className="space-y-5 select-none">
           <div className="flex items-center justify-between">
@@ -1126,10 +982,30 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           )}
         </div>
       )}
-
+      */}
       {/* =========================================================================
           TAB 4: LIVE TAKE-HOME ASSESSMENTS TRACKER
           ========================================================================= */}
+      {activeTab === "assessments" && (
+        <AssessmentsTracker
+          assessments={assessments}
+          onInspect={setSelectedAssessmentInspect}
+          toast={toast}
+        />
+      )}
+
+      {/* OLD: Assessment tracker inline implementation - now extracted to component
+      {activeTab === "assessments" && (
+        <div className="space-y-5 select-none">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-serif text-xl font-bold text-[#262626]">
+                Live Take-Home Assessments Tracker
+              </h2>
+              <p className="text-xs text-[#6E6359] font-medium">
+                Real-time tracking of candidate take-home invitations, algorithmic test executions, and chaos stress test scores.
+              </p>
+            </div>
       {activeTab === "assessments" && (
         <div className="space-y-5 select-none">
           <div className="flex items-center justify-between">
@@ -1243,6 +1119,25 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
             </div>
           )}
         </div>
+      )}
+      */}
+
+      {/* =========================================================================
+          TAB 5: ORGANISATION (settings, team, company profile)
+          ========================================================================= */}
+      {activeTab === "organization" && (
+        <OrgSettings
+          user={user}
+          organization={orgData || organization}
+          org={org}
+          profile={profile}
+          isAdmin={isAdmin}
+          isOwner={isOwner}
+          toast={toast}
+          onCreated={() => {
+            setActiveTab("sourcing");
+          }}
+        />
       )}
 
       {/* =========================================================================
@@ -1953,6 +1848,8 @@ export default function RecruiterPortal({ user, organization, orgResolved, onOrg
           </div>
         </div>
       )}
+
+      <ToastStack toasts={toast.toasts} onDismiss={toast.dismiss} />
     </div>
   );
 }

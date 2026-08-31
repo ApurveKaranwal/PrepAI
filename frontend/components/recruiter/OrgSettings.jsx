@@ -55,6 +55,7 @@ const FUNDING_STAGES = [
 ];
 
 const TEAM_SIZES = ["", "1-10", "11-50", "51-200", "201-500", "500+"];
+const EMPTY_PROFILE = {};
 
 const ROLE_COPY = {
   owner: "Full control, including billing, roles and deleting the organization.",
@@ -450,8 +451,9 @@ function CompanyProfileSection({ organization, profile, isAdmin, toast }) {
   // portal pre-filled one person's real name, company and website as the
   // defaults every other founder saw.
   useEffect(() => {
-    const data = profile.profile;
-    if (!data) return;
+    // useStartupProfile exposes the profile record directly. Accept the
+    // wrapped shape too so this panel remains compatible with older callers.
+    const data = profile?.profile || EMPTY_PROFILE;
     setForm({
       company_name: data.company_name || organization?.name || "",
       founder_name: data.founder_name || "",
@@ -466,7 +468,7 @@ function CompanyProfileSection({ organization, profile, isAdmin, toast }) {
       about: data.about || "",
       logo_url: data.logo_url || "",
     });
-  }, [profile.profile, organization?.name, organization?.website_url]);
+  }, [profile?.profile, organization?.name, organization?.website_url]);
 
   const set = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
 
