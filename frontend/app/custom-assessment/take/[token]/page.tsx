@@ -24,8 +24,8 @@ export default function CustomAssessmentTakePage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState(null);
-  const wordCountRef = useRef(null);
+  const [result, setResult] = useState<any>(null);
+  const wordCountRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -39,8 +39,8 @@ export default function CustomAssessmentTakePage() {
         }
         const data = await res.json();
         if (!cancelled) setQuestion(data.question || "");
-      } catch (err) {
-        if (!cancelled) setError(err.message || "Could not load this assessment.");
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Could not load this assessment.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -70,21 +70,21 @@ export default function CustomAssessmentTakePage() {
       }
       const data = await res.json();
       setResult(data);
-    } catch (err) {
-      setError(err.message || "Could not submit your answer.");
+    } catch (err: any) {
+      setError(err?.message || "Could not submit your answer.");
     } finally {
       setSubmitting(false);
     }
   };
 
   const wordCount = answer.trim().split(/\s+/).filter(Boolean).length;
-  const verdictTone = {
+  const verdictTone: Record<string, string> = {
     strong: "green",
     adequate: "blue",
     weak: "neutral",
     off_topic: "neutral",
   };
-  const verdictLabel = {
+  const verdictLabel: Record<string, string> = {
     strong: "Strong",
     adequate: "Adequate",
     weak: "Needs work",
@@ -153,7 +153,7 @@ export default function CustomAssessmentTakePage() {
                 <div>
                   <p className="text-[10px] font-mono uppercase text-[#2E5A44] font-bold mb-1">Strengths</p>
                   <ul className="text-xs text-[#262626] list-disc pl-4 space-y-1">
-                    {(result.strengths || []).map((s, i) => (
+                    {(result.strengths || []).map((s: string, i: number) => (
                       <li key={i}>{s}</li>
                     ))}
                     {(!result.strengths || result.strengths.length === 0) && (
@@ -164,7 +164,7 @@ export default function CustomAssessmentTakePage() {
                 <div>
                   <p className="text-[10px] font-mono uppercase text-[#C85A32] font-bold mb-1">Gaps</p>
                   <ul className="text-xs text-[#262626] list-disc pl-4 space-y-1">
-                    {(result.gaps || []).map((s, i) => (
+                    {(result.gaps || []).map((s: string, i: number) => (
                       <li key={i}>{s}</li>
                     ))}
                     {(!result.gaps || result.gaps.length === 0) && (
