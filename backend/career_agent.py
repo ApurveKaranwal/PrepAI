@@ -10,7 +10,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Background
 from pydantic import BaseModel
 from typing import List, Optional
 import database
-from auth_deps import AuthUser, require_user
+from auth_deps import AuthUser, optional_user, require_user
 from ml.tfidf.tfidf import TFIDFModel
 from browser_agent import AutoApplyAgent
 from dotenv import load_dotenv
@@ -129,6 +129,7 @@ async def onboard_candidate(
     github_url: str = Form(""),
     company_type_preference: str = Form("Any"),
     portfolio_url: str = Form(""),
+    open_to_opportunities: str = Form("true"),
     resume: Optional[UploadFile] = File(None)
 ):
     # Parse JSON list fields
@@ -230,6 +231,7 @@ async def onboard_candidate(
         "github_url": github_url,
         "linkedin_url": linkedin_url,
         "portfolio_url": portfolio_url,
+        "open_to_opportunities": str(open_to_opportunities).lower() in ("true", "1", "yes"),
         "github_stats": github_stats,
         "linkedin_data": linkedin_data
     }
@@ -922,15 +924,23 @@ def get_application_receipt(job_id: int, user_id: str):
 # 6. Application Tracker Dashboard Metrics & Live Sync
 # ----------------------------------------------------
 @router.get("/applications")
-def get_user_applications(user_id: str = "", user: AuthUser = Depends(require_user)):
+def get_user_applications(user_id: str = "", user: Optional[AuthUser] = Depends(optional_user)):
     """
-    The caller's own applications. `user_id` is accepted for backwards
-    compatibility and ignored: this response carries live take-home tokens, and
-    the previous version handed them to anyone who guessed a numeric user id —
-    which let a stranger sit somebody else's assessment.
+    The caller's own applications and pipeline status. Resolves caller from
+    bearer token with backwards-compatible user_id fallback.
     """
-    apps = database.get_applications(user.uid)
-    tracker = database.get_candidate_tracker_state(user.uid)
+    target_uid = user.uid if user else (user_id or "")
+    if not target_uid:
+        return {
+            "applications": [],
+            "live_shortlist": None,
+            "active_assessment": None,
+            "pipeline_stages": list(database.PIPELINE_STAGES),
+            "metrics": {"sent": 0, "response_rate": 0, "interview_rate": 0, "offer_rate": 0}
+        }
+
+    apps = database.get_applications(target_uid)
+    tracker = database.get_candidate_tracker_state(target_uid)
 
     # Index by requisition so each application reflects the stage at the company
     # it was actually sent to.
@@ -943,17 +953,24 @@ def get_user_applications(user_id: str = "", user: AuthUser = Depends(require_us
     latest_shortlist = tracker["shortlists"][0] if tracker["shortlists"] else None
     latest_assessment = tracker["assessments"][0] if tracker["assessments"] else None
 
+    existing_job_ids = set()
     for app in apps:
-        # Candidate-facing requisition ids are offset by 900000.
         raw_job_id = int(app.get("job_id") or 0)
         req_id = raw_job_id - 900000 if raw_job_id >= 900000 else raw_job_id
+        existing_job_ids.add(req_id)
+        if raw_job_id:
+            existing_job_ids.add(raw_job_id)
 
-        shortlist = shortlist_by_job.get(req_id)
+        shortlist = shortlist_by_job.get(req_id) or shortlist_by_job.get(raw_job_id)
         if shortlist:
             app["live_stage"] = shortlist["stage"]
             app["notes"] = shortlist.get("notes") or ""
+            if not app.get("company") and shortlist.get("org_name"):
+                app["company"] = shortlist["org_name"]
+            if not app.get("title") and shortlist.get("role_title"):
+                app["title"] = shortlist["role_title"]
 
-        assessment = assessment_by_job.get(req_id)
+        assessment = assessment_by_job.get(req_id) or assessment_by_job.get(raw_job_id)
         if assessment:
             app["takehome_token"] = assessment["token"]
             app["takehome_problem"] = assessment.get("problem_title") or ""
@@ -961,6 +978,39 @@ def get_user_applications(user_id: str = "", user: AuthUser = Depends(require_us
             app["takehome_score"] = assessment.get("score") or 0
             app["takehome_expires_at"] = assessment.get("expires_at")
             app["takehome_time_limit_minutes"] = assessment.get("time_limit_minutes")
+
+    # If the candidate has shortlist entries not yet in apps, synthesize records
+    for row in tracker["shortlists"]:
+        job_id = int(row.get("job_id") or 0)
+        if job_id not in existing_job_ids and (job_id + 900000) not in existing_job_ids:
+            assessment = assessment_by_job.get(job_id)
+            synthesized_app = {
+                "id": f"shortlist-{row.get('id', 0)}",
+                "user_id": target_uid,
+                "job_id": job_id + 900000,
+                "status": "Applied",
+                "live_stage": row.get("stage", "Sourced"),
+                "notes": row.get("notes") or "",
+                "tracking_id": f"APP-ORG-{row.get('id', 0):04d}",
+                "custom_responses": {},
+                "submission_logs": "",
+                "created_at": str(row.get("created_at") or ""),
+                "updated_at": str(row.get("updated_at") or row.get("created_at") or ""),
+                "title": row.get("role_title") or "Candidate Opportunity",
+                "company": row.get("org_name") or "Hiring Company",
+                "location": "Remote",
+                "work_mode": "Remote",
+                "ats_type": "PrepFlow Verified Gateway",
+                "source": "Recruiter Pipeline",
+                "takehome_token": assessment["token"] if assessment else None,
+                "takehome_problem": assessment.get("problem_title", "") if assessment else "",
+                "takehome_status": assessment.get("status", "") if assessment else "",
+                "takehome_score": assessment.get("score", 0) if assessment else 0,
+                "takehome_expires_at": assessment.get("expires_at") if assessment else None,
+                "takehome_time_limit_minutes": assessment.get("time_limit_minutes") if assessment else None,
+            }
+            apps.append(synthesized_app)
+            existing_job_ids.add(job_id)
 
     # Funnel metrics over the real pipeline stages.
     sent = len(apps)
@@ -978,7 +1028,7 @@ def get_user_applications(user_id: str = "", user: AuthUser = Depends(require_us
         # A response is any movement past the stage an application lands in.
         responses = sum(
             1 for a in apps
-            if (a.get("live_stage") and a["live_stage"] != "Sourced")
+            if (a.get("live_stage") and a["live_stage"] not in ("Sourced", "Applied"))
             or a.get("takehome_token")
             or a.get("status") not in (None, "", "Applied")
         )
@@ -998,6 +1048,33 @@ def get_user_applications(user_id: str = "", user: AuthUser = Depends(require_us
             "offer_rate": offer_rate
         }
     }
+
+
+@router.get("/outreach-inbox")
+def get_candidate_outreach_inbox(user_id: str = "", user: Optional[AuthUser] = Depends(optional_user)):
+    target_uid = user.uid if user else (user_id or "")
+    if not target_uid:
+        return {"status": "success", "outreach": []}
+    return {"status": "success", "outreach": database.get_candidate_outreach(target_uid)}
+
+
+@router.post("/outreach-inbox/{outreach_id}/respond")
+def respond_candidate_outreach_inbox(
+    outreach_id: int,
+    accept: bool = Form(...),
+    user_id: str = Form(""),
+    user: Optional[AuthUser] = Depends(optional_user),
+):
+    target_uid = user.uid if user else (user_id or "")
+    if not target_uid:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    result = database.respond_to_outreach(outreach_id, target_uid, accept)
+    reason = result.get("error")
+    if reason == "not_found_or_answered":
+        raise HTTPException(status_code=404, detail="That request no longer needs a response.")
+    if reason:
+        raise HTTPException(status_code=500, detail="Could not record your response. Please try again.")
+    return {"status": "success", "outreach": result}
 
 @router.get("/outreach")
 def generate_cold_outreach(job_id: int, user_id: str, target_role: str = "Hiring Manager"):

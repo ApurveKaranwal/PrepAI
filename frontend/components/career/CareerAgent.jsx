@@ -133,6 +133,11 @@ export default function CareerAgent({ user }) {
   const [dragOver, setDragOver] = useState(false);
   const [onboardError, setOnboardError] = useState("");
   const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
+  const [openToOpportunities, setOpenToOpportunities] = useState(true);
+
+  // Recruiter Direct Messages & Contact Inquiries State
+  const [outreachMessages, setOutreachMessages] = useState([]);
+  const [respondingOutreachId, setRespondingOutreachId] = useState(null);
 
   // Drawer / Interaction States
   const [selectedJob, setSelectedJob] = useState(null);
@@ -170,21 +175,25 @@ export default function CareerAgent({ user }) {
 
   const logEndRef = useRef(null);
 
-  // Fetch candidate profile, jobs, and applications on load
+  // Fetch candidate profile, jobs, applications, and recruiter messages on load
   const fetchData = useCallback(async () => {
     if (!user?.uid) return;
     setLoading(true);
     try {
+      const token = typeof window !== "undefined" ? window.localStorage.getItem("prepflow_token") || "" : "";
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
       // 1. Fetch Profile
-      const profileRes = await fetch(`${BACKEND_URL}/api/career/profile?user_id=${user.uid}`);
+      const profileRes = await fetch(`${BACKEND_URL}/api/career/profile?user_id=${user.uid}`, { headers });
       if (profileRes.ok) {
         const profileData = await profileRes.json();
         setProfile(profileData);
         // Sync onboarding states
         setJobType(profileData.job_type);
         setWorkMode(profileData.work_mode);
-        setCountries(profileData.countries.join(", "));
-        setCities(profileData.cities.join(", "));
+        setCountries((profileData.countries || []).join(", "));
+        setCities((profileData.cities || []).join(", "));
+        setOpenToOpportunities(profileData.open_to_opportunities !== false);
         
         const salStr = profileData.salary_expectations || "";
         if (salStr.includes("₹") || salStr.toLowerCase().includes("inr") || salStr.toLowerCase().includes("lpa")) {
@@ -199,7 +208,7 @@ export default function CareerAgent({ user }) {
         }
         
         setNoticePeriod(profileData.notice_period || "Immediate");
-        setTechStack(profileData.tech_stack_preferences.join(", "));
+        setTechStack((profileData.tech_stack_preferences || []).join(", "));
         setCompanySize(profileData.company_size_preference);
         setStartupPreference(profileData.startup_vs_enterprise);
         setCompanyType(profileData.company_type_preference || "Any");
@@ -209,19 +218,27 @@ export default function CareerAgent({ user }) {
         setPortfolioUrl(profileData.portfolio_url || "");
 
         // 2. Fetch matched jobs
-        const jobsRes = await fetch(`${BACKEND_URL}/api/career/jobs?user_id=${user.uid}`);
+        const jobsRes = await fetch(`${BACKEND_URL}/api/career/jobs?user_id=${user.uid}`, { headers });
         if (jobsRes.ok) {
           const jobsData = await jobsRes.json();
           setJobs(jobsData);
         }
 
-        // 3. Fetch applications
-        const appsRes = await fetch(`${BACKEND_URL}/api/career/applications?user_id=${user.uid}`);
+        // 3. Fetch applications & pipeline status
+        const appsRes = await fetch(`${BACKEND_URL}/api/career/applications?user_id=${user.uid}`, { headers });
         if (appsRes.ok) {
           const appsData = await appsRes.json();
           setApplications(appsData.applications || []);
           setMetrics(appsData.metrics || { sent: 0, response_rate: 0, interview_rate: 0, offer_rate: 0 });
         }
+
+        // 4. Fetch recruiter direct messages & inquiries
+        const outreachRes = await fetch(`${BACKEND_URL}/api/candidate/outreach?user_id=${user.uid}`, { headers });
+        if (outreachRes.ok) {
+          const outreachData = await outreachRes.json();
+          setOutreachMessages(outreachData.outreach || []);
+        }
+
         setActiveSubTab("dashboard");
       } else {
         // Force onboarding if profile not found
@@ -311,7 +328,42 @@ export default function CareerAgent({ user }) {
       case "pipeline_update": return "→";
       case "assessment_sent": return "✎";
       case "interview_scheduled": return "📅";
+      case "outreach":
+      case "recruiter_outreach": return "✉";
       default: return "•";
+    }
+  };
+
+  const handleRespondOutreach = async (outreachId, accept) => {
+    setRespondingOutreachId(outreachId);
+    try {
+      const token = typeof window !== "undefined" ? window.localStorage.getItem("prepflow_token") || "" : "";
+      const headers = {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+      const res = await fetch(`${BACKEND_URL}/api/candidate/outreach/${outreachId}/respond?user_id=${user.uid}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ accept }),
+      });
+      if (res.ok) {
+        setOutreachMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === outreachId
+              ? { ...msg, status: accept ? "accepted" : "declined", responded_at: new Date().toISOString() }
+              : msg
+          )
+        );
+        fetchNotifications();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || "Could not record your response.");
+      }
+    } catch (err) {
+      console.error("Error responding to outreach:", err);
+    } finally {
+      setRespondingOutreachId(null);
     }
   };
 
@@ -393,6 +445,7 @@ export default function CareerAgent({ user }) {
     formData.append("github_url", githubUrl);
     formData.append("portfolio_url", portfolioUrl);
     formData.append("company_type_preference", companyType);
+    formData.append("open_to_opportunities", openToOpportunities ? "true" : "false");
     
     if (resumeFile) {
       formData.append("resume", resumeFile);
@@ -1116,6 +1169,29 @@ export default function CareerAgent({ user }) {
 
             </div>
 
+            {/* Open to Opportunities Toggle */}
+            <div className="flex items-center justify-between p-4 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl">
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-[#262626]">Open to Opportunities</span>
+                <p className="text-[10px] text-[#6E6359]">
+                  Allow recruiters to send you direct messages and sourcing inquiries.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenToOpportunities((v) => !v)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 cursor-pointer ${
+                  openToOpportunities ? "bg-[#2E5A44]" : "bg-[#D6D3D1]"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    openToOpportunities ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+
             {onboardError && (
               <div className="flex items-center gap-2 p-3 bg-[#FAF4EB] border border-[#C85A32]/30 rounded-xl text-[#C85A32] text-xs font-semibold">
                 <AlertCircle className="h-4 w-4 shrink-0" />
@@ -1153,6 +1229,107 @@ export default function CareerAgent({ user }) {
           {/* LEFT COLUMN: Matched Jobs Feed - 2 SECTIONS */}
           <div className="lg:col-span-7 space-y-8">
             
+            {/* =========================================================================
+                RECRUITER DIRECT MESSAGES & SOURCING INQUIRIES
+                ========================================================================= */}
+            {outreachMessages.length > 0 && (
+              <div className="space-y-3 text-left">
+                <div className="flex items-center gap-2.5 pb-2 border-b border-[#E7E2DA]">
+                  <h3 className="font-serif font-bold text-lg text-[#1C1917]">
+                    Recruiter Messages
+                  </h3>
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FEF3CD] text-[#856404] border border-[#856404]/25">
+                    {outreachMessages.filter((m) => m.status === "pending").length} Pending
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {outreachMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`p-4 rounded-xl border transition-all ${
+                        msg.status === "pending"
+                          ? "bg-[#FFFBF5] border-[#C85A32]/30 shadow-sm"
+                          : msg.status === "accepted"
+                          ? "bg-[#F0FFF4] border-[#2E5A44]/30"
+                          : "bg-[#FAF8F5] border-[#E7E2DA] opacity-70"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="space-y-0.5 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-[#262626]">
+                              {msg.org_name || "Company"}
+                            </span>
+                            {msg.role_title && (
+                              <span className="text-[10px] font-mono text-[#6E6359] bg-[#FAF8F5] border border-[#E7E2DA] px-1.5 py-0.5 rounded">
+                                {msg.role_title}
+                              </span>
+                            )}
+                          </div>
+                          {(msg.location || msg.work_mode || msg.salary_range) && (
+                            <p className="text-[10px] text-[#78716C]">
+                              {[msg.location, msg.work_mode, msg.salary_range].filter(Boolean).join(" · ")}
+                            </p>
+                          )}
+                        </div>
+                        <span className={`text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded shrink-0 ${
+                          msg.status === "pending"
+                            ? "bg-[#FEF3CD] text-[#856404]"
+                            : msg.status === "accepted"
+                            ? "bg-[#D4EDDA] text-[#155724]"
+                            : "bg-[#F5F5F4] text-[#78716C]"
+                        }`}>
+                          {msg.status}
+                        </span>
+                      </div>
+
+                      {msg.message && (
+                        <div className="p-3 bg-white/60 border border-[#E7E2DA]/50 rounded-lg mb-3">
+                          <p className="text-xs text-[#44403C] leading-relaxed whitespace-pre-wrap">{msg.message}</p>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-[#78716C]">
+                          {msg.created_at ? timeAgo(msg.created_at) : ""}
+                        </span>
+                        {msg.status === "pending" && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={respondingOutreachId === msg.id}
+                              onClick={() => handleRespondOutreach(msg.id, false)}
+                              className="text-[10px] font-bold text-[#78716C] hover:text-[#C85A32] px-3 py-1.5 rounded-lg border border-[#E7E2DA] hover:border-[#C85A32]/30 bg-white transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              Decline
+                            </button>
+                            <button
+                              type="button"
+                              disabled={respondingOutreachId === msg.id}
+                              onClick={() => handleRespondOutreach(msg.id, true)}
+                              className="text-[10px] font-bold text-white bg-[#2E5A44] hover:bg-[#1E3A2E] px-3 py-1.5 rounded-lg transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              Accept & Share Contact
+                            </button>
+                          </div>
+                        )}
+                        {msg.status === "accepted" && (
+                          <span className="text-[10px] font-bold text-[#2E5A44]">
+                            ✓ Contact shared · {msg.responded_at ? timeAgo(msg.responded_at) : ""}
+                          </span>
+                        )}
+                        {msg.status === "declined" && (
+                          <span className="text-[10px] text-[#78716C]">
+                            Declined · {msg.responded_at ? timeAgo(msg.responded_at) : ""}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* =========================================================================
                 SECTION 1: REGISTERED PREPFLOW AI STARTUPS (1-CLICK APPLY VIA AGENT)
                 ========================================================================= */}
@@ -1638,10 +1815,25 @@ export default function CareerAgent({ user }) {
               { id: "Offer Received", title: "Offers", bg: "bg-[#E8F2EC]/40" }
             ].map((col) => {
               const colApps = applications.filter((a) => {
-                if (col.id === "Applied") return !a.status || a.status === "Applied" || a.live_stage === "Applied / In Review";
-                if (col.id === "OA Received") return a.status === "OA Received" || a.live_stage === "Take-Home Dispatched" || a.takehome_token;
-                if (col.id === "Interview Scheduled") return a.status === "Interview Scheduled" || a.live_stage === "Shortlisted";
-                if (col.id === "Offer Received") return a.status === "Offer Received" || a.live_stage === "Offer Extended";
+                const s = a.status || "";
+                const ls = a.live_stage || "";
+                if (col.id === "Applied") {
+                  return !s || s === "Applied" || s === "Sourced" || s === "Screening"
+                    || ls === "Applied / In Review" || ls === "Sourced" || ls === "Screening";
+                }
+                if (col.id === "OA Received") {
+                  return s === "OA Received" || s === "Assessment"
+                    || ls === "Take-Home Dispatched" || ls === "Assessment" || ls === "OA Received"
+                    || a.takehome_token;
+                }
+                if (col.id === "Interview Scheduled") {
+                  return s === "Interview Scheduled" || s === "Interview"
+                    || ls === "Shortlisted" || ls === "Interview" || ls === "Interview Scheduled";
+                }
+                if (col.id === "Offer Received") {
+                  return s === "Offer Received" || s === "Offer" || s === "Hired"
+                    || ls === "Offer Extended" || ls === "Offer" || ls === "Hired" || ls === "Offer Received";
+                }
                 return false;
               });
               return (

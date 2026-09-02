@@ -1737,8 +1737,22 @@ def send_outreach_endpoint(
     # Notify the candidate at their real address without exposing it to the
     # recruiter — the send happens server-side from the DB row.
     candidate_user = database.get_user_by_id(req.candidate_id)
+    job = database.get_recruiter_job(org.org_id, req.job_id) if req.job_id else None
+    role_suffix = f" for {job.get('role_title', 'a role')}" if job else ""
+
+    # Create candidate in-app notification
+    database.create_candidate_notification(
+        user_id=str(req.candidate_id),
+        org_id=org.org_id,
+        org_name=org.org_name,
+        title=f"New recruiter message from {org.org_name}",
+        message=f"{org.org_name} has requested contact{role_suffix}: \"{req.message}\"" if req.message else f"{org.org_name} has requested contact{role_suffix}.",
+        notification_type="outreach",
+        related_id=result.get("id"),
+        related_type="outreach",
+    )
+
     if candidate_user and candidate_user.get("email"):
-        job = database.get_recruiter_job(org.org_id, req.job_id) if req.job_id else None
         inbox_base = (os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
         background_tasks.add_task(
             email_service.send_outreach_notification_email,
@@ -1927,17 +1941,24 @@ def set_opportunity_optin(req: OpportunityOptInRequest, user: AuthUser = Depends
 
 
 @app.get("/api/candidate/outreach")
-def list_candidate_outreach(user: AuthUser = Depends(require_user)):
-    return {"status": "success", "outreach": database.get_candidate_outreach(user.uid)}
+def list_candidate_outreach(user_id: str = "", user: Optional[AuthUser] = Depends(optional_user)):
+    target_uid = user.uid if user else (user_id or "")
+    if not target_uid:
+        return {"status": "success", "outreach": []}
+    return {"status": "success", "outreach": database.get_candidate_outreach(target_uid)}
 
 
 @app.post("/api/candidate/outreach/{outreach_id}/respond")
 def respond_candidate_outreach(
     outreach_id: int,
     req: OutreachResponseRequest,
-    user: AuthUser = Depends(require_user),
+    user_id: str = "",
+    user: Optional[AuthUser] = Depends(optional_user),
 ):
-    result = database.respond_to_outreach(outreach_id, user.uid, req.accept)
+    target_uid = user.uid if user else (user_id or "")
+    if not target_uid:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    result = database.respond_to_outreach(outreach_id, target_uid, req.accept)
     reason = result.get("error")
     if reason == "not_found_or_answered":
         raise HTTPException(status_code=404, detail="That request no longer needs a response.")

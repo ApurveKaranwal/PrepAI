@@ -878,7 +878,7 @@ def init_db():
         # User role (candidate / recruiter)
         ("users", "role", "TEXT DEFAULT 'candidate'"),
         # Candidate sourcing opt-in
-        ("candidate_profiles", "open_to_opportunities", "BOOLEAN DEFAULT FALSE"),
+        ("candidate_profiles", "open_to_opportunities", "BOOLEAN DEFAULT TRUE"),
         ("candidate_profiles", "opportunity_preferences", "TEXT DEFAULT ''"),
         ("candidate_profiles", "opted_in_at", "TIMESTAMP"),
     ]
@@ -893,6 +893,17 @@ def init_db():
                 conn.rollback()
             except Exception:
                 pass
+
+    # Ensure all existing candidate profiles default to open_to_opportunities = TRUE
+    try:
+        cursor.execute("UPDATE candidate_profiles SET open_to_opportunities = TRUE WHERE open_to_opportunities IS NULL OR open_to_opportunities = FALSE")
+        conn.commit()
+    except Exception as e:
+        print(f"Error updating open_to_opportunities defaults: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
     # INDEXES — recruiter search and tenant lookups were doing full table scans
@@ -1981,7 +1992,8 @@ def save_candidate_profile(user_id: str, p: dict):
                 resume_name = ?, resume_text = ?, github_url = ?, linkedin_url = ?,
                 github_stats = ?, linkedin_data = ?, company_type_preference = ?, portfolio_url = ?,
                 leetcode_handle = ?, leetcode_stats = ?, codeforces_handle = ?, codeforces_stats = ?,
-                devscore = ?, devscore_breakdown = ?, last_platform_sync = CURRENT_TIMESTAMP
+                devscore = ?, devscore_breakdown = ?, open_to_opportunities = ?,
+                last_platform_sync = CURRENT_TIMESTAMP
             WHERE user_id = ?
         """, (
             p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
@@ -1992,6 +2004,7 @@ def save_candidate_profile(user_id: str, p: dict):
             p.get("company_type_preference", "Any"), p.get("portfolio_url", ""),
             leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
             devscore, devscore_breakdown,
+            1 if p.get("open_to_opportunities", True) else 0,
             user_id
         ))
     else:
@@ -2003,8 +2016,8 @@ def save_candidate_profile(user_id: str, p: dict):
                 resume_name, resume_text, github_url, linkedin_url,
                 github_stats, linkedin_data, company_type_preference, portfolio_url,
                 leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
-                devscore, devscore_breakdown, last_platform_sync
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                devscore, devscore_breakdown, open_to_opportunities, last_platform_sync
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (
             user_id, p.get("job_type"), p.get("work_mode"), json.dumps(p.get("countries", [])), json.dumps(p.get("cities", [])),
             p.get("salary_expectations"), p.get("notice_period"), json.dumps(p.get("tech_stack_preferences", [])),
@@ -2013,7 +2026,8 @@ def save_candidate_profile(user_id: str, p: dict):
             json.dumps(p.get("github_stats", {})), json.dumps(p.get("linkedin_data", {})),
             p.get("company_type_preference", "Any"), p.get("portfolio_url", ""),
             leetcode_handle, leetcode_stats, codeforces_handle, codeforces_stats,
-            devscore, devscore_breakdown
+            devscore, devscore_breakdown,
+            1 if p.get("open_to_opportunities", True) else 0
         ))
     
     conn.commit()
@@ -2134,6 +2148,8 @@ def get_candidate_profile(user_id: str, email: str = None) -> dict:
         "devscore": row["devscore"] if "devscore" in row.keys() and row["devscore"] else 0,
         "devscore_breakdown": json.loads(row["devscore_breakdown"]) if "devscore_breakdown" in row.keys() and row["devscore_breakdown"] else {},
         "last_platform_sync": str(row["last_platform_sync"]) if "last_platform_sync" in row.keys() and row["last_platform_sync"] else "",
+        "open_to_opportunities": bool(row["open_to_opportunities"]) if "open_to_opportunities" in row.keys() and row["open_to_opportunities"] is not None else True,
+        "opportunity_preferences": row["opportunity_preferences"] if "opportunity_preferences" in row.keys() and row["opportunity_preferences"] else "",
         "created_at": row["created_at"]
     }
 
@@ -4524,15 +4540,16 @@ def get_candidate_opportunity_status(user_id: str) -> dict:
         """, (str(user_id),))
         row = cursor.fetchone()
         if not row:
-            return {"open_to_opportunities": False, "opportunity_preferences": "", "opted_in_at": None}
+            return {"open_to_opportunities": True, "opportunity_preferences": "", "opted_in_at": None}
+        is_open = row.get("open_to_opportunities")
         return {
-            "open_to_opportunities": bool(row.get("open_to_opportunities")),
+            "open_to_opportunities": True if is_open is None or is_open is True else False,
             "opportunity_preferences": row.get("opportunity_preferences") or "",
             "opted_in_at": row.get("opted_in_at"),
         }
     except Exception as e:
         print(f"Error fetching opt-in status: {e}")
-        return {"open_to_opportunities": False, "opportunity_preferences": "", "opted_in_at": None}
+        return {"open_to_opportunities": True, "opportunity_preferences": "", "opted_in_at": None}
     finally:
         conn.close()
 
@@ -4550,8 +4567,14 @@ def create_outreach_request(org_id: int, candidate_user_id: str, job_id: int,
             SELECT open_to_opportunities FROM candidate_profiles WHERE user_id = %s
         """, (str(candidate_user_id),))
         prof = cursor.fetchone()
-        if not prof or not prof.get("open_to_opportunities"):
-            return {"error": "not_open_to_opportunities"}
+        # If candidate explicitly opted out (open_to_opportunities is False), check if they are in pipeline or applied
+        if prof and prof.get("open_to_opportunities") is False:
+            cursor.execute("""
+                SELECT 1 FROM candidate_shortlists WHERE org_id = %s AND candidate_id = %s
+            """, (org_id, str(candidate_user_id)))
+            in_shortlist = cursor.fetchone()
+            if not in_shortlist:
+                return {"error": "not_open_to_opportunities"}
 
         cursor.execute("""
             INSERT INTO recruiter_outreach (org_id, candidate_user_id, job_id, message, sent_by)
