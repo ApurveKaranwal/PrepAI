@@ -3686,8 +3686,8 @@ def shortlist_candidate(org_id: int, actor_user_id: str, data: dict) -> dict:
         job_id = int(data.get("job_id") or 0)
 
         cursor.execute(
-            "SELECT id, stage FROM candidate_shortlists WHERE org_id = %s AND candidate_id = %s",
-            (org_id, candidate_id)
+            "SELECT id, stage FROM candidate_shortlists WHERE org_id = %s AND candidate_id = %s AND job_id = %s",
+            (org_id, candidate_id, job_id)
         )
         existing = cursor.fetchone()
 
@@ -3696,9 +3696,9 @@ def shortlist_candidate(org_id: int, actor_user_id: str, data: dict) -> dict:
             from_stage = existing["stage"]
             cursor.execute("""
                 UPDATE candidate_shortlists
-                SET stage = %s, notes = %s, job_id = %s, updated_at = CURRENT_TIMESTAMP
+                SET stage = %s, notes = %s, candidate_name = COALESCE(NULLIF(%s, ''), candidate_name), updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s AND org_id = %s
-            """, (stage, data.get("notes") or "", job_id, shortlist_id, org_id))
+            """, (stage, data.get("notes") or "", data.get("candidate_name") or "", shortlist_id, org_id))
         else:
             from_stage = ""
             cursor.execute("""
@@ -3773,8 +3773,8 @@ def register_inbound_application(recruiter_job_id: int, candidate_user_id: str,
         job_id = job["id"]
 
         cursor.execute(
-            "SELECT id, stage FROM candidate_shortlists WHERE org_id = %s AND candidate_id = %s",
-            (org_id, candidate_id)
+            "SELECT id, stage FROM candidate_shortlists WHERE org_id = %s AND candidate_id = %s AND job_id = %s",
+            (org_id, candidate_id, job_id)
         )
         existing = cursor.fetchone()
 
@@ -3783,11 +3783,11 @@ def register_inbound_application(recruiter_job_id: int, candidate_user_id: str,
             stage = existing["stage"]
             cursor.execute("""
                 UPDATE candidate_shortlists
-                SET job_id = CASE WHEN job_id IS NULL OR job_id = 0 THEN %s ELSE job_id END,
-                    candidate_name = %s,
+                SET candidate_name = COALESCE(NULLIF(%s, ''), candidate_name),
+                    notes = COALESCE(NULLIF(%s, ''), notes),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s AND org_id = %s
-            """, (job_id, candidate_name or "", shortlist_id, org_id))
+            """, (candidate_name or "", note or "", shortlist_id, org_id))
         else:
             stage = "Sourced"
             cursor.execute("""
@@ -3827,17 +3827,22 @@ def register_inbound_application(recruiter_job_id: int, candidate_user_id: str,
         conn.close()
 
 
-def get_shortlisted_candidates(org_id: int) -> list:
+def get_shortlisted_candidates(org_id: int, job_id: int = None) -> list:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("""
+        query = """
             SELECT s.*, j.role_title AS job_role_title
             FROM candidate_shortlists s
             LEFT JOIN recruiter_jobs j ON j.id = s.job_id AND j.org_id = s.org_id
             WHERE s.org_id = %s
-            ORDER BY s.updated_at DESC NULLS LAST, s.created_at DESC
-        """, (org_id,))
+        """
+        params = [org_id]
+        if job_id is not None:
+            query += " AND s.job_id = %s"
+            params.append(job_id)
+        query += " ORDER BY s.updated_at DESC NULLS LAST, s.created_at DESC"
+        cursor.execute(query, tuple(params))
         return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         print(f"Error getting shortlists: {e}")
