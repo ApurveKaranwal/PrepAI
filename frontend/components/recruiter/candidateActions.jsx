@@ -15,7 +15,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
-import { FileCode2, Mail, UserPlus } from "lucide-react";
+import { Award, Calendar, FileCode2, Mail, UserPlus } from "lucide-react";
 import { Chip, ErrorBanner, Field, Modal, Spinner, styles } from "./ui";
 import { FALLBACK_PIPELINE_STAGES } from "./useRecruiterData";
 
@@ -46,11 +46,11 @@ function OutreachDialog({ open, candidate, jobs, outreach, toast, onDone, onClos
 
   useEffect(() => {
     if (open) {
-      setJobId("0");
+      setJobId(String(candidate?.job_id || candidate?.jobId || "0"));
       setMessage("");
       setSending(false);
     }
-  }, [open]);
+  }, [open, candidate]);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -131,14 +131,14 @@ function ShortlistDialog({ open, candidate, jobs, pipeline, toast, onDone, onClo
 
   useEffect(() => {
     if (open) {
-      setJobId("0");
+      setJobId(String(candidate?.job_id || candidate?.jobId || "0"));
       setStage(stages[0] || "Sourced");
       setNotes("");
       setSaving(false);
     }
     // `stages` is stable between opens; re-seeding on every change would fight typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, candidate]);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -229,14 +229,14 @@ function AssessmentDialog({ open, candidate, jobs, assessments, pipeline, toast,
 
   useEffect(() => {
     if (!open) return;
-    setJobId("0");
+    setJobId(String(candidate?.job_id || candidate?.jobId || "0"));
     setProblemSlug(problems[0]?.slug || "");
     setDifficulty("Medium");
     setTimeLimit(String(DEFAULT_TIME_LIMIT));
     setTimeError("");
     setSending(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, candidate]);
 
   // Keep the problem selection valid if the catalog arrives after the dialog opens.
   useEffect(() => {
@@ -272,7 +272,7 @@ function AssessmentDialog({ open, candidate, jobs, assessments, pipeline, toast,
     }
     toast.success(`Assessment emailed to ${candidate.display_name}. They have ${minutes} minutes once they start.`);
     // The server also moves them to the Assessment stage, so the board has to refetch.
-    pipeline.reload();
+    pipeline.reload?.();
     onDone?.({ in_pipeline: true, stage: "Assessment", assessment: result.data || null });
     onClose();
   };
@@ -349,8 +349,6 @@ function AssessmentDialog({ open, candidate, jobs, assessments, pipeline, toast,
           />
         </div>
 
-        {/* The old portal hardcoded 45 minutes in three places and none of them
-            matched what the backend stored. The recruiter sets it once, here. */}
         <Field
           label="Time limit (minutes)"
           type="number"
@@ -367,6 +365,277 @@ function AssessmentDialog({ open, candidate, jobs, assessments, pipeline, toast,
           The link is private to this candidate and expires. You will never see it — only whether they started,
           submitted, or let it lapse.
         </p>
+      </form>
+    </Modal>
+  );
+}
+
+// -----------------------------------------------------------------------------
+
+function ScheduleInterviewDialog({ open, candidate, jobs, pipeline, toast, onDone, onClose }) {
+  const [jobId, setJobId] = useState("0");
+  const [roundName, setRoundName] = useState("Technical Round");
+  const [interviewDate, setInterviewDate] = useState("");
+  const [interviewTime, setInterviewTime] = useState("");
+  const [meetingUrl, setMeetingUrl] = useState("");
+  const [interviewer, setInterviewer] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setJobId(String(candidate?.job_id || candidate?.jobId || "0"));
+    setRoundName("Technical Round");
+    setInterviewDate("");
+    setInterviewTime("");
+    setMeetingUrl("");
+    setInterviewer("");
+    setNotes("");
+    setSaving(false);
+  }, [open, candidate]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    const dateStr = [interviewDate, interviewTime].filter(Boolean).join(" ");
+    const scheduleSummary = [
+      `Interview: ${roundName}`,
+      dateStr ? `Scheduled: ${dateStr}` : null,
+      interviewer ? `Interviewer: ${interviewer}` : null,
+      meetingUrl ? `Link: ${meetingUrl}` : null,
+      notes ? `Notes: ${notes}` : null,
+    ].filter(Boolean).join(" | ");
+
+    const entryId = candidate?.entry_id || candidate?.shortlist_id || candidate?.pipeline_id || candidate?.id;
+    if (entryId && pipeline?.move) {
+      await pipeline.move(entryId, {
+        stage: "Interview",
+        notes: scheduleSummary,
+        job_id: Number(jobId) || undefined,
+      });
+    }
+    setSaving(false);
+    toast.success(`Interview scheduled with ${candidate.display_name} (${roundName}).`);
+    pipeline?.reload?.();
+    onDone?.({ stage: "Interview", notes: scheduleSummary });
+    onClose();
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={saving ? undefined : onClose}
+      dismissible={!saving}
+      title="Schedule interview"
+      subtitle="Arrange an interview session and record meeting details."
+      icon={Calendar}
+      width="max-w-xl"
+      footer={
+        <>
+          <button type="button" className={styles.secondary} onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" form="interview-form" className={styles.primary} disabled={saving}>
+            {saving && <Spinner className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />}
+            Schedule interview
+          </button>
+        </>
+      }
+    >
+      <form id="interview-form" onSubmit={submit} className="space-y-5">
+        <div className={`${styles.panel} p-3 flex items-center justify-between gap-3`}>
+          <div className="min-w-0">
+            <p className={styles.microLabel}>Candidate</p>
+            <p className="text-xs font-bold text-[#262626] mt-1 truncate">{candidate.display_name}</p>
+          </div>
+          <Chip tone="blue">Interview stage</Chip>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field
+            label="Requisition"
+            as="select"
+            value={jobId}
+            onChange={(event) => setJobId(event.target.value)}
+            options={jobOptions(jobs)}
+          />
+          <Field
+            label="Interview Round"
+            value={roundName}
+            onChange={(event) => setRoundName(event.target.value)}
+            placeholder="e.g. System Design, Technical Deep Dive"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field
+            label="Date"
+            type="date"
+            value={interviewDate}
+            onChange={(event) => setInterviewDate(event.target.value)}
+          />
+          <Field
+            label="Time"
+            type="time"
+            value={interviewTime}
+            onChange={(event) => setInterviewTime(event.target.value)}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field
+            label="Interviewer Name / Host"
+            value={interviewer}
+            onChange={(event) => setInterviewer(event.target.value)}
+            placeholder="e.g. Lead Engineer, Hiring Manager"
+          />
+          <Field
+            label="Meeting Link"
+            type="url"
+            value={meetingUrl}
+            onChange={(event) => setMeetingUrl(event.target.value)}
+            placeholder="https://meet.google.com/..."
+          />
+        </div>
+
+        <Field
+          label="Notes / Instructions"
+          as="textarea"
+          rows={3}
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder="Topics to evaluate, links to questions, or instructions for the candidate."
+        />
+      </form>
+    </Modal>
+  );
+}
+
+// -----------------------------------------------------------------------------
+
+function ExtendOfferDialog({ open, candidate, jobs, pipeline, toast, onDone, onClose }) {
+  const [jobId, setJobId] = useState("0");
+  const [salary, setSalary] = useState("");
+  const [equity, setEquity] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setJobId(String(candidate?.job_id || candidate?.jobId || "0"));
+    setSalary("");
+    setEquity("");
+    setStartDate("");
+    setExpiryDate("");
+    setNotes("");
+    setSaving(false);
+  }, [open, candidate]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    const offerSummary = [
+      `Offer Extended`,
+      salary ? `Compensation: ${salary}` : null,
+      equity ? `Equity/Bonus: ${equity}` : null,
+      startDate ? `Start: ${startDate}` : null,
+      expiryDate ? `Expires: ${expiryDate}` : null,
+      notes ? `Notes: ${notes}` : null,
+    ].filter(Boolean).join(" | ");
+
+    const entryId = candidate?.entry_id || candidate?.shortlist_id || candidate?.pipeline_id || candidate?.id;
+    if (entryId && pipeline?.move) {
+      await pipeline.move(entryId, {
+        stage: "Offer",
+        notes: offerSummary,
+        job_id: Number(jobId) || undefined,
+      });
+    }
+    setSaving(false);
+    toast.success(`Offer details recorded for ${candidate.display_name}.`);
+    pipeline?.reload?.();
+    onDone?.({ stage: "Offer", notes: offerSummary });
+    onClose();
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={saving ? undefined : onClose}
+      dismissible={!saving}
+      title="Extend job offer"
+      subtitle="Record compensation details and offer terms."
+      icon={Award}
+      width="max-w-xl"
+      footer={
+        <>
+          <button type="button" className={styles.secondary} onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" form="offer-form" className={styles.primary} disabled={saving}>
+            {saving && <Spinner className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />}
+            Record offer
+          </button>
+        </>
+      }
+    >
+      <form id="offer-form" onSubmit={submit} className="space-y-5">
+        <div className={`${styles.panel} p-3 flex items-center justify-between gap-3`}>
+          <div className="min-w-0">
+            <p className={styles.microLabel}>Candidate</p>
+            <p className="text-xs font-bold text-[#262626] mt-1 truncate">{candidate.display_name}</p>
+          </div>
+          <Chip tone="green">Offer stage</Chip>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field
+            label="Requisition"
+            as="select"
+            value={jobId}
+            onChange={(event) => setJobId(event.target.value)}
+            options={jobOptions(jobs)}
+          />
+          <Field
+            label="Compensation / Base Salary"
+            value={salary}
+            onChange={(event) => setSalary(event.target.value)}
+            placeholder="e.g. $130,000 / year or ₹24 LPA"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field
+            label="Equity / Bonus (optional)"
+            value={equity}
+            onChange={(event) => setEquity(event.target.value)}
+            placeholder="e.g. 0.2% equity, $10k sign-on"
+          />
+          <Field
+            label="Target Start Date"
+            type="date"
+            value={startDate}
+            onChange={(event) => setStartDate(event.target.value)}
+          />
+        </div>
+
+        <Field
+          label="Offer Expiration Date"
+          type="date"
+          value={expiryDate}
+          onChange={(event) => setExpiryDate(event.target.value)}
+        />
+
+        <Field
+          label="Notes / Terms summary"
+          as="textarea"
+          rows={3}
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder="Additional benefits, relocation, or key agreement terms."
+        />
       </form>
     </Modal>
   );
@@ -391,6 +660,8 @@ export function useCandidateActions({ jobs, pipeline, outreach, assessments, toa
       requestContact: (candidate) => setActive({ kind: "outreach", candidate }),
       addToPipeline: (candidate) => setActive({ kind: "shortlist", candidate }),
       sendAssessment: (candidate) => setActive({ kind: "assessment", candidate }),
+      scheduleInterview: (candidate) => setActive({ kind: "interview", candidate }),
+      extendOffer: (candidate) => setActive({ kind: "offer", candidate }),
     }),
     []
   );
@@ -422,6 +693,24 @@ export function useCandidateActions({ jobs, pipeline, outreach, assessments, toa
         candidate={candidate}
         jobs={jobs}
         assessments={assessments}
+        pipeline={pipeline}
+        toast={toast}
+        onDone={done}
+        onClose={close}
+      />
+      <ScheduleInterviewDialog
+        open={active?.kind === "interview"}
+        candidate={candidate}
+        jobs={jobs}
+        pipeline={pipeline}
+        toast={toast}
+        onDone={done}
+        onClose={close}
+      />
+      <ExtendOfferDialog
+        open={active?.kind === "offer"}
+        candidate={candidate}
+        jobs={jobs}
         pipeline={pipeline}
         toast={toast}
         onDone={done}

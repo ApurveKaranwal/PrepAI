@@ -16,8 +16,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
+  Award,
   Briefcase,
+  Calendar,
+  CheckCircle2,
+  FileCode2,
   History,
+  Mail,
   StickyNote,
   Trash2,
   UserRound,
@@ -63,7 +68,7 @@ function nextStage(stages, current) {
 
 // -----------------------------------------------------------------------------
 
-function EntryDetail({ entry, stages, pipeline, toast, onClose, onOpenDossier, onRemove }) {
+function EntryDetail({ entry, stages, pipeline, toast, onClose, onOpenDossier, onAction, onRemove }) {
   const { fetchEvents } = pipeline;
   const [stage, setStage] = useState(entry?.stage || stages[0]);
   const [notes, setNotes] = useState(entry?.notes || "");
@@ -203,6 +208,58 @@ function EntryDetail({ entry, stages, pipeline, toast, onClose, onOpenDossier, o
           <button type="button" className={styles.secondary} onClick={() => onOpenDossier(entry.candidate_id)}>
             View dossier
           </button>
+          {entry.stage === "Sourced" && onAction && (
+            <button
+              type="button"
+              className={styles.primary}
+              onClick={() => {
+                onClose();
+                onAction("outreach", entry);
+              }}
+            >
+              <Mail className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+              Request contact
+            </button>
+          )}
+          {entry.stage === "Assessment" && onAction && (
+            <button
+              type="button"
+              className={styles.primary}
+              onClick={() => {
+                onClose();
+                onAction("assessment", entry);
+              }}
+            >
+              <FileCode2 className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+              Give assessment
+            </button>
+          )}
+          {entry.stage === "Interview" && onAction && (
+            <button
+              type="button"
+              className={styles.primary}
+              onClick={() => {
+                onClose();
+                onAction("interview", entry);
+              }}
+            >
+              <Calendar className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+              Schedule interview
+            </button>
+          )}
+          {entry.stage === "Offer" && onAction && (
+            <button
+              type="button"
+              className={styles.primary}
+              onClick={() => {
+                onClose();
+                onAction("offer", entry);
+              }}
+            >
+              <Award className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+              Extend offer
+            </button>
+          )}
           <button
             type="button"
             className={`${styles.iconButton} ml-auto`}
@@ -220,8 +277,83 @@ function EntryDetail({ entry, stages, pipeline, toast, onClose, onOpenDossier, o
 
 // -----------------------------------------------------------------------------
 
-function EntryCard({ entry, stages, onOpen, onMove }) {
+function EntryCard({ entry, stages, onOpen, onMove, onAction, onOpenDossier }) {
   const advance = nextStage(stages, entry.stage);
+
+  let stageActionButton = null;
+  if (entry.stage === "Sourced" && onAction) {
+    stageActionButton = (
+      <button
+        type="button"
+        onClick={() => onAction("outreach", entry)}
+        className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#FAF6F0] hover:bg-[#F2EAE0] text-[#262626] border border-[#DFD5C6] rounded-xl text-[10px] font-mono font-bold transition-all shadow-3xs cursor-pointer ${styles.focusRing}`}
+        title="Request contact details from candidate"
+      >
+        <Mail className="h-3.5 w-3.5 text-[#C85A32]" />
+        Request Contact
+      </button>
+    );
+  } else if (entry.stage === "Screening" && onOpenDossier) {
+    stageActionButton = (
+      <button
+        type="button"
+        onClick={() => onOpenDossier(entry.candidate_id)}
+        className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#2563EB]/10 hover:bg-[#2563EB] text-[#2563EB] hover:text-white border border-[#2563EB]/30 hover:border-[#2563EB] rounded-xl text-[10px] font-mono font-bold transition-all cursor-pointer ${styles.focusRing}`}
+        title="Review candidate dossier"
+      >
+        <UserRound className="h-3.5 w-3.5" />
+        Review Dossier
+      </button>
+    );
+  } else if (entry.stage === "Assessment" && onAction) {
+    stageActionButton = (
+      <button
+        type="button"
+        onClick={() => onAction("assessment", entry)}
+        className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#C85A32]/10 hover:bg-[#C85A32] text-[#C85A32] hover:text-white border border-[#C85A32]/30 hover:border-[#C85A32] rounded-xl text-[10px] font-mono font-bold transition-all cursor-pointer ${styles.focusRing}`}
+        title="Send take-home assessment to candidate"
+      >
+        <FileCode2 className="h-3.5 w-3.5" />
+        Give Assessment
+      </button>
+    );
+  } else if (entry.stage === "Interview" && onAction) {
+    stageActionButton = (
+      <button
+        type="button"
+        onClick={() => onAction("interview", entry)}
+        className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#2563EB]/10 hover:bg-[#2563EB] text-[#2563EB] hover:text-white border border-[#2563EB]/30 hover:border-[#2563EB] rounded-xl text-[10px] font-mono font-bold transition-all cursor-pointer ${styles.focusRing}`}
+        title="Schedule interview round"
+      >
+        <Calendar className="h-3.5 w-3.5" />
+        Schedule Interview
+      </button>
+    );
+  } else if (entry.stage === "Offer" && onAction) {
+    stageActionButton = (
+      <button
+        type="button"
+        onClick={() => onAction("offer", entry)}
+        className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#2E5A44]/10 hover:bg-[#2E5A44] text-[#2E5A44] hover:text-white border border-[#2E5A44]/30 hover:border-[#2E5A44] rounded-xl text-[10px] font-mono font-bold transition-all cursor-pointer ${styles.focusRing}`}
+        title="Record and extend offer details"
+      >
+        <Award className="h-3.5 w-3.5" />
+        Extend Offer
+      </button>
+    );
+  } else if (entry.stage === "Hired" && onOpenDossier) {
+    stageActionButton = (
+      <button
+        type="button"
+        onClick={() => onOpenDossier(entry.candidate_id)}
+        className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#2E5A44]/10 hover:bg-[#2E5A44] text-[#2E5A44] hover:text-white border border-[#2E5A44]/30 hover:border-[#2E5A44] rounded-xl text-[10px] font-mono font-bold transition-all cursor-pointer ${styles.focusRing}`}
+        title="Candidate hired"
+      >
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        Hired Candidate
+      </button>
+    );
+  }
 
   return (
     <div className={`${styles.card} p-3 space-y-2.5`}>
@@ -245,7 +377,9 @@ function EntryCard({ entry, stages, onOpen, onMove }) {
         </p>
       )}
 
-      <div className="flex items-center justify-between gap-2">
+      {stageActionButton}
+
+      <div className="flex items-center justify-between gap-2 pt-0.5">
         <span className="text-[9px] font-mono text-[#6E6359]/70">
           {formatRelative(entry.updated_at || entry.created_at)}
         </span>
@@ -316,6 +450,21 @@ export default function PipelineBoard({ jobs, pipeline, outreach, assessments, t
     const result = await pipeline.move(entry.id, { stage });
     if (result.ok) toast.success(`${entry.candidate_name || "Candidate"} moved to ${stage}.`);
     else toast.error(result.message);
+  };
+
+  const handleAction = (kind, entry) => {
+    if (!entry) return;
+    const candidateObj = {
+      id: entry.candidate_id,
+      entry_id: entry.id,
+      display_name: entry.candidate_name || "Candidate",
+      job_id: entry.job_id,
+    };
+    if (kind === "outreach") actions.requestContact(candidateObj);
+    else if (kind === "shortlist") actions.addToPipeline(candidateObj);
+    else if (kind === "assessment") actions.sendAssessment(candidateObj);
+    else if (kind === "interview") actions.scheduleInterview(candidateObj);
+    else if (kind === "offer") actions.extendOffer(candidateObj);
   };
 
   const confirmRemoval = async () => {
@@ -402,6 +551,11 @@ export default function PipelineBoard({ jobs, pipeline, outreach, assessments, t
                         stages={stages}
                         onOpen={setDetail}
                         onMove={move}
+                        onAction={handleAction}
+                        onOpenDossier={(candidateId) => {
+                          setDetail(null);
+                          setDossierId(candidateId);
+                        }}
                       />
                     ))
                   )}
@@ -429,6 +583,7 @@ export default function PipelineBoard({ jobs, pipeline, outreach, assessments, t
           setDetail(null);
           setDossierId(candidateId);
         }}
+        onAction={handleAction}
         onRemove={setPendingRemoval}
       />
 

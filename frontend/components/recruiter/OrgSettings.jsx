@@ -443,6 +443,7 @@ function TeamSection({ user, org, isAdmin, isOwner, toast }) {
 // -----------------------------------------------------------------------------
 
 function CompanyProfileSection({ organization, profile, isAdmin, toast }) {
+  const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -472,6 +473,26 @@ function CompanyProfileSection({ organization, profile, isAdmin, toast }) {
 
   const set = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
 
+  const cancelEdit = () => {
+    const data = profile?.profile || EMPTY_PROFILE;
+    setForm({
+      company_name: data.company_name || organization?.name || "",
+      founder_name: data.founder_name || "",
+      founder_role: data.founder_role || "",
+      tagline: data.tagline || "",
+      stage: data.stage || "",
+      website_url: data.website_url || organization?.website_url || "",
+      industry: data.industry || "",
+      location: data.location || "",
+      team_size: data.team_size || "",
+      primary_tech_stack: toList(data.primary_tech_stack).join(", "),
+      about: data.about || "",
+      logo_url: data.logo_url || "",
+    });
+    setNameError("");
+    setEditing(false);
+  };
+
   const submit = async (event) => {
     event.preventDefault();
     if (!form.company_name.trim()) {
@@ -486,8 +507,12 @@ function CompanyProfileSection({ organization, profile, isAdmin, toast }) {
       primary_tech_stack: toList(form.primary_tech_stack),
     });
     setSaving(false);
-    if (result.ok) toast.success("Company profile saved.");
-    else toast.error(result.message);
+    if (result.ok) {
+      toast.success("Company profile saved.");
+      setEditing(false);
+    } else {
+      toast.error(result.message);
+    }
   };
 
   if (profile.loading && !form) return <LoadingBlock label="Loading company profile" />;
@@ -503,6 +528,7 @@ function CompanyProfileSection({ organization, profile, isAdmin, toast }) {
   if (!form) return null;
 
   const readOnly = !isAdmin;
+  const techStackList = toList(form.primary_tech_stack);
 
   return (
     <section className={`${styles.card} p-6 space-y-5`}>
@@ -510,87 +536,196 @@ function CompanyProfileSection({ organization, profile, isAdmin, toast }) {
         title="Company profile"
         description="Candidates see this in outreach messages and assessment invites. It is the only thing they know about you before they reply."
       >
+        {isAdmin && !editing && (
+          <button type="button" className={styles.secondary} onClick={() => setEditing(true)}>
+            Edit
+          </button>
+        )}
         {readOnly && <Chip tone="neutral">Admins can edit</Chip>}
       </PanelHeader>
 
       <ErrorBanner message={profile.error} onRetry={profile.reload} />
 
-      <form onSubmit={submit} className="space-y-5">
-        <fieldset disabled={readOnly} className="space-y-5 disabled:opacity-70">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {editing ? (
+        <form onSubmit={submit} className="space-y-5">
+          <fieldset disabled={readOnly} className="space-y-5 disabled:opacity-70">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field
+                label="Company name"
+                required
+                value={form.company_name}
+                onChange={set("company_name")}
+                placeholder="Your company"
+                error={nameError}
+              />
+              <Field
+                label="Website"
+                type="url"
+                value={form.website_url}
+                onChange={set("website_url")}
+                placeholder="https://"
+              />
+              <Field label="Your name" value={form.founder_name} onChange={set("founder_name")} placeholder="Who candidates hear from" />
+              <Field label="Your title" value={form.founder_role} onChange={set("founder_role")} placeholder="e.g. Co-founder" />
+              <Field
+                label="Funding stage"
+                as="select"
+                value={form.stage}
+                onChange={set("stage")}
+                options={FUNDING_STAGES.map((stage) => ({ value: stage, label: stage || "Not specified" }))}
+              />
+              <Field
+                label="Team size"
+                as="select"
+                value={form.team_size}
+                onChange={set("team_size")}
+                options={TEAM_SIZES.map((size) => ({ value: size, label: size || "Not specified" }))}
+              />
+              <Field label="Industry" value={form.industry} onChange={set("industry")} placeholder="e.g. Developer tools" />
+              <Field label="Location" value={form.location} onChange={set("location")} placeholder="e.g. Remote (EU timezones)" />
+            </div>
+
             <Field
-              label="Company name"
-              required
-              value={form.company_name}
-              onChange={set("company_name")}
-              placeholder="Your company"
-              error={nameError}
+              label="Tagline"
+              value={form.tagline}
+              onChange={set("tagline")}
+              placeholder="One line on what you do"
+              hint="Appears under your company name in candidate-facing emails."
             />
             <Field
-              label="Website"
-              type="url"
-              value={form.website_url}
-              onChange={set("website_url")}
-              placeholder="https://"
-            />
-            <Field label="Your name" value={form.founder_name} onChange={set("founder_name")} placeholder="Who candidates hear from" />
-            <Field label="Your title" value={form.founder_role} onChange={set("founder_role")} placeholder="e.g. Co-founder" />
-            <Field
-              label="Funding stage"
-              as="select"
-              value={form.stage}
-              onChange={set("stage")}
-              options={FUNDING_STAGES.map((stage) => ({ value: stage, label: stage || "Not specified" }))}
+              label="Core technologies"
+              value={form.primary_tech_stack}
+              onChange={set("primary_tech_stack")}
+              placeholder="Python, React, Postgres"
+              hint="Comma separated."
             />
             <Field
-              label="Team size"
-              as="select"
-              value={form.team_size}
-              onChange={set("team_size")}
-              options={TEAM_SIZES.map((size) => ({ value: size, label: size || "Not specified" }))}
+              label="About"
+              as="textarea"
+              rows={4}
+              value={form.about}
+              onChange={set("about")}
+              placeholder="What the team is building and why someone good should care."
             />
-            <Field label="Industry" value={form.industry} onChange={set("industry")} placeholder="e.g. Developer tools" />
-            <Field label="Location" value={form.location} onChange={set("location")} placeholder="e.g. Remote (EU timezones)" />
+            <Field label="Logo URL" type="url" value={form.logo_url} onChange={set("logo_url")} placeholder="https://" />
+          </fieldset>
+
+          {!readOnly && (
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className={styles.secondary}
+                onClick={cancelEdit}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button type="submit" className={styles.primary} disabled={saving}>
+                {saving ? (
+                  <Spinner className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+                ) : (
+                  <Save className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+                )}
+                Save profile
+              </button>
+            </div>
+          )}
+        </form>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="space-y-1">
+            <p className={styles.microLabel}>Company name</p>
+            <p className="text-xs font-bold text-[#262626]">{form.company_name || "—"}</p>
           </div>
-
-          <Field
-            label="Tagline"
-            value={form.tagline}
-            onChange={set("tagline")}
-            placeholder="One line on what you do"
-            hint="Appears under your company name in candidate-facing emails."
-          />
-          <Field
-            label="Core technologies"
-            value={form.primary_tech_stack}
-            onChange={set("primary_tech_stack")}
-            placeholder="Python, React, Postgres"
-            hint="Comma separated."
-          />
-          <Field
-            label="About"
-            as="textarea"
-            rows={4}
-            value={form.about}
-            onChange={set("about")}
-            placeholder="What the team is building and why someone good should care."
-          />
-          <Field label="Logo URL" type="url" value={form.logo_url} onChange={set("logo_url")} placeholder="https://" />
-        </fieldset>
-
-        {!readOnly && (
-          <div className="flex items-center justify-end pt-1">
-            <button type="submit" className={styles.primary} disabled={saving}>
-              {saving ? (
-                <Spinner className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
-              ) : (
-                <Save className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+          <div className="space-y-1">
+            <p className={styles.microLabel}>Website</p>
+            {form.website_url ? (
+              <a
+                href={form.website_url.startsWith("http") ? form.website_url : `https://${form.website_url}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`text-xs font-mono text-[#C85A32] hover:text-[#B83A14] inline-flex items-center gap-1.5 rounded ${styles.focusRing}`}
+              >
+                <Globe className="h-3 w-3" />
+                Visit
+              </a>
+            ) : (
+              <p className="text-xs font-mono text-[#6E6359]">Not set</p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <p className={styles.microLabel}>Contact / Sender</p>
+            <p className="text-xs text-[#262626]">
+              {form.founder_name || "—"}
+              {form.founder_role && (
+                <span className="text-[#6E6359] font-mono text-[10px] ml-1.5">({form.founder_role})</span>
               )}
-              Save profile
-            </button>
+            </p>
           </div>
-        )}
-      </form>
+          <div className="space-y-1">
+            <p className={styles.microLabel}>Funding stage</p>
+            <p className="text-xs font-mono text-[#262626]">{form.stage || "Not specified"}</p>
+          </div>
+          <div className="space-y-1">
+            <p className={styles.microLabel}>Team size</p>
+            <p className="text-xs font-mono text-[#262626]">{form.team_size ? `${form.team_size} members` : "Not specified"}</p>
+          </div>
+          <div className="space-y-1">
+            <p className={styles.microLabel}>Industry & Location</p>
+            <p className="text-xs text-[#262626]">
+              {[form.industry, form.location].filter(Boolean).join(" · ") || "—"}
+            </p>
+          </div>
+          {form.tagline && (
+            <div className="space-y-1 sm:col-span-3">
+              <p className={styles.microLabel}>Tagline</p>
+              <p className="text-xs font-serif italic text-[#262626]">"{form.tagline}"</p>
+            </div>
+          )}
+          {techStackList.length > 0 && (
+            <div className="space-y-1.5 sm:col-span-3">
+              <p className={styles.microLabel}>Core technologies</p>
+              <div className="flex flex-wrap gap-1.5">
+                {techStackList.map((tech, idx) => (
+                  <Chip key={idx} tone="neutral">
+                    {tech}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+          {form.about && (
+            <div className="space-y-1 sm:col-span-3">
+              <p className={styles.microLabel}>About</p>
+              <p className="text-xs text-[#6E6359] leading-relaxed whitespace-pre-line">{form.about}</p>
+            </div>
+          )}
+          {form.logo_url && (
+            <div className="space-y-1 sm:col-span-3">
+              <p className={styles.microLabel}>Logo</p>
+              <div className="flex items-center gap-3">
+                <img
+                  src={form.logo_url}
+                  alt={form.company_name ? `${form.company_name} logo` : "Logo"}
+                  className="h-8 max-w-[140px] object-contain rounded bg-white p-1 border border-[#DFD5C6]"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+                <a
+                  href={form.logo_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`text-[10px] font-mono text-[#C85A32] hover:text-[#B83A14] inline-flex items-center gap-1 underline ${styles.focusRing}`}
+                >
+                  <Globe className="h-3 w-3" />
+                  View logo URL
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
