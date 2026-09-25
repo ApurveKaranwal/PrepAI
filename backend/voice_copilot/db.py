@@ -3,10 +3,16 @@ import json
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+
+# Ensure environment is loaded
+load_dotenv()
 
 # Re-use the existing SQLite database file location or postgresql connection string
 DB_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "interviews.db")
-DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def _get_db_url() -> Optional[str]:
+    return os.environ.get("DATABASE_URL")
 
 class PoolConnectionWrapper:
     def __init__(self, conn, pool):
@@ -27,11 +33,12 @@ def _get_connection_pool():
     global _connection_pool
     if _connection_pool is not None:
         return _connection_pool
-    if not DATABASE_URL:
+    db_url = _get_db_url()
+    if not db_url:
         return None
     from psycopg2.pool import ThreadedConnectionPool
     try:
-        _connection_pool = ThreadedConnectionPool(1, 15, DATABASE_URL)
+        _connection_pool = ThreadedConnectionPool(1, 15, db_url)
         print("voice_copilot/db: Threaded connection pool successfully initialized.")
         return _connection_pool
     except Exception as e:
@@ -39,7 +46,8 @@ def _get_connection_pool():
         return None
 
 def get_db_conn():
-    if DATABASE_URL:
+    db_url = _get_db_url()
+    if db_url:
         # 1. Try connection pool
         pool = _get_connection_pool()
         if pool:
@@ -75,7 +83,7 @@ def get_db_conn():
         for attempt in range(max_retries):
             try:
                 import psycopg2
-                conn = psycopg2.connect(DATABASE_URL)
+                conn = psycopg2.connect(db_url)
                 conn.autocommit = True
                 return conn, True
             except Exception as e:
@@ -134,11 +142,12 @@ def create_voice_session(
     resume_text: Optional[str],
     role: str,
     interview_mode: str,
-    language: str = "en-IN"
+    language: str = "en-IN",
+    user_id: Optional[str] = None
 ) -> int:
     query = """
-        INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """
     import time
     max_retries = 3
@@ -151,13 +160,13 @@ def create_voice_session(
             if is_pg:
                 # PostgreSQL syntax
                 pg_query = """
-                    INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
+                    INSERT INTO voice_sessions (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language, user_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
                 """
-                cursor.execute(pg_query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
+                cursor.execute(pg_query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language, str(user_id) if user_id else None))
                 session_id = cursor.fetchone()[0]
             else:
-                cursor.execute(query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language))
+                cursor.execute(query, (github_url, linkedin_url, resume_name, resume_text, role, interview_mode, language, str(user_id) if user_id else None))
                 conn.commit()
                 session_id = cursor.lastrowid
             return session_id

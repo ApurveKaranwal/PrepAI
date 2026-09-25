@@ -59,8 +59,9 @@ async function requestFullscreenElement(): Promise<boolean> {
     return false;
   }
 }
+import { getBackendBaseUrl } from "@/lib/api";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
+const BACKEND_URL = getBackendBaseUrl();
 
 const SUPPORTED_LANGUAGES = [
   { id: "python", label: "Python 3.11", ext: ".py" },

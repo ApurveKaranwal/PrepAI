@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
-const BACKEND_INTERNAL_URL =
+const rawBackend =
   process.env.BACKEND_INTERNAL_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "http://127.0.0.1:8001";
+const BACKEND_INTERNAL_URL = rawBackend.replace(/\/+$/, "");
 
 const nextConfig: NextConfig = {
   // Keep module resolution anchored to this Next.js app when the repository is

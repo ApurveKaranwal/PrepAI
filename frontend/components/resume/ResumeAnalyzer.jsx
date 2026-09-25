@@ -56,6 +56,7 @@ import {
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
 } from "recharts";
+import { getBackendBaseUrl } from "@/lib/api";
 
 // ─── Design tokens (mirror recruiter/ui.jsx) ───────────────────────────────────
 const FOCUS_RING = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C85A32]";
@@ -1203,8 +1204,7 @@ export default function ResumeAnalyzer() {
     formData.append("resume", file);
 
     try {
-      const backendUrl =
-        process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
+      const backendUrl = getBackendBaseUrl();
       const res = await fetch(`${backendUrl}/api/resume-analyze`, {
         method: "POST",
         body: formData,

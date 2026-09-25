@@ -54,7 +54,9 @@ const SUPPORTED_LANGUAGES = [
   { code: "od-IN", name: "Odia (ଓଡ଼ିଆ)" }
 ];
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
+import { getBackendBaseUrl } from "@/lib/api";
+
+const BACKEND_URL = getBackendBaseUrl();
 
 export default function VoiceCopilot({ user }) {
   // Navigation & session state
@@ -252,6 +254,12 @@ export default function VoiceCopilot({ user }) {
     
     formData.append("interview_mode", interviewMode);
     formData.append("language", language);
+    if (user?.uid || user?.id) {
+      formData.append("user_id", user?.uid || user?.id);
+    }
+    if (user?.email) {
+      formData.append("email", user.email);
+    }
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/voice-copilot/onboard`, {
@@ -448,8 +456,12 @@ export default function VoiceCopilot({ user }) {
 
   // WebSocket Connection
   const connectWebSocket = (sessId) => {
-    const wsProto = BACKEND_URL.startsWith("https") ? "wss" : "ws";
-    const wsHost = BACKEND_URL.replace(/^https?:\/\//, "");
+    let backend = getBackendBaseUrl();
+    if (!backend && typeof window !== "undefined") {
+      backend = window.location.origin;
+    }
+    const wsProto = backend.startsWith("https") ? "wss" : "ws";
+    const wsHost = backend.replace(/^https?:\/\//, "").replace(/\/+$/, "");
     const ws = new WebSocket(`${wsProto}://${wsHost}/api/voice-copilot/stream/${sessId}`);
     wsRef.current = ws;
     

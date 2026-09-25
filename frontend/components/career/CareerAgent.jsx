@@ -36,8 +36,9 @@ import {
   Bell,
   BellRing
 } from "lucide-react";
+import { getBackendBaseUrl } from "@/lib/api";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
+const BACKEND_URL = getBackendBaseUrl();
 
 // Sub-tab persistence: a refresh inside the Career Agent should land the user
 // on the same sub-tab they were on, not always the dashboard. localStorage is

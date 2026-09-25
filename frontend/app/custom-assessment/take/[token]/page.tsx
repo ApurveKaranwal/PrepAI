@@ -11,8 +11,9 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Send, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from "lucide-react";
+import { getBackendBaseUrl } from "@/lib/api";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
+const BACKEND_URL = getBackendBaseUrl();
 
 export default function CustomAssessmentTakePage() {
   const router = useRouter();

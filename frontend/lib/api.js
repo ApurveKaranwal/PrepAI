@@ -26,13 +26,23 @@
 
 export function getBackendBaseUrl() {
   const envUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
-  if (envUrl) {
-    if (typeof window !== "undefined" && (envUrl.includes("localhost:8001") || envUrl.includes("127.0.0.1:8001"))) {
-      return "http://127.0.0.1:8001";
+  if (typeof window !== "undefined") {
+    const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (envUrl) {
+      const trimmed = envUrl.trim().replace(/\/+$/, "");
+      if (isLocalhost) {
+        return trimmed;
+      }
+      // If deployed on Vercel or remote host and envUrl is localhost,
+      // fallback to relative URL so Next.js rewrites proxy to backend
+      if (trimmed.includes("localhost") || trimmed.includes("127.0.0.1")) {
+        return "";
+      }
+      return trimmed;
     }
-    return envUrl;
+    return isLocalhost ? "http://127.0.0.1:8001" : "";
   }
-  return "http://127.0.0.1:8001";
+  return (envUrl || "http://127.0.0.1:8001").trim().replace(/\/+$/, "");
 }
 
 const BACKEND_URL = getBackendBaseUrl();
@@ -217,7 +227,7 @@ export async function apiFetch(path, options = {}) {
 
   let response;
   const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), 10000);
+  const timeoutId = setTimeout(() => timeoutController.abort(), 45000);
   const activeSignal = signal || timeoutController.signal;
 
   try {

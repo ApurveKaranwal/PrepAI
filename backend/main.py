@@ -62,7 +62,7 @@ ALLOWED_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$|^https://([a-zA-Z0-9_-]+\.)*vercel\.app$|^https://([a-zA-Z0-9_-]+\.)*apurve\.xyz$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -349,7 +349,7 @@ async def ingest_details(
                 break
 
     # 4. Generate Initial Question & Create Session
-    session_id = database.create_session(github_url, resume_name, resume_text, role)
+    session_id = database.create_session(github_url, resume_name, resume_text, role, user_id=user_id)
     
     initial_payload = generate_initial_question(resume_text, repo_files, role)
     if initial_payload and "result" in initial_payload:
@@ -510,13 +510,20 @@ def speech_to_text(file: UploadFile = File(...), language_code: str = Form("en-I
 
 
 @app.get("/api/history")
-def get_history():
+def get_history(user_id: Optional[str] = None):
     try:
-        history_data = database.get_history_data()
+        history_data = database.get_history_data(user_id=user_id)
         return history_data
     except Exception as e:
         print(f"Error fetching history: {e}")
-        return {"sessions": [], "error": "Failed to load history. Please try again."}
+        return {
+            "all_history": [],
+            "dashboard_history": [],
+            "voice_history": [],
+            "analytics_history": [],
+            "overall_stats": {},
+            "error": "Failed to load history. Please try again."
+        }
 
 # =========================================================================
 # USER AUTHENTICATION

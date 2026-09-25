@@ -34,9 +34,9 @@ import {
   StatTile,
   styles,
 } from "./ui";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, getBackendBaseUrl } from "@/lib/api";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
+const BACKEND_URL = getBackendBaseUrl();
 
 function ScoreTag({ score }) {
   if (score >= 85) return <Chip tone="accent">Strong ({score}/100)</Chip>;

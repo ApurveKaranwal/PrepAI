@@ -14,6 +14,23 @@ from dotenv import load_dotenv
 # Load environment
 load_dotenv()
 
+def format_db_timestamp(val) -> str:
+    if not val:
+        return ""
+    if isinstance(val, dt_class):
+        return val.strftime("%b %d, %Y")
+    val_str = str(val).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return dt_class.strptime(val_str, fmt).strftime("%b %d, %Y")
+        except ValueError:
+            pass
+    try:
+        return dt_class.fromisoformat(val_str).strftime("%b %d, %Y")
+    except Exception:
+        pass
+    return val_str[:10]
+
 # Wrapper classes for PostgreSQL compatibility
 class DictRowWrapper:
     def __init__(self, d, keys):
@@ -585,6 +602,36 @@ def init_db():
             pass
 
     # Alter candidate_profiles to add multi-platform & devscore columns
+    try:
+        if not column_exists('sessions', 'user_id'):
+            cursor.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT")
+            conn.commit()
+    except Exception as e:
+        print("Error adding user_id to sessions:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    try:
+        cursor.execute("ALTER TABLE voice_sessions ALTER COLUMN user_id TYPE TEXT USING user_id::text;")
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    try:
+        if not column_exists('candidate_profiles', 'resume_analysis'):
+            cursor.execute("ALTER TABLE candidate_profiles ADD COLUMN IF NOT EXISTS resume_analysis TEXT DEFAULT '{}'")
+            conn.commit()
+    except Exception as e:
+        print("Error adding resume_analysis to candidate_profiles:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     # ─── External-jobs freshness columns ───────────────────────────────────
     # `fetched_at` is set every time a job is seen in a provider feed.
@@ -1558,13 +1605,19 @@ def remove_org_member(org_id: int, user_id: str) -> bool:
 
 
 # Session logic
-def create_session(github_url: str, resume_name: str = None, resume_text: str = None, role: str = "Software Engineer") -> int:
+def create_session(github_url: str, resume_name: str = None, resume_text: str = None, role: str = "Software Engineer", user_id: str = None) -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO sessions (github_url, resume_name, resume_text, role) VALUES (?, ?, ?, ?)",
-        (github_url, resume_name, resume_text, role)
-    )
+    if user_id:
+        cursor.execute(
+            "INSERT INTO sessions (github_url, resume_name, resume_text, role, user_id) VALUES (?, ?, ?, ?, ?)",
+            (github_url, resume_name, resume_text, role, str(user_id))
+        )
+    else:
+        cursor.execute(
+            "INSERT INTO sessions (github_url, resume_name, resume_text, role) VALUES (?, ?, ?, ?)",
+            (github_url, resume_name, resume_text, role)
+        )
     conn.commit()
     session_id = cursor.lastrowid
     conn.close()
@@ -1671,79 +1724,144 @@ def end_session(session_id: int, duration_seconds: int, total_frames: int = 0, a
         "duration": duration_str
     }
 
-def get_history_data() -> dict:
+def get_history_data(user_id: str = None) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM sessions WHERE score IS NOT NULL ORDER BY id DESC")
-    sessions = [dict(s) for s in cursor.fetchall()]
-    
-    dashboard_history = []
-    analytics_history = []
-    
-    for i, s in enumerate(sessions):
-        try:
-            dt = datetime.strptime(s["created_at"], "%Y-%m-%d %H:%M:%S")
-            formatted_date = dt.strftime("%b %d, %Y")
-        except Exception:
-            formatted_date = s["created_at"]
-            
-        dashboard_history.append({
-            "id": s["id"],
-            "session": s["role"],
-            "date": formatted_date,
-            "status": f"{s['score']} / 10",
-            "duration": s["duration"] or "0s"
-        })
-        
-        trend = "neutral"
-        if i + 1 < len(sessions):
-            prev_score = sessions[i+1]["score"]
-            if s["score"] > prev_score:
-                trend = "up"
-            elif s["score"] < prev_score:
-                trend = "down"
-                
-        analytics_history.append({
-            "date": formatted_date,
-            "role": s["role"],
-            "score": f"{int(s['score'] * 10)}%",
-            "trend": trend
-        })
-        
-    cursor.execute("""
-        SELECT a.* FROM answers a
-        JOIN sessions s ON a.session_id = s.id
-        WHERE s.score IS NOT NULL
-    """)
-    answers = [dict(ans) for ans in cursor.fetchall()]
-    
-    # Query voice sessions
+    # 1. Fetch coding sessions
+    sessions = []
     try:
-        cursor.execute("SELECT * FROM voice_sessions WHERE overall_rating IS NOT NULL ORDER BY id DESC")
-        voice_sessions = [dict(vs) for vs in cursor.fetchall()]
-    except Exception:
+        if user_id:
+            cursor.execute("SELECT * FROM sessions WHERE user_id = ? ORDER BY id DESC", (str(user_id),))
+            sessions = [dict(s) for s in cursor.fetchall()]
+            # If user has no personal sessions yet, fallback to legacy unassigned sessions so past data is visible
+            if not sessions:
+                cursor.execute("SELECT * FROM sessions WHERE user_id IS NULL OR user_id = '' ORDER BY id DESC")
+                sessions = [dict(s) for s in cursor.fetchall()]
+        else:
+            cursor.execute("SELECT * FROM sessions ORDER BY id DESC")
+            sessions = [dict(s) for s in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error querying sessions in get_history_data: {e}")
+        sessions = []
+
+    # 2. Fetch voice sessions
+    voice_sessions = []
+    try:
+        if user_id:
+            cursor.execute("SELECT * FROM voice_sessions WHERE user_id = ? ORDER BY id DESC", (str(user_id),))
+            voice_sessions = [dict(vs) for vs in cursor.fetchall()]
+            if not voice_sessions:
+                cursor.execute("SELECT * FROM voice_sessions WHERE user_id IS NULL OR user_id = '' ORDER BY id DESC")
+                voice_sessions = [dict(vs) for vs in cursor.fetchall()]
+        else:
+            cursor.execute("SELECT * FROM voice_sessions ORDER BY id DESC")
+            voice_sessions = [dict(vs) for vs in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error querying voice_sessions in get_history_data: {e}")
         voice_sessions = []
+
+    # 3. Fetch answers for scored coding sessions
+    try:
+        cursor.execute("""
+            SELECT a.* FROM answers a
+            JOIN sessions s ON a.session_id = s.id
+            WHERE s.score IS NOT NULL
+        """)
+        answers = [dict(ans) for ans in cursor.fetchall()]
+    except Exception:
+        answers = []
         
     conn.close()
-    
+
+    # Partition scored vs all for accurate presentation & stats
+    scored_sessions = [s for s in sessions if s.get("score") is not None]
+    scored_voice = [vs for vs in voice_sessions if vs.get("overall_rating") is not None]
+
+    dashboard_history = []
+    for s in sessions:
+        score_val = s.get("score")
+        formatted_date = format_db_timestamp(s.get("created_at"))
+        dashboard_history.append({
+            "id": s["id"],
+            "session": s.get("role") or "Technical Interview",
+            "type": "Coding Challenge",
+            "date": formatted_date,
+            "status": f"{round(float(score_val), 1)} / 10" if score_val is not None else "In Progress",
+            "duration": s.get("duration") or "In Progress",
+            "has_score": score_val is not None,
+            "score_numeric": float(score_val) if score_val is not None else None
+        })
+
     voice_history = []
     for vs in voice_sessions:
-        try:
-            dt = datetime.strptime(vs["created_at"], "%Y-%m-%d %H:%M:%S")
-            formatted_date = dt.strftime("%b %d, %Y")
-        except Exception:
-            formatted_date = vs["created_at"]
+        rating_val = vs.get("overall_rating")
+        formatted_date = format_db_timestamp(vs.get("created_at"))
+        dur_sec = vs.get("duration_seconds") or 0
+        if dur_sec > 0:
+            dur_str = f"{dur_sec // 60}m {dur_sec % 60}s"
+        else:
+            dur_str = "< 1m" if rating_val is not None else "In Progress"
             
         voice_history.append({
             "id": vs["id"],
-            "session": vs["role"],
+            "session": vs.get("role") or "Voice Copilot",
+            "type": "Voice Copilot",
             "date": formatted_date,
-            "status": f"{vs['overall_rating']} / 10",
-            "duration": f"{vs['duration_seconds'] // 60}m {vs['duration_seconds'] % 60}s" if vs.get("duration_seconds") else "0s"
+            "status": f"{round(float(rating_val), 1)} / 10" if rating_val is not None else "In Progress",
+            "duration": dur_str,
+            "has_score": rating_val is not None,
+            "score_numeric": float(rating_val) if rating_val is not None else None
         })
 
-    # Combined Averages & Insights
+    # Combined all_history in reverse chronological order
+    all_history = sorted(
+        dashboard_history + voice_history,
+        key=lambda x: x.get("id") or 0,
+        reverse=True
+    )
+
+    # Combined analytics_history of all scored sessions (both coding & voice)
+    all_scored_items = []
+    for s in scored_sessions:
+        all_scored_items.append({
+            "date_raw": str(s.get("created_at") or ""),
+            "date": format_db_timestamp(s.get("created_at")),
+            "role": f"{s.get('role') or 'Software Engineer'} (Coding)",
+            "score_val": float(s["score"]),
+            "score": f"{int(float(s['score']) * 10)}%",
+            "type": "coding"
+        })
+    for vs in scored_voice:
+        all_scored_items.append({
+            "date_raw": str(vs.get("created_at") or ""),
+            "date": format_db_timestamp(vs.get("created_at")),
+            "role": f"{vs.get('role') or 'Software Engineer'} (Voice)",
+            "score_val": float(vs["overall_rating"]),
+            "score": f"{int(float(vs['overall_rating']) * 10)}%",
+            "type": "voice"
+        })
+
+    all_scored_items.sort(key=lambda x: x["date_raw"], reverse=True)
+
+    analytics_history = []
+    for i, item in enumerate(all_scored_items):
+        trend = "neutral"
+        if i + 1 < len(all_scored_items):
+            prev_val = all_scored_items[i+1]["score_val"]
+            if item["score_val"] > prev_val:
+                trend = "up"
+            elif item["score_val"] < prev_val:
+                trend = "down"
+        analytics_history.append({
+            "date": item["date"],
+            "role": item["role"],
+            "score": item["score"],
+            "trend": trend,
+            "type": item["type"]
+        })
+
+    # Combined Averages & Insights (purely based on database records)
     overall_readiness = 0
     comm_score = 75
     tech_score = 70
@@ -1754,19 +1872,17 @@ def get_history_data() -> dict:
     ownership_score = 70
     improvements = []
     
-    # 1. Process Coding Sessions
-    coding_count = len(sessions)
-    if sessions:
-        latest_score = sessions[0]["score"]
-        avg_coding_score = sum(s["score"] for s in sessions) / coding_count
-        
-        avg_body = sum((s["body_score"] or 0) for s in sessions) / coding_count
+    # 1. Process Scored Coding Sessions
+    coding_count = len(scored_sessions)
+    if scored_sessions:
+        avg_coding_score = sum(float(s["score"]) for s in scored_sessions) / coding_count
+        avg_body = sum((float(s.get("body_score") or 0)) for s in scored_sessions) / coding_count
         body_score = int(avg_body)
         
-        total_fillers = sum(a["fillers"] for a in answers)
-        total_wpm = sum(a["wpm"] for a in answers)
+        total_fillers = sum(a.get("fillers", 0) for a in answers)
+        total_wpm = sum(a.get("wpm", 0) for a in answers)
         total_answers = len(answers) if answers else 1
-        correct_answers = sum(1 for a in answers if a["score"] >= 7.0)
+        correct_answers = sum(1 for a in answers if a.get("score", 0) >= 7.0)
         
         avg_fillers = total_fillers / total_answers
         avg_wpm = total_wpm / total_answers
@@ -1779,7 +1895,7 @@ def get_history_data() -> dict:
             improvements.append({
                 "type": "warning",
                 "title": "Reduce Filler Words",
-                "detail": f"You averaged {round(avg_fillers, 1)} filler words ('um', 'like', 'actually') per question. Focus on brief pauses rather than filler sounds."
+                "detail": f"You averaged {round(avg_fillers, 1)} filler words per question. Focus on brief pauses rather than filler sounds."
             })
         if avg_score_10 < 8.0:
             improvements.append({
@@ -1806,18 +1922,17 @@ def get_history_data() -> dict:
         correct_answers = 0
         total_answers = 0
         
-    # 2. Process Voice Sessions
-    voice_count = len(voice_sessions)
-    if voice_sessions:
-        avg_voice_overall = sum(vs["overall_rating"] for vs in voice_sessions) / voice_count
-        avg_technical_depth = sum(vs["technical_depth"] for vs in voice_sessions) / voice_count
-        avg_communication = sum(vs["communication"] for vs in voice_sessions) / voice_count
-        avg_problem_solving = sum(vs["problem_solving"] for vs in voice_sessions) / voice_count
-        avg_system_design = sum(vs["system_design"] for vs in voice_sessions) / voice_count
-        avg_ownership = sum(vs["ownership"] for vs in voice_sessions) / voice_count
+    # 2. Process Scored Voice Sessions
+    voice_count = len(scored_voice)
+    if scored_voice:
+        avg_voice_overall = sum(float(vs["overall_rating"]) for vs in scored_voice) / voice_count
+        avg_technical_depth = sum(float(vs["technical_depth"]) for vs in scored_voice if vs.get("technical_depth") is not None) / max(1, sum(1 for vs in scored_voice if vs.get("technical_depth") is not None))
+        avg_communication = sum(float(vs["communication"]) for vs in scored_voice if vs.get("communication") is not None) / max(1, sum(1 for vs in scored_voice if vs.get("communication") is not None))
+        avg_problem_solving = sum(float(vs["problem_solving"]) for vs in scored_voice if vs.get("problem_solving") is not None) / max(1, sum(1 for vs in scored_voice if vs.get("problem_solving") is not None))
+        avg_system_design = sum(float(vs["system_design"]) for vs in scored_voice if vs.get("system_design") is not None) / max(1, sum(1 for vs in scored_voice if vs.get("system_design") is not None))
+        avg_ownership = sum(float(vs["ownership"]) for vs in scored_voice if vs.get("ownership") is not None) / max(1, sum(1 for vs in scored_voice if vs.get("ownership") is not None))
         
-        # Pull strengths/weaknesses/missed_concepts from the latest voice session
-        latest_voice = voice_sessions[0]
+        latest_voice = scored_voice[0]
         if latest_voice.get("weaknesses"):
             try:
                 weaknesses_list = json.loads(latest_voice["weaknesses"])
@@ -1851,17 +1966,16 @@ def get_history_data() -> dict:
         avg_system_design = None
         avg_ownership = None
         
-    # 3. Calculations (No dummy defaults, purely based on database records)
+    # 3. Overall Readiness & Scores
     latest_scores = []
-    if sessions:
-        latest_scores.append(sessions[0]["score"] * 10)
-    if voice_sessions:
-        latest_scores.append(voice_sessions[0]["overall_rating"] * 10)
+    if scored_sessions:
+        latest_scores.append(float(scored_sessions[0]["score"]) * 10)
+    if scored_voice:
+        latest_scores.append(float(scored_voice[0]["overall_rating"]) * 10)
         
     if latest_scores:
         overall_readiness = int(sum(latest_scores) / len(latest_scores))
         
-    # Problem Solving: based on DSA coding tests (average coding score * 10)
     if avg_coding_score is not None:
         problem_solving_score = int(avg_coding_score * 10)
     elif avg_problem_solving is not None:
@@ -1869,7 +1983,6 @@ def get_history_data() -> dict:
     else:
         problem_solving_score = 0
         
-    # Technical Depth: based on Voice Copilot technical depth
     if avg_technical_depth is not None:
         tech_score = int(avg_technical_depth * 10)
     elif avg_coding_score is not None:
@@ -1877,7 +1990,6 @@ def get_history_data() -> dict:
     else:
         tech_score = 0
         
-    # Communication Flow: based on Voice Copilot communication rating
     if avg_communication is not None:
         comm_score = int(avg_communication * 10)
     elif coding_comm_score is not None:
@@ -1885,13 +1997,11 @@ def get_history_data() -> dict:
     else:
         comm_score = 0
         
-    # System Architecture: based on Voice Copilot system design rating
     if avg_system_design is not None:
         system_design_score = int(avg_system_design * 10)
     else:
         system_design_score = 0
         
-    # Behavioral & Leadership: based on Voice Copilot ownership rating
     if avg_ownership is not None:
         ownership_score = int(avg_ownership * 10)
     else:
@@ -1908,7 +2018,7 @@ def get_history_data() -> dict:
         })
         
     # Construct skills report
-    roles_tested = list(set([s["role"] for s in sessions] + [vs["role"] for vs in voice_sessions]))
+    roles_tested = list(set([s.get("role") for s in sessions if s.get("role")] + [vs.get("role") for vs in voice_sessions if vs.get("role")]))
     if roles_tested:
         role_str = roles_tested[0]
         skills_report = (
@@ -1922,6 +2032,7 @@ def get_history_data() -> dict:
         skills_report = "No interview sessions completed yet. Start a session to analyze your communication and technical patterns."
         
     return {
+        "all_history": all_history,
         "dashboard_history": dashboard_history,
         "voice_history": voice_history,
         "analytics_history": analytics_history,
@@ -1937,8 +2048,10 @@ def get_history_data() -> dict:
             "improvements": improvements,
             "correct_answers": correct_answers,
             "total_answers": total_answers,
-            "coding_sessions_count": coding_count,
-            "voice_sessions_count": voice_count
+            "coding_sessions_count": len(sessions),
+            "voice_sessions_count": len(voice_sessions),
+            "scored_coding_sessions_count": coding_count,
+            "scored_voice_sessions_count": voice_count
         },
         "skills_report": skills_report
     }
@@ -2030,6 +2143,10 @@ def save_candidate_profile(user_id: str, p: dict):
             1 if p.get("open_to_opportunities", True) else 0
         ))
     
+    if "resume_analysis" in p and p["resume_analysis"]:
+        analysis_val = json.dumps(p["resume_analysis"]) if isinstance(p["resume_analysis"], dict) else str(p["resume_analysis"])
+        cursor.execute("UPDATE candidate_profiles SET resume_analysis = ? WHERE user_id = ?", (analysis_val, user_id))
+
     conn.commit()
     conn.close()
 
@@ -2113,8 +2230,11 @@ def get_candidate_profile(user_id: str, email: str = None) -> dict:
 
     # 4. Graceful fallback for single-user dev environment if not found
     if not row:
-        cursor.execute("SELECT * FROM candidate_profiles ORDER BY id DESC LIMIT 1")
-        row = cursor.fetchone()
+        try:
+            cursor.execute("SELECT * FROM candidate_profiles ORDER BY created_at DESC LIMIT 1")
+            row = cursor.fetchone()
+        except Exception:
+            row = None
 
     conn.close()
     
@@ -2150,6 +2270,7 @@ def get_candidate_profile(user_id: str, email: str = None) -> dict:
         "last_platform_sync": str(row["last_platform_sync"]) if "last_platform_sync" in row.keys() and row["last_platform_sync"] else "",
         "open_to_opportunities": bool(row["open_to_opportunities"]) if "open_to_opportunities" in row.keys() and row["open_to_opportunities"] is not None else True,
         "opportunity_preferences": row["opportunity_preferences"] if "opportunity_preferences" in row.keys() and row["opportunity_preferences"] else "",
+        "resume_analysis": json.loads(row["resume_analysis"]) if ("resume_analysis" in row.keys() and row["resume_analysis"]) else {},
         "created_at": row["created_at"]
     }
 

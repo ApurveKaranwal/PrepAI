@@ -161,7 +161,8 @@ async def onboard_candidate(
         resume_text=resume_text,
         role=role,
         interview_mode=interview_mode,
-        language=language
+        language=language,
+        user_id=user_id
     )
     
     db.update_voice_profile(session_id, profile_summary)

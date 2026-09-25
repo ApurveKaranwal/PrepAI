@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { getBackendBaseUrl } from "@/lib/api";
 import {
   Search,
   FileText,
@@ -55,8 +56,6 @@ const CustomRadarTooltip = ({ active, payload }) => {
   return null;
 };
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
-
 export default function DashboardHome({ onNavigate, user }) {
   const [voiceHistory, setVoiceHistory] = useState([]);
   const [overallStats, setOverallStats] = useState(null);
@@ -74,7 +73,7 @@ export default function DashboardHome({ onNavigate, user }) {
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [copiedBadge, setCopiedBadge] = useState(false);
 
-  const [resumeAnalysis] = useState(() => {
+  const [resumeAnalysis, setResumeAnalysis] = useState(() => {
     if (typeof window !== "undefined") {
       try {
         const cached = localStorage.getItem('prepflow_latest_resume_analysis');
@@ -96,17 +95,21 @@ export default function DashboardHome({ onNavigate, user }) {
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    // Allow up to 45 seconds for Render free tier cold-starts
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     async function fetchHistory() {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/history`, { signal: controller.signal });
+        const backend = getBackendBaseUrl();
+        const userIdParam = user?.uid ? `?user_id=${encodeURIComponent(user.uid)}` : "";
+        const res = await fetch(`${backend}/api/history${userIdParam}`, { signal: controller.signal });
         if (res.ok && !cancelled) {
           const data = await res.json();
           if (data) {
-            if (data.voice_history) {
-              setVoiceHistory(data.voice_history);
-            }
+            const combined = (data.all_history && data.all_history.length > 0)
+              ? data.all_history
+              : (data.voice_history || []);
+            setVoiceHistory(combined);
             if (data.overall_stats) {
               setOverallStats(data.overall_stats);
             }
@@ -125,8 +128,9 @@ export default function DashboardHome({ onNavigate, user }) {
     async function fetchDevScore() {
       if (!cancelled) setLoadingDevScore(true);
       try {
+        const backend = getBackendBaseUrl();
         const userId = user?.uid || "anonymous";
-        const res = await fetch(`${BACKEND_URL}/api/profile/devscore?user_id=${userId}`, { signal: controller.signal });
+        const res = await fetch(`${backend}/api/profile/devscore?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
         if (res.ok && !cancelled) {
           const data = await res.json();
           if (data.devscore_data) {
@@ -136,6 +140,10 @@ export default function DashboardHome({ onNavigate, user }) {
             setSyncLeetcode(data.profile.leetcode_handle || "");
             setSyncCodeforces(data.profile.codeforces_handle || "");
             setSyncGithub(data.profile.github_url || "");
+            // Restore resume analysis from DB profile if not present in localStorage
+            if (data.profile.resume_analysis && Object.keys(data.profile.resume_analysis).length > 0) {
+              setResumeAnalysis((prev) => prev || data.profile.resume_analysis);
+            }
           }
         }
       } catch (err) {
@@ -148,17 +156,9 @@ export default function DashboardHome({ onNavigate, user }) {
     fetchHistory();
     fetchDevScore();
 
-    const fallbackTimer = setTimeout(() => {
-      if (!cancelled) {
-        setLoading(false);
-        setLoadingDevScore(false);
-      }
-    }, 2000);
-
     return () => {
       cancelled = true;
       clearTimeout(timeoutId);
-      clearTimeout(fallbackTimer);
       controller.abort();
     };
   }, [user]);
@@ -168,7 +168,8 @@ export default function DashboardHome({ onNavigate, user }) {
     setIsSyncing(true);
     setSyncSuccess(false);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/profile/sync-platforms`, {
+      const backend = getBackendBaseUrl();
+      const res = await fetch(`${backend}/api/profile/sync-platforms`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -909,14 +910,25 @@ export default function DashboardHome({ onNavigate, user }) {
                       voiceHistory.map((row) => (
                         <tr key={row.id} className="hover:bg-[#FAF6F0]/40 transition-colors">
                           <td className="py-4 px-5 font-serif font-bold text-[#262626]">
-                            {row.session}
+                            <div className="flex items-center gap-2">
+                              <span>{row.session}</span>
+                              {row.type && (
+                                <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-[#FAF6F0] border border-[#DFD5C6] text-[#6E6359]">
+                                  {row.type}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-4 px-5 text-[#6E6359] font-medium flex items-center gap-1.5">
                             <Calendar className="h-3.5 w-3.5 text-[#6E6359]/55" />
                             {row.date}
                           </td>
                           <td className="py-4 px-5">
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E8F2EC] text-[#2E5A44] border border-[#B3D6C2]">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                              row.status === "In Progress"
+                                ? "bg-[#FAF6F0] text-[#8C6D3B] border-[#E8D8B8]"
+                                : "bg-[#E8F2EC] text-[#2E5A44] border-[#B3D6C2]"
+                            }`}>
                               {row.status}
                             </span>
                           </td>

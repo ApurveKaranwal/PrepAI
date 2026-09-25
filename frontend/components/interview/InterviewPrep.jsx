@@ -13,8 +13,9 @@ import {
   Clock,
   Brain
 } from "lucide-react";
+import { getBackendBaseUrl } from "@/lib/api";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
+const BACKEND_URL = getBackendBaseUrl();
 
 export default function InterviewPrep({ onEndInterview, user }) {
   // Ingestion states: 'idle', 'reading_resume', 'scraping_github', 'parsing_code', 'completed'

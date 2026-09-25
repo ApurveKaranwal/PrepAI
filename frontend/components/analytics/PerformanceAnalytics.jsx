@@ -26,6 +26,7 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer
 } from "recharts";
+import { getBackendBaseUrl } from "@/lib/api";
 
 const CustomAreaTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
@@ -39,8 +40,6 @@ const CustomAreaTooltip = ({ active, payload }) => {
   }
   return null;
 };
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001';
 
 export default function PerformanceAnalytics({ user }) {
   const [history, setHistory] = useState([]);
@@ -57,12 +56,25 @@ export default function PerformanceAnalytics({ user }) {
   const [totalAnswers, setTotalAnswers] = useState(0);
 
   useEffect(() => {
+    let isMounted = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
     async function fetchHistory() {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/history`);
+        const backend = getBackendBaseUrl();
+        const queryParams = new URLSearchParams();
+        if (user?.uid) {
+          queryParams.set("user_id", user.uid);
+        }
+        const queryString = queryParams.toString() ? `?${queryParams.toString()}` : "";
+        const res = await fetch(`${backend}/api/history${queryString}`, {
+          signal: controller.signal,
+        });
+
         if (res.ok) {
           const data = await res.json();
-          if (data) {
+          if (data && isMounted) {
             if (data.analytics_history) {
               setHistory(data.analytics_history);
             }
@@ -81,31 +93,47 @@ export default function PerformanceAnalytics({ user }) {
           }
         }
       } catch (err) {
-        console.warn("Backend not active:", err);
+        if (err.name !== "AbortError") {
+          console.warn("Backend not active:", err);
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
       
-      setHistory([]);
-      setOverallReadiness(0);
-      setCommunication(0);
-      setTechnical(0);
-      setBodyLanguage(0);
-      setConfidence(0);
-      setImprovements([]);
-      setCorrectAnswers(0);
-      setTotalAnswers(0);
-      setLoading(false);
+      if (isMounted) {
+        setHistory([]);
+        setOverallReadiness(0);
+        setCommunication(0);
+        setTechnical(0);
+        setBodyLanguage(0);
+        setConfidence(0);
+        setImprovements([]);
+        setCorrectAnswers(0);
+        setTotalAnswers(0);
+        setLoading(false);
+      }
     }
+
     fetchHistory();
-  }, []);
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+      clearTimeout(timeoutId);
+    };
+  }, [user?.uid]);
 
   // Format history for AreaChart (reversing to plot oldest to newest)
   const chartData = [...history]
     .reverse()
-    .map((h) => ({
-      date: h.date,
-      scoreValue: parseFloat(h.score.replace("%", "")),
-      role: h.role
-    }));
+    .map((h) => {
+      const scoreStr = h.score != null ? String(h.score).replace("%", "") : "0";
+      return {
+        date: h.date || "",
+        scoreValue: parseFloat(scoreStr) || 0,
+        role: h.role || "Interview Session"
+      };
+    });
 
   return (
     <div className="flex-1 bg-[#FAF6F0] bg-grid-overlay overflow-y-auto h-screen flex flex-col font-sans text-[#262626]">
