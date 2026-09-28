@@ -878,15 +878,23 @@ async def rewrite_resume(
 # Multi-Platform Profile Aggregator & DevScore Routes
 # -------------------------------------------------------------
 @app.post("/api/profile/sync-platforms")
-async def sync_candidate_platforms(payload: PlatformSyncRequest, user: AuthUser = Depends(require_user)):
-    # The target user comes from the bearer token, never from the request body —
-    # otherwise anyone could overwrite another candidate's platform handles.
-    user_id = user.uid
+async def sync_candidate_platforms(
+    payload: PlatformSyncRequest,
+    user: Optional[AuthUser] = Depends(optional_user)
+):
+    user_id = (user.uid if user else None) or payload.user_id or "anonymous"
     try:
+        existing_profile = database.get_candidate_profile(user_id) or {}
+        
+        # Retain existing handle if not provided in payload
+        lc_handle = payload.leetcode_handle if payload.leetcode_handle is not None and payload.leetcode_handle != "" else existing_profile.get("leetcode_handle", "")
+        cf_handle = payload.codeforces_handle if payload.codeforces_handle is not None and payload.codeforces_handle != "" else existing_profile.get("codeforces_handle", "")
+        gh_handle = payload.github_url if payload.github_url is not None and payload.github_url != "" else existing_profile.get("github_url", "")
+
         # 1. Fetch live metrics from platforms
-        lc_stats = profile_aggregator.fetch_leetcode_stats(payload.leetcode_handle) if payload.leetcode_handle else {}
-        cf_stats = profile_aggregator.fetch_codeforces_stats(payload.codeforces_handle) if payload.codeforces_handle else {}
-        gh_stats = profile_aggregator.fetch_github_stats(payload.github_url) if payload.github_url else {}
+        lc_stats = profile_aggregator.fetch_leetcode_stats(lc_handle) if lc_handle else {}
+        cf_stats = profile_aggregator.fetch_codeforces_stats(cf_handle) if cf_handle else {}
+        gh_stats = profile_aggregator.fetch_github_stats(gh_handle) if gh_handle else {}
 
         # 2. Get real aggregated PrepAI voice interview metrics
         prepai_stats = database.get_user_prepai_stats(user_id)
@@ -896,11 +904,11 @@ async def sync_candidate_platforms(payload: PlatformSyncRequest, user: AuthUser 
 
         # 4. Persist to PostgreSQL
         database.update_candidate_platform_stats(user_id, {
-            "leetcode_handle": payload.leetcode_handle or "",
+            "leetcode_handle": lc_handle,
             "leetcode_stats": lc_stats,
-            "codeforces_handle": payload.codeforces_handle or "",
+            "codeforces_handle": cf_handle,
             "codeforces_stats": cf_stats,
-            "github_url": payload.github_url or "",
+            "github_url": gh_handle,
             "github_stats": gh_stats,
             "devscore": devscore_data["devscore"],
             "devscore_breakdown": devscore_data

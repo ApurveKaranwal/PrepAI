@@ -71,6 +71,8 @@ export default function DashboardHome({ onNavigate, user }) {
   const [syncGithub, setSyncGithub] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const [activeSyncPlatform, setActiveSyncPlatform] = useState("all");
   const [copiedBadge, setCopiedBadge] = useState(false);
 
   const [resumeAnalysis, setResumeAnalysis] = useState(() => {
@@ -167,29 +169,41 @@ export default function DashboardHome({ onNavigate, user }) {
     if (e) e.preventDefault();
     setIsSyncing(true);
     setSyncSuccess(false);
+    setSyncError("");
     try {
       const backend = getBackendBaseUrl();
+      const token = typeof window !== "undefined" ? localStorage.getItem("prepflow_token") : null;
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch(`${backend}/api/profile/sync-platforms`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           user_id: user?.uid || "anonymous",
-          leetcode_handle: syncLeetcode,
-          codeforces_handle: syncCodeforces,
-          github_url: syncGithub
+          leetcode_handle: (syncLeetcode || "").trim(),
+          codeforces_handle: (syncCodeforces || "").trim(),
+          github_url: (syncGithub || "").trim()
         })
       });
       if (res.ok) {
         const data = await res.json();
-        setDevScoreData(data.devscore_data);
+        if (data.devscore_data) {
+          setDevScoreData(data.devscore_data);
+        }
         setSyncSuccess(true);
         setTimeout(() => {
           setShowSyncModal(false);
           setSyncSuccess(false);
+          setSyncError("");
         }, 1200);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setSyncError(errData.detail || "Verification failed. Please check your handles and try again.");
       }
     } catch (err) {
       console.error("Failed to sync platforms:", err);
+      setSyncError("Network error: Could not reach backend server to verify handles.");
     } finally {
       setIsSyncing(false);
     }
@@ -352,7 +366,12 @@ export default function DashboardHome({ onNavigate, user }) {
                   Proof-of-Skill Rating
                 </div>
                 <button
-                  onClick={() => setShowSyncModal(true)}
+                  type="button"
+                  onClick={() => {
+                    setActiveSyncPlatform("all");
+                    setSyncError("");
+                    setShowSyncModal(true);
+                  }}
                   className="text-[11px] font-mono font-bold text-[#C85A32] hover:text-[#B83A14] flex items-center gap-1 cursor-pointer transition-colors"
                 >
                   <RefreshCw className="h-3 w-3" />
@@ -523,6 +542,8 @@ export default function DashboardHome({ onNavigate, user }) {
                           type="button"
                           onClick={() => {
                             setSyncLeetcode(devScoreData?.platform_stats?.leetcode?.handle || "");
+                            setActiveSyncPlatform("leetcode");
+                            setSyncError("");
                             setShowSyncModal(true);
                           }}
                           className="px-2.5 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] hover:border-[#262626] rounded-lg text-[11px] font-mono font-bold text-[#6E6359] transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
@@ -534,7 +555,12 @@ export default function DashboardHome({ onNavigate, user }) {
                       </>
                     ) : (
                       <button
-                        onClick={() => setShowSyncModal(true)}
+                        type="button"
+                        onClick={() => {
+                          setActiveSyncPlatform("leetcode");
+                          setSyncError("");
+                          setShowSyncModal(true);
+                        }}
                         className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] rounded-lg text-xs font-mono font-bold text-[#262626] transition-all cursor-pointer shadow-3xs flex items-center gap-1"
                       >
                         <span>+ Connect</span>
@@ -603,6 +629,8 @@ export default function DashboardHome({ onNavigate, user }) {
                           type="button"
                           onClick={() => {
                             setSyncCodeforces(devScoreData?.platform_stats?.codeforces?.handle || "");
+                            setActiveSyncPlatform("codeforces");
+                            setSyncError("");
                             setShowSyncModal(true);
                           }}
                           className="px-2.5 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] hover:border-[#262626] rounded-lg text-[11px] font-mono font-bold text-[#6E6359] transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
@@ -614,7 +642,12 @@ export default function DashboardHome({ onNavigate, user }) {
                       </>
                     ) : (
                       <button
-                        onClick={() => setShowSyncModal(true)}
+                        type="button"
+                        onClick={() => {
+                          setActiveSyncPlatform("codeforces");
+                          setSyncError("");
+                          setShowSyncModal(true);
+                        }}
                         className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] rounded-lg text-xs font-mono font-bold text-[#262626] transition-all cursor-pointer shadow-3xs flex items-center gap-1"
                       >
                         <span>+ Connect</span>
@@ -678,6 +711,8 @@ export default function DashboardHome({ onNavigate, user }) {
                           type="button"
                           onClick={() => {
                             setSyncGithub(devScoreData?.platform_stats?.github?.username || "");
+                            setActiveSyncPlatform("github");
+                            setSyncError("");
                             setShowSyncModal(true);
                           }}
                           className="px-2.5 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] hover:border-[#262626] rounded-lg text-[11px] font-mono font-bold text-[#6E6359] transition-all cursor-pointer shadow-3xs flex items-center gap-1.5"
@@ -689,7 +724,12 @@ export default function DashboardHome({ onNavigate, user }) {
                       </>
                     ) : (
                       <button
-                        onClick={() => setShowSyncModal(true)}
+                        type="button"
+                        onClick={() => {
+                          setActiveSyncPlatform("github");
+                          setSyncError("");
+                          setShowSyncModal(true);
+                        }}
                         className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#262626] hover:text-white border border-[#DFD5C6] rounded-lg text-xs font-mono font-bold text-[#262626] transition-all cursor-pointer shadow-3xs flex items-center gap-1"
                       >
                         <span>+ Connect</span>
@@ -1104,42 +1144,115 @@ export default function DashboardHome({ onNavigate, user }) {
 
         </div>
 
-        {/* Sync External Platforms Modal */}
-        {showSyncModal && (
-          <div className="fixed inset-0 bg-[#262626]/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl max-w-lg w-full p-6 sm:p-7 shadow-2xl space-y-6 relative">
-              {/* Close Button */}
-              <button
-                onClick={() => setShowSyncModal(false)}
-                className="absolute top-5 right-5 p-1.5 rounded-lg text-[#6E6359] hover:bg-[#FAF6F0] hover:text-[#262626] transition-colors cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
+      </main>
 
-              {/* Title Header */}
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-[#C85A32]" />
-                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#C85A32]">
-                    Proof-of-Skill Accounts
-                  </span>
-                </div>
-                <h3 className="text-xl font-serif font-bold text-[#262626]">
-                  Connect & Replace Profiles
-                </h3>
-                <p className="text-xs text-[#6E6359] leading-relaxed">
-                  Enter new handles to replace existing accounts or link new ones. Live APIs will re-verify metrics and recalculate your unified DevScore™.
-                </p>
+      {/* Sync External Platforms Modal (Portalled/Top-level z-[99999]) */}
+      {showSyncModal && (
+        <div
+          className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowSyncModal(false)}
+        >
+          <div
+            className="bg-[#FCFAF7] border border-[#DFD5C6] rounded-2xl max-w-lg w-full p-6 sm:p-7 shadow-2xl space-y-5 relative max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setShowSyncModal(false)}
+              className="absolute top-5 right-5 p-1.5 rounded-lg text-[#6E6359] hover:bg-[#FAF6F0] hover:text-[#262626] transition-colors cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            {/* Title Header */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-[#C85A32]" />
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#C85A32]">
+                  Proof-of-Skill Accounts
+                </span>
               </div>
+              <h3 className="text-xl font-serif font-bold text-[#262626]">
+                {activeSyncPlatform === "leetcode" ? "Connect LeetCode Profile" :
+                 activeSyncPlatform === "codeforces" ? "Connect Codeforces Profile" :
+                 activeSyncPlatform === "github" ? "Connect GitHub Profile" :
+                 "Connect & Verify Platforms"}
+              </h3>
+              <p className="text-xs text-[#6E6359] leading-relaxed">
+                Link your accounts to auto-verify problem solving and code craftsmanship. Metrics are synced directly via official APIs into your unified DevScore™.
+              </p>
+            </div>
 
-              {/* Form Inputs */}
-              <form onSubmit={handleSyncPlatforms} className="space-y-4">
-                {/* LeetCode Input */}
+            {/* Platform Selector Tabs */}
+            <div className="flex items-center gap-1.5 p-1 bg-[#FAF6F0] border border-[#DFD5C6] rounded-xl text-xs font-mono">
+              <button
+                type="button"
+                onClick={() => { setActiveSyncPlatform("all"); setSyncError(""); }}
+                className={`flex-1 py-1.5 px-2 rounded-lg font-bold transition-all text-center ${
+                  activeSyncPlatform === "all" ? "bg-[#FCFAF7] text-[#262626] shadow-xs border border-[#DFD5C6]" : "text-[#6E6359] hover:text-[#262626]"
+                }`}
+              >
+                All Platforms
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveSyncPlatform("leetcode"); setSyncError(""); }}
+                className={`flex-1 py-1.5 px-2 rounded-lg font-bold transition-all text-center flex items-center justify-center gap-1 ${
+                  activeSyncPlatform === "leetcode" ? "bg-[#FCFAF7] text-[#D97706] shadow-xs border border-[#DFD5C6]" : "text-[#6E6359] hover:text-[#262626]"
+                }`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-[#D97706]" />
+                LeetCode
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveSyncPlatform("codeforces"); setSyncError(""); }}
+                className={`flex-1 py-1.5 px-2 rounded-lg font-bold transition-all text-center flex items-center justify-center gap-1 ${
+                  activeSyncPlatform === "codeforces" ? "bg-[#FCFAF7] text-[#2563EB] shadow-xs border border-[#DFD5C6]" : "text-[#6E6359] hover:text-[#262626]"
+                }`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-[#2563EB]" />
+                Codeforces
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveSyncPlatform("github"); setSyncError(""); }}
+                className={`flex-1 py-1.5 px-2 rounded-lg font-bold transition-all text-center flex items-center justify-center gap-1 ${
+                  activeSyncPlatform === "github" ? "bg-[#FCFAF7] text-[#262626] shadow-xs border border-[#DFD5C6]" : "text-[#6E6359] hover:text-[#262626]"
+                }`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-[#262626]" />
+                GitHub
+              </button>
+            </div>
+
+            {/* Error Alert */}
+            {syncError && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 font-mono">
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{syncError}</span>
+              </div>
+            )}
+
+            {/* Success Alert */}
+            {syncSuccess && (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center gap-2.5 text-xs font-mono text-emerald-800">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span>Successfully verified and linked! Your DevScore™ has been recalculated.</span>
+              </div>
+            )}
+
+            {/* Form Inputs */}
+            <form onSubmit={handleSyncPlatforms} className="space-y-4">
+              {/* LeetCode Input */}
+              {(activeSyncPlatform === "all" || activeSyncPlatform === "leetcode") && (
                 <div className="space-y-1.5 p-3 rounded-xl bg-[#FAF6F0]/60 border border-[#DFD5C6]/70">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold font-mono text-[#262626] flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-[#D97706]" />
                       LeetCode Account
+                      <span className="text-[10px] text-[#D97706] font-mono font-semibold">+350 pts</span>
                     </label>
                     {devScoreData?.platform_stats?.leetcode?.handle && (
                       <div className="flex items-center gap-1.5">
@@ -1150,10 +1263,10 @@ export default function DashboardHome({ onNavigate, user }) {
                           type="button"
                           onClick={() => setSyncLeetcode("")}
                           className="text-[10px] font-mono font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center gap-0.5"
-                          title="Unlink and clear this account"
+                          title="Unlink this account"
                         >
                           <Trash2 className="h-2.5 w-2.5" />
-                          <span>Unlink</span>
+                          <span>Clear</span>
                         </button>
                       </div>
                     )}
@@ -1168,18 +1281,24 @@ export default function DashboardHome({ onNavigate, user }) {
                       type="text"
                       value={syncLeetcode}
                       onChange={(e) => setSyncLeetcode(e.target.value)}
-                      placeholder="Enter new LeetCode handle to replace (e.g. neal_wu)"
+                      placeholder="Enter LeetCode username (e.g. neal_wu)"
                       className="w-full pl-10 pr-3 py-2 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#D97706] transition-all font-mono"
                     />
                   </div>
+                  <p className="text-[10px] text-[#6E6359] font-mono">
+                    Verifies solved counts (Easy/Med/Hard) and contest ranking.
+                  </p>
                 </div>
+              )}
 
-                {/* Codeforces Input */}
+              {/* Codeforces Input */}
+              {(activeSyncPlatform === "all" || activeSyncPlatform === "codeforces") && (
                 <div className="space-y-1.5 p-3 rounded-xl bg-[#FAF6F0]/60 border border-[#DFD5C6]/70">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold font-mono text-[#262626] flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-[#2563EB]" />
                       Codeforces Account
+                      <span className="text-[10px] text-[#2563EB] font-mono font-semibold">+200 pts</span>
                     </label>
                     {devScoreData?.platform_stats?.codeforces?.handle && (
                       <div className="flex items-center gap-1.5">
@@ -1190,10 +1309,10 @@ export default function DashboardHome({ onNavigate, user }) {
                           type="button"
                           onClick={() => setSyncCodeforces("")}
                           className="text-[10px] font-mono font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center gap-0.5"
-                          title="Unlink and clear this account"
+                          title="Unlink this account"
                         >
                           <Trash2 className="h-2.5 w-2.5" />
-                          <span>Unlink</span>
+                          <span>Clear</span>
                         </button>
                       </div>
                     )}
@@ -1210,18 +1329,24 @@ export default function DashboardHome({ onNavigate, user }) {
                       type="text"
                       value={syncCodeforces}
                       onChange={(e) => setSyncCodeforces(e.target.value)}
-                      placeholder="Enter new Codeforces handle to replace (e.g. tourist)"
+                      placeholder="Enter Codeforces handle (e.g. tourist)"
                       className="w-full pl-10 pr-3 py-2 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#2563EB] transition-all font-mono"
                     />
                   </div>
+                  <p className="text-[10px] text-[#6E6359] font-mono">
+                    Verifies international rating, rank title, and problem count.
+                  </p>
                 </div>
+              )}
 
-                {/* GitHub Input */}
+              {/* GitHub Input */}
+              {(activeSyncPlatform === "all" || activeSyncPlatform === "github") && (
                 <div className="space-y-1.5 p-3 rounded-xl bg-[#FAF6F0]/60 border border-[#DFD5C6]/70">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold font-mono text-[#262626] flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-[#262626]" />
                       GitHub Account
+                      <span className="text-[10px] text-[#262626] font-mono font-semibold">+200 pts</span>
                     </label>
                     {devScoreData?.platform_stats?.github?.username && (
                       <div className="flex items-center gap-1.5">
@@ -1232,10 +1357,10 @@ export default function DashboardHome({ onNavigate, user }) {
                           type="button"
                           onClick={() => setSyncGithub("")}
                           className="text-[10px] font-mono font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center gap-0.5"
-                          title="Unlink and clear this account"
+                          title="Unlink this account"
                         >
                           <Trash2 className="h-2.5 w-2.5" />
-                          <span>Unlink</span>
+                          <span>Clear</span>
                         </button>
                       </div>
                     )}
@@ -1250,52 +1375,52 @@ export default function DashboardHome({ onNavigate, user }) {
                       type="text"
                       value={syncGithub}
                       onChange={(e) => setSyncGithub(e.target.value)}
-                      placeholder="Enter new GitHub username to replace (e.g. torvalds)"
+                      placeholder="Enter GitHub username or URL (e.g. torvalds)"
                       className="w-full pl-10 pr-3 py-2 bg-[#FCFAF7] border border-[#DFD5C6] rounded-xl text-xs text-[#262626] focus:outline-none focus:bg-[#FCFAF7] focus:border-[#334155] transition-all font-mono"
                     />
                   </div>
+                  <p className="text-[10px] text-[#6E6359] font-mono">
+                    Indexes repository volume, primary languages, and stars.
+                  </p>
                 </div>
+              )}
 
-                {/* Status or Success message */}
-                {syncSuccess && (
-                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center gap-2 text-xs font-mono text-emerald-800">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                    <span>Successfully updated & recalculated DevScore!</span>
-                  </div>
-                )}
-
-                {/* Modal Actions */}
-                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFD5C6]/60">
-                  <button
-                    type="button"
-                    onClick={() => setShowSyncModal(false)}
-                    className="px-4 py-2 border border-[#DFD5C6] hover:bg-[#FAF6F0] rounded-xl text-xs font-bold text-[#6E6359] transition-all cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSyncing}
-                    className="px-5 py-2 bg-[#C85A32] hover:bg-[#B83A14] disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-xs cursor-pointer"
-                  >
-                    {isSyncing ? (
-                      <>
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>Verifying & Recalculating...</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        <span>Save & Recalculate DevScore</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
+              {/* Modal Actions */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFD5C6]/60">
+                <button
+                  type="button"
+                  onClick={() => setShowSyncModal(false)}
+                  className="px-4 py-2 border border-[#DFD5C6] hover:bg-[#FAF6F0] rounded-xl text-xs font-bold text-[#6E6359] transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSyncing}
+                  className="px-5 py-2 bg-[#C85A32] hover:bg-[#B83A14] disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-xs cursor-pointer"
+                >
+                  {isSyncing ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Verifying with API...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      <span>
+                        {activeSyncPlatform === "leetcode" ? "Verify & Link LeetCode (+350 pts)" :
+                         activeSyncPlatform === "codeforces" ? "Verify & Link Codeforces (+200 pts)" :
+                         activeSyncPlatform === "github" ? "Verify & Link GitHub (+200 pts)" :
+                         "Save & Recalculate DevScore"}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-      </main>
+        </div>
+      )}
     </div>
   );
 }
