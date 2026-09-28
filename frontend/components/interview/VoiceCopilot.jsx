@@ -1752,12 +1752,12 @@ export default function VoiceCopilot({ user }) {
                 Recommendation
               </span>
               <div className={`px-4 py-2 rounded-lg text-xs font-bold uppercase border tracking-wider flex items-center gap-1.5 shadow-sm ${
-                scorecard.hiring_recommendation.includes("Strong Hire") ? "bg-[#E8F2EC] border-[#B3D6C2] text-[#2E5A44]" :
-                scorecard.hiring_recommendation.includes("Hire") ? "bg-[#C85A32]/10 border-[#C85A32]/25 text-[#C85A32]" :
+                String(scorecard?.hiring_recommendation || "").includes("Strong Hire") ? "bg-[#E8F2EC] border-[#B3D6C2] text-[#2E5A44]" :
+                String(scorecard?.hiring_recommendation || "").includes("Hire") ? "bg-[#C85A32]/10 border-[#C85A32]/25 text-[#C85A32]" :
                 "bg-[#FCEBE6] border-[#F2C2B8] text-[#C85A32]"
               }`}>
                 <Award className="h-4 w-4" />
-                {scorecard.hiring_recommendation}
+                {scorecard?.hiring_recommendation || "Incomplete"}
               </div>
             </div>
           </div>
@@ -1778,11 +1778,11 @@ export default function VoiceCopilot({ user }) {
               <div className="flex-1 flex justify-center items-center h-[280px] w-full text-xs mt-2">
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                   <RadarChart cx="50%" cy="50%" outerRadius="68%" data={[
-                    { subject: "Tech Depth", value: scorecard.scores.technical_depth },
-                    { subject: "Communication", value: scorecard.scores.communication },
-                    { subject: "Problem Solving", value: scorecard.scores.problem_solving },
-                    { subject: "System Design", value: scorecard.scores.system_design },
-                    { subject: "Ownership", value: scorecard.scores.ownership }
+                    { subject: "Tech Depth", value: Number(scorecard?.scores?.technical_depth ?? 0) },
+                    { subject: "Communication", value: Number(scorecard?.scores?.communication ?? 0) },
+                    { subject: "Problem Solving", value: Number(scorecard?.scores?.problem_solving ?? 0) },
+                    { subject: "System Design", value: Number(scorecard?.scores?.system_design ?? 0) },
+                    { subject: "Ownership", value: Number(scorecard?.scores?.ownership ?? 0) }
                   ]}>
                     <PolarGrid stroke="#DFD5C6" strokeDasharray="3 3" />
                     <PolarAngleAxis
@@ -1830,11 +1830,11 @@ export default function VoiceCopilot({ user }) {
               <div className="flex-1 h-[260px] w-full text-xs mt-4">
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                   <BarChart data={[
-                    { name: "Tech Depth", Score: scorecard.scores.technical_depth },
-                    { name: "Communication", Score: scorecard.scores.communication },
-                    { name: "Problem Solving", Score: scorecard.scores.problem_solving },
-                    { name: "System Design", Score: scorecard.scores.system_design },
-                    { name: "Ownership", Score: scorecard.scores.ownership }
+                    { name: "Tech Depth", Score: Number(scorecard?.scores?.technical_depth ?? 0) },
+                    { name: "Communication", Score: Number(scorecard?.scores?.communication ?? 0) },
+                    { name: "Problem Solving", Score: Number(scorecard?.scores?.problem_solving ?? 0) },
+                    { name: "System Design", Score: Number(scorecard?.scores?.system_design ?? 0) },
+                    { name: "Ownership", Score: Number(scorecard?.scores?.ownership ?? 0) }
                   ]}>
                     <XAxis dataKey="name" stroke="#6e6359" />
                     <YAxis domain={[0, 10]} stroke="#6e6359" />

@@ -200,7 +200,8 @@ Explicitly move to the DSA (Data Structures & Algorithms) round.
 
 IMPORTANT: YOU MUST ALWAYS RESPOND IN JSON FORMAT matching this exact schema:
 {
-    "feedback": "Your evaluation/feedback on their PREVIOUS answer (leave empty if this is the first question)",
+    "score": <float 0.0 to 10.0 grading the technical accuracy, correctness, and code quality of their PREVIOUS answer; null if initial question with no previous answer>,
+    "feedback": "Your concise evaluation and technical feedback on their PREVIOUS answer (leave empty if this is the first question)",
     "question": "Your next question/coding instruction for the user (or the final evaluation scorecard if the interview is over)",
     "code": "A code snippet, buggy function, skeleton function, or code block representing the coding task (or empty string/null if not applicable)",
     "type": "code-analysis",
@@ -382,22 +383,40 @@ def submit_answer(submission: AnswerSubmission):
     
     # 1. Save candidate's answer to DB
     database.save_message(submission.session_id, "user", submission.answer)
+
+    # 2. Generate Next Turn using full conversation history
+    next_turn = generate_next_turn(submission.session_id)
     
-    # 2. Save to old 'answers' table for analytics compatibility (dummy metrics since we defer to next msg)
+    # 3. Extract precise AI evaluation score for this answer (never dummy 8.0)
+    evaluated_score = None
+    if next_turn and next_turn.get("score") is not None:
+        try:
+            evaluated_score = round(max(0.0, min(10.0, float(next_turn["score"]))), 1)
+        except (ValueError, TypeError):
+            evaluated_score = None
+
+    if evaluated_score is None:
+        # Dynamic fallback based on substance rather than hardcoded 8.0
+        ans_lower = submission.answer.strip().lower()
+        if len(ans_lower) < 15 or any(p in ans_lower for p in ["don't know", "dont know", "idk", "no idea", "not sure", "pass"]):
+            evaluated_score = 1.0
+        elif len(submission.answer.strip()) > 80:
+            evaluated_score = 7.0
+        else:
+            evaluated_score = 5.0
+
+    # 4. Save to 'answers' table with the real evaluated score
     database.save_answer(
         session_id=submission.session_id,
         question_id_in_session=submission.question_id,
         answer_text=submission.answer,
-        score=8.0,
+        score=evaluated_score,
         wpm=wpm,
         fillers=filler_count,
-        live_tip="Computing next step...",
+        live_tip=next_turn.get("feedback", "Good structure.") if next_turn else "Response evaluated.",
         matched_keywords=[],
         missing_keywords=[]
     )
-    
-    # 3. Generate Next Turn using full history
-    next_turn = generate_next_turn(submission.session_id)
     
     if next_turn:
         database.save_message(submission.session_id, "assistant", json.dumps(next_turn))

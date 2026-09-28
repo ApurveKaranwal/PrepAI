@@ -392,16 +392,16 @@ Your persona: {mode_instruction}
             scores["ownership"] = round(sum(e.get("ownership", 0.0) for e in evals) / len(evals), 1)
             scores["problem_solving"] = round((scores["technical_depth"] + scores["system_design"]) / 2, 1)
         else:
-            scores = {"technical_depth": 5.0, "communication": 5.0, "problem_solving": 5.0, "system_design": 5.0, "ownership": 5.0}
+            scores = {"technical_depth": 0.0, "communication": 0.0, "problem_solving": 0.0, "system_design": 0.0, "ownership": 0.0}
 
         default_scorecard = {
             "scores": scores,
-            "overall_rating": round(sum(scores.values()) / len(scores), 1),
-            "strengths": ["Clear communication style", "Familiarity with modern stacks"],
-            "weaknesses": ["Could expand more on distributed failure modes"],
-            "missed_concepts": ["Load balancing, rate limiting"],
-            "learning_resources": ["Read 'Designing Data-Intensive Applications' Chapter 3"],
-            "hiring_recommendation": "Hire"
+            "overall_rating": round(sum(scores.values()) / max(1, len(scores)), 1) if evals else 0.0,
+            "strengths": ["Clear communication style", "Familiarity with core concepts"] if evals else ["Session initialized."],
+            "weaknesses": ["Could expand more on distributed failure modes and edge cases"] if evals else ["No responses recorded to evaluate."],
+            "missed_concepts": ["Session affinity, distributed locks"] if evals else [],
+            "learning_resources": ["Review system design patterns and concurrency models"] if evals else [],
+            "hiring_recommendation": "Hire" if (evals and sum(scores.values()) / max(1, len(scores)) >= 6.0) else "Incomplete"
         }
         
         prompt = f"""
@@ -443,7 +443,19 @@ Your persona: {mode_instruction}
                     json_str = json_str.split("```json")[1].split("```")[0].strip()
                 elif "```" in json_str:
                     json_str = json_str.split("```")[1].split("```")[0].strip()
-                return json.loads(json_str)
+                parsed = json.loads(json_str)
+                if isinstance(parsed, dict) and "scores" in parsed and isinstance(parsed["scores"], dict):
+                    # Sanitize all scores to valid floats between 0.0 and 10.0
+                    for k in ["technical_depth", "communication", "problem_solving", "system_design", "ownership"]:
+                        try:
+                            parsed["scores"][k] = round(max(0.0, min(10.0, float(parsed["scores"].get(k, 0.0)))), 1)
+                        except (ValueError, TypeError):
+                            parsed["scores"][k] = scores.get(k, 0.0)
+                    try:
+                        parsed["overall_rating"] = round(max(0.0, min(10.0, float(parsed.get("overall_rating", 0.0)))), 1)
+                    except (ValueError, TypeError):
+                        parsed["overall_rating"] = round(sum(parsed["scores"].values()) / 5.0, 1)
+                    return parsed
         except Exception as e:
             print(f"Error generating post interview scorecard: {e}")
             
