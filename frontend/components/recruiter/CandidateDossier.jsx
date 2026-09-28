@@ -207,8 +207,8 @@ function ContactSection({ candidate, onRequestContact }) {
           <p className="text-xs font-bold text-[#262626]">Contact details locked</p>
         </div>
         <p className={styles.hint}>
-          This candidate chose to be discoverable, not contactable. Their name, email, résumé and profile links
-          unlock only after they accept a request from your organization.
+          This candidate chose to be discoverable. Their email, résumé and profile links
+          unlock once they accept a contact request from your organization.
         </p>
         {status === "pending" ? (
           <Chip tone="blue" icon={Clock}>

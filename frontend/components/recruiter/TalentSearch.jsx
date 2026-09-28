@@ -239,7 +239,7 @@ export default function TalentSearch({ enabled = true, jobs, pipeline, outreach,
     <div className="space-y-6">
       <PanelHeader
         title="Talent Radar"
-        description="Developers who switched on “open to opportunities”. You see verified scores and skills; their name, email and résumé unlock only when they accept your request."
+        description="Verified candidates open to opportunities with live competitive programming telemetry, GitHub signals, and DevScore."
       >
         <Chip tone="neutral" icon={Users}>
           {totalCount} {totalCount === 1 ? "candidate" : "candidates"}

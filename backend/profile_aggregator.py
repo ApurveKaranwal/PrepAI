@@ -18,10 +18,35 @@ def clean_handle(handle_or_url: str) -> str:
     """Extracts clean alphanumeric handle from URL or raw string."""
     if not handle_or_url:
         return ""
-    clean = handle_or_url.strip().rstrip("/")
-    if "/" in clean:
-        clean = clean.split("/")[-1]
-    return clean.replace("@", "").strip()
+    s = handle_or_url.strip()
+    # Strip protocol
+    s = re.sub(r"^https?://(www\.)?", "", s, flags=re.IGNORECASE)
+    # Strip query parameters or fragments
+    s = s.split("?")[0].split("#")[0].rstrip("/")
+    parts = [p for p in s.split("/") if p]
+    if not parts:
+        return ""
+    # If it's a domain path like github.com/username or github.com/username/repo
+    if "github.com" in parts[0].lower():
+        if len(parts) > 1:
+            clean = parts[1]
+            if clean.endswith(".git"):
+                clean = clean[:-4]
+            return clean.replace("@", "").strip()
+        return ""
+    if "leetcode.com" in parts[0].lower():
+        if len(parts) > 2 and parts[1].lower() == "u":
+            return parts[2].replace("@", "").strip()
+        return parts[1].replace("@", "").strip() if len(parts) > 1 else ""
+    if "codeforces.com" in parts[0].lower():
+        if len(parts) > 2 and parts[1].lower() == "profile":
+            return parts[2].replace("@", "").strip()
+        return parts[1].replace("@", "").strip() if len(parts) > 1 else ""
+
+    clean = parts[-1].replace("@", "").strip()
+    if clean.endswith(".git"):
+        clean = clean[:-4]
+    return clean
 
 
 def fetch_leetcode_stats(username: str) -> Dict[str, Any]:

@@ -34,7 +34,7 @@ from database import (
     get_unlocked_candidate_ids,
     create_takehome_assessment,
 )
-from profile_aggregator import calculate_devscore
+from profile_aggregator import calculate_devscore, clean_handle
 
 # DevScore bands — kept identical to profile_aggregator.calculate_devscore so a
 # recruiter's tier filter means the same thing as the candidate's badge.
@@ -71,14 +71,18 @@ def _parse_json_field(raw, default=None):
         return default if default is not None else {}
 
 
-def _anonymous_handle(user_id: str) -> str:
+def _display_name(row: dict, user_id: str) -> str:
     """
-    Stable pseudonym for an un-unlocked candidate. Derived from a digest so it
-    is consistent across page loads without exposing the row id (which would
-    leak both user count and signup order).
+    Returns the candidate's real name. If missing, falls back cleanly without
+    inventing synthetic hashes.
     """
-    digest = hashlib.sha256(f"prepflow-candidate:{user_id}".encode("utf-8")).hexdigest()
-    return f"Candidate {digest[:6].upper()}"
+    name = (row.get("name") or "").strip()
+    if name:
+        return name
+    email = (row.get("email") or "").strip()
+    if email and "@" in email:
+        return email.split("@")[0].capitalize()
+    return f"Candidate {user_id}"
 
 
 def _parse_stack(raw) -> list:
@@ -136,9 +140,10 @@ def _build_platform_stats(row: dict, voice: dict) -> dict:
     gh_stats = _parse_json_field(row.get("github_stats"), default={})
     github = {"connected": False, "username": ""}
     if gh_url and gh_stats:
+        gh_user = gh_stats.get("username") or clean_handle(gh_url)
         github = {
             "connected": True,
-            "username": gh_stats.get("username") or gh_url.rstrip("/").split("/")[-1],
+            "username": gh_user,
             "public_repos": gh_stats.get("public_repos", 0),
             "stars_total": gh_stats.get("stars_total", 0),
             "primary_languages": gh_stats.get("primary_languages", []),
@@ -228,9 +233,13 @@ def _serialize_candidate(row: dict, voice: dict, assessment: dict,
     if stack:
         headline = f"{role} • {stack[0]}"
 
+    real_name = (row.get("name") or "").strip()
+    display_name = _display_name(row, uid)
+
     candidate = {
         "id": uid,
-        "display_name": _anonymous_handle(uid),
+        "name": real_name or display_name,
+        "display_name": display_name,
         "headline": headline,
         "role": role,
         "location": location,
@@ -268,8 +277,8 @@ def _serialize_candidate(row: dict, voice: dict, assessment: dict,
 
     if unlocked:
         candidate.update({
-            "name": row.get("name") or "",
-            "display_name": row.get("name") or _anonymous_handle(uid),
+            "name": real_name or display_name,
+            "display_name": display_name,
             "email": row.get("email") or "",
             "resume_name": row.get("resume_name") or "",
             "github_url": row.get("github_url") or "",
@@ -299,8 +308,17 @@ def search_candidate_talent(
     limit = max(1, min(int(limit or 20), MAX_PAGE_SIZE))
     offset = max(0, int(offset or 0))
 
-    where = ["cp.open_to_opportunities = TRUE"]
-    params = []
+    where = [
+        "cp.open_to_opportunities = TRUE",
+        "u.id IS NOT NULL",
+        "u.name IS NOT NULL",
+        "TRIM(u.name) != ''",
+        "u.email NOT ILIKE %s",
+        "u.email NOT ILIKE %s",
+        "u.name NOT ILIKE %s",
+        "u.name NOT ILIKE %s"
+    ]
+    params = ["%@xyz", "test%", "test%", "temp%"]
 
     if min_devscore and int(min_devscore) > 0:
         where.append("COALESCE(cp.devscore, 0) >= %s")
@@ -316,13 +334,12 @@ def search_candidate_talent(
         params.append(f"%{primary_stack}%")
 
     if query and query.strip():
-        # Headline / stack / location only — never name or email. See module docstring.
         pattern = f"%{query.strip()}%"
         where.append(
-            "(cp.job_type ILIKE %s OR cp.tech_stack_preferences ILIKE %s "
+            "(u.name ILIKE %s OR cp.job_type ILIKE %s OR cp.tech_stack_preferences ILIKE %s "
             "OR cp.cities ILIKE %s OR cp.opportunity_preferences ILIKE %s)"
         )
-        params.extend([pattern, pattern, pattern, pattern])
+        params.extend([pattern, pattern, pattern, pattern, pattern])
 
     where_sql = " AND ".join(where)
 
