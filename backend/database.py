@@ -1863,13 +1863,13 @@ def get_history_data(user_id: str = None) -> dict:
 
     # Combined Averages & Insights (purely based on database records)
     overall_readiness = 0
-    comm_score = 75
-    tech_score = 70
-    body_score = 80
-    conf_score = 70
-    problem_solving_score = 70
-    system_design_score = 70
-    ownership_score = 70
+    comm_score = 0
+    tech_score = 0
+    body_score = 0
+    conf_score = 0
+    problem_solving_score = 0
+    system_design_score = 0
+    ownership_score = 0
     improvements = []
     
     # 1. Process Scored Coding Sessions
@@ -2051,7 +2051,9 @@ def get_history_data(user_id: str = None) -> dict:
             "coding_sessions_count": len(sessions),
             "voice_sessions_count": len(voice_sessions),
             "scored_coding_sessions_count": coding_count,
-            "scored_voice_sessions_count": voice_count
+            "scored_voice_sessions_count": voice_count,
+            "avg_voice_score": round(avg_voice_overall, 1) if avg_voice_overall is not None else None,
+            "avg_coding_score": round(avg_coding_score, 1) if avg_coding_score is not None else None
         },
         "skills_report": skills_report
     }

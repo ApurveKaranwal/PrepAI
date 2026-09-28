@@ -195,10 +195,13 @@ export default function DashboardHome({ onNavigate, user }) {
     }
   };
 
-  // Calculate dynamic stats averages
-  const avgVoice = voiceHistory.length > 0
-    ? (voiceHistory.reduce((sum, h) => sum + parseFloat(h.status), 0) / voiceHistory.length).toFixed(1)
-    : "N/A";
+  // Use precise server-computed average scores (never parse status strings)
+  const avgVoice = overallStats?.avg_voice_score != null
+    ? overallStats.avg_voice_score.toFixed(1)
+    : null;
+  const avgCoding = overallStats?.avg_coding_score != null
+    ? overallStats.avg_coding_score.toFixed(1)
+    : null;
 
   // SVG circular progress calculation for Readiness
   const readiness = overallStats?.overall_readiness || 0;
@@ -206,13 +209,13 @@ export default function DashboardHome({ onNavigate, user }) {
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (readiness / 100) * circumference;
 
-  // Format matrix data for RadarChart
+  // Format matrix data for RadarChart — use 0 when no data exists (no fake defaults)
   const competencyData = [
-    { subject: "Tech Knowledge", score: overallStats?.technical_knowledge || 70, fullMark: 100 },
-    { subject: "Communication", score: overallStats?.communication || 75, fullMark: 100 },
-    { subject: "Problem Solving", score: overallStats?.problem_solving || 70, fullMark: 100 },
-    { subject: "System Design", score: overallStats?.system_design || 70, fullMark: 100 },
-    { subject: "Behavioral", score: overallStats?.ownership || 70, fullMark: 100 },
+    { subject: "Tech Knowledge", score: overallStats?.technical_knowledge || 0, fullMark: 100 },
+    { subject: "Communication", score: overallStats?.communication || 0, fullMark: 100 },
+    { subject: "Problem Solving", score: overallStats?.problem_solving || 0, fullMark: 100 },
+    { subject: "System Design", score: overallStats?.system_design || 0, fullMark: 100 },
+    { subject: "Behavioral", score: overallStats?.ownership || 0, fullMark: 100 },
   ];
 
 
@@ -712,7 +715,7 @@ export default function DashboardHome({ onNavigate, user }) {
                       
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-[#262626] bg-[#FAF6F0] border border-[#DFD5C6] px-2 py-0.5 rounded-md">
-                          {avgVoice !== "N/A" ? `${avgVoice} / 10` : "8.0 / 10"} Voice Depth
+                          {avgVoice != null ? `${avgVoice} / 10` : "— / 10"} Voice Depth
                         </span>
                       </div>
                     </div>
@@ -806,11 +809,11 @@ export default function DashboardHome({ onNavigate, user }) {
                 </span>
               </div>
               <p className="text-2xl font-bold font-serif text-[#262626] leading-none pt-2.5">
-                {avgVoice !== "N/A" ? `${avgVoice} ` : "— "}
+                {avgVoice != null ? `${avgVoice} ` : "— "}
                 <span className="text-xs text-[#6E6359]/60 font-mono font-medium">/ 10</span>
               </p>
               <p className="text-[10px] text-[#6E6359]/70 pt-1">
-                {voiceHistory.length} speaking practices
+                {overallStats?.voice_sessions_count || 0} speaking practices
               </p>
             </div>
             <div className="text-[10px] font-bold text-[#C85A32] flex items-center gap-0.5 pt-4 group-hover:translate-x-1 transition-transform">
@@ -855,11 +858,11 @@ export default function DashboardHome({ onNavigate, user }) {
                 </span>
               </div>
               <p className="text-2xl font-bold font-serif text-[#262626] leading-none pt-2.5">
-                {avgVoice !== "N/A" ? `${avgVoice} ` : "— "}
+                {avgCoding != null ? `${avgCoding} ` : "— "}
                 <span className="text-xs text-[#6E6359]/60 font-mono font-medium">/ 10</span>
               </p>
               <p className="text-[10px] text-[#6E6359]/70 pt-1">
-                Technical & Behavioral Mock Interviews
+                {overallStats?.coding_sessions_count || 0} Technical & Behavioral Mock Interviews
               </p>
             </div>
             <div className="text-[10px] font-bold text-[#2E5A44] flex items-center gap-0.5 pt-4 group-hover:translate-x-1 transition-transform">
