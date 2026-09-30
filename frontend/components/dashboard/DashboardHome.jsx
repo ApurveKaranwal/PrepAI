@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { getBackendBaseUrl } from "@/lib/api";
+import { getBackendBaseUrl, getToken } from "@/lib/api";
 import {
   Search,
   FileText,
@@ -103,8 +103,12 @@ export default function DashboardHome({ onNavigate, user }) {
     async function fetchHistory() {
       try {
         const backend = getBackendBaseUrl();
-        const userIdParam = user?.uid ? `?user_id=${encodeURIComponent(user.uid)}` : "";
-        const res = await fetch(`${backend}/api/history${userIdParam}`, { signal: controller.signal });
+        const userId = user?.uid || user?.id || "";
+        const userIdParam = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+        const token = getToken();
+        const headers = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${backend}/api/history${userIdParam}`, { headers, signal: controller.signal });
         if (res.ok && !cancelled) {
           const data = await res.json();
           if (data) {
@@ -131,8 +135,11 @@ export default function DashboardHome({ onNavigate, user }) {
       if (!cancelled) setLoadingDevScore(true);
       try {
         const backend = getBackendBaseUrl();
-        const userId = user?.uid || "anonymous";
-        const res = await fetch(`${backend}/api/profile/devscore?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
+        const userId = user?.uid || user?.id || "anonymous";
+        const token = getToken();
+        const headers = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${backend}/api/profile/devscore?user_id=${encodeURIComponent(userId)}`, { headers, signal: controller.signal });
         if (res.ok && !cancelled) {
           const data = await res.json();
           if (data.devscore_data) {

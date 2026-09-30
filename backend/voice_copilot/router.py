@@ -1,9 +1,11 @@
 import os
 import json
 import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends
 from typing import Optional
 from pydantic import BaseModel
+
+from auth_deps import AuthUser, optional_user
 
 from voice_copilot import db
 from voice_copilot.extractors.resume import extract_text_from_pdf, parse_resume_content
@@ -33,23 +35,37 @@ async def onboard_candidate(
     interview_mode: str = Form("Mid-Level"),
     language: str = Form("en-IN"),
     user_id: Optional[str] = Form(None),
-    email: Optional[str] = Form(None)
+    email: Optional[str] = Form(None),
+    auth_user: Optional[AuthUser] = Depends(optional_user)
 ):
     """
     Onboard candidate: Scrape Resume PDF, LinkedIn, and GitHub.
     Construct Candidate Profile and initialize database session.
     """
-    print(f"Onboarding Voice Copilot. GitHub: {github_url}, LinkedIn URL: {linkedin_url}, Mode: {interview_mode}, User ID: {user_id}, Email: {email}")
+    clean_uid = (auth_user.uid if auth_user else None) or (str(user_id).strip() if user_id and str(user_id).strip().lower() not in ("none", "null", "undefined") else None)
+    clean_email = (auth_user.email if auth_user else None) or (email.strip().lower() if email and str(email).strip().lower() not in ("none", "null", "undefined") else None)
+
+    # Resolve user_id from email if missing
+    if not clean_uid and clean_email:
+        try:
+            import database
+            u = database.get_user_by_email(clean_email)
+            if u:
+                clean_uid = str(u["id"])
+        except Exception as e:
+            print(f"Error resolving user from email {clean_email}: {e}")
+
+    print(f"Onboarding Voice Copilot. GitHub: {github_url}, LinkedIn URL: {linkedin_url}, Mode: {interview_mode}, User ID: {clean_uid}, Email: {clean_email}")
     
     # 1. Parse Resume PDF
     resume_text = ""
     resume_name = None
     resume_profile = {}
     
-    if (user_id or email) and not resume:
+    if (clean_uid or clean_email) and not resume:
         try:
             import database
-            profile = database.get_candidate_profile(user_id or "", email=email)
+            profile = database.get_candidate_profile(clean_uid or "", email=clean_email)
             if profile:
                 resume_text = profile.get("resume_text", "")
                 resume_name = profile.get("resume_name", "Saved_Resume.pdf")
@@ -57,11 +73,11 @@ async def onboard_candidate(
                     github_url = profile.get("github_url", "")
                 if not linkedin_url or linkedin_url.strip() == "":
                     linkedin_url = profile.get("linkedin_url", "")
-                print(f"Loaded stored profile for user {user_id or email} in Voice Copilot. Resume Length: {len(resume_text)}")
+                print(f"Loaded stored profile for user {clean_uid or clean_email} in Voice Copilot. Resume Length: {len(resume_text)}")
                 if resume_text:
                     resume_profile = parse_resume_content(resume_text)
         except Exception as profile_err:
-            print(f"Failed to load candidate profile for user {user_id or email} in Voice Copilot: {profile_err}")
+            print(f"Failed to load candidate profile for user {clean_uid or clean_email} in Voice Copilot: {profile_err}")
 
     if not github_url:
         github_url = ""
@@ -75,19 +91,20 @@ async def onboard_candidate(
             if resume_text:
                 resume_profile = parse_resume_content(resume_text)
                 
-            # Auto-save resume to candidate profile in DB if user_id is provided
-            if user_id:
+            # Auto-save resume to candidate profile in DB if user is identified
+            if clean_uid:
                 try:
                     import database
-                    profile = database.get_candidate_profile(user_id) or {}
+                    profile = database.get_candidate_profile(clean_uid) or {}
+                    profile["user_id"] = clean_uid
                     profile["resume_name"] = resume_name
                     profile["resume_text"] = resume_text
                     if github_url:
                         profile["github_url"] = github_url
                     if linkedin_url:
                         profile["linkedin_url"] = linkedin_url
-                    database.save_candidate_profile(user_id, profile)
-                    print(f"Auto-saved Voice Copilot uploaded resume to profile for user: {user_id}")
+                    database.save_candidate_profile(clean_uid, profile)
+                    print(f"Auto-saved Voice Copilot uploaded resume to profile for user: {clean_uid}")
                 except Exception as db_err:
                     print(f"Failed to auto-save voice copilot profile: {db_err}")
         except Exception as e:
@@ -162,12 +179,12 @@ async def onboard_candidate(
         role=role,
         interview_mode=interview_mode,
         language=language,
-        user_id=user_id
+        user_id=clean_uid
     )
     
     db.update_voice_profile(session_id, profile_summary)
     
-    print(f"Voice session created successfully. Session ID: {session_id}")
+    print(f"Voice session created successfully. Session ID: {session_id}, user_id: {clean_uid}")
     
     return {
         "status": "success",
@@ -258,8 +275,9 @@ async def get_session_details(session_id: int):
     }
 
 @router.get("/history")
-async def get_voice_history_api():
-    history = db.get_voice_history()
+async def get_voice_history_api(user_id: Optional[str] = None, auth_user: Optional[AuthUser] = Depends(optional_user)):
+    effective_uid = (auth_user.uid if auth_user else None) or user_id
+    history = db.get_voice_history(user_id=effective_uid)
     return {
         "status": "success",
         "history": history

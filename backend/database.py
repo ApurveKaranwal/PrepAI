@@ -1725,49 +1725,60 @@ def end_session(session_id: int, duration_seconds: int, total_frames: int = 0, a
     }
 
 def get_history_data(user_id: str = None) -> dict:
+    clean_uid = str(user_id).strip() if user_id and str(user_id).strip().lower() not in ("none", "null", "undefined") else None
+
+    # If no authenticated user ID is provided, never leak other users' sessions
+    if not clean_uid:
+        return {
+            "all_history": [],
+            "dashboard_history": [],
+            "voice_history": [],
+            "analytics_history": [],
+            "overall_stats": {
+                "overall_readiness": 0,
+                "communication": 0,
+                "technical_knowledge": 0,
+                "body_language": 0,
+                "confidence": 0,
+                "avg_voice_score": 0.0,
+                "avg_coding_score": 0.0,
+                "completed_sessions": 0,
+                "total_hours": 0.0,
+                "improvements": [],
+                "correct_answers": 0,
+                "total_answers": 0
+            },
+            "skills_report": "Sign in to view your interview sessions and analytics."
+        }
+
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Fetch coding sessions
+    # 1. Fetch coding sessions strictly for this user
     sessions = []
     try:
-        if user_id:
-            cursor.execute("SELECT * FROM sessions WHERE user_id = ? ORDER BY id DESC", (str(user_id),))
-            sessions = [dict(s) for s in cursor.fetchall()]
-            # If user has no personal sessions yet, fallback to legacy unassigned sessions so past data is visible
-            if not sessions:
-                cursor.execute("SELECT * FROM sessions WHERE user_id IS NULL OR user_id = '' ORDER BY id DESC")
-                sessions = [dict(s) for s in cursor.fetchall()]
-        else:
-            cursor.execute("SELECT * FROM sessions ORDER BY id DESC")
-            sessions = [dict(s) for s in cursor.fetchall()]
+        cursor.execute("SELECT * FROM sessions WHERE CAST(user_id AS TEXT) = ? ORDER BY id DESC", (clean_uid,))
+        sessions = [dict(s) for s in cursor.fetchall()]
     except Exception as e:
         print(f"Error querying sessions in get_history_data: {e}")
         sessions = []
 
-    # 2. Fetch voice sessions
+    # 2. Fetch voice sessions strictly for this user
     voice_sessions = []
     try:
-        if user_id:
-            cursor.execute("SELECT * FROM voice_sessions WHERE user_id = ? ORDER BY id DESC", (str(user_id),))
-            voice_sessions = [dict(vs) for vs in cursor.fetchall()]
-            if not voice_sessions:
-                cursor.execute("SELECT * FROM voice_sessions WHERE user_id IS NULL OR user_id = '' ORDER BY id DESC")
-                voice_sessions = [dict(vs) for vs in cursor.fetchall()]
-        else:
-            cursor.execute("SELECT * FROM voice_sessions ORDER BY id DESC")
-            voice_sessions = [dict(vs) for vs in cursor.fetchall()]
+        cursor.execute("SELECT * FROM voice_sessions WHERE CAST(user_id AS TEXT) = ? ORDER BY id DESC", (clean_uid,))
+        voice_sessions = [dict(vs) for vs in cursor.fetchall()]
     except Exception as e:
         print(f"Error querying voice_sessions in get_history_data: {e}")
         voice_sessions = []
 
-    # 3. Fetch answers for scored coding sessions
+    # 3. Fetch answers strictly for this user's scored coding sessions
     try:
         cursor.execute("""
             SELECT a.* FROM answers a
             JOIN sessions s ON a.session_id = s.id
-            WHERE s.score IS NOT NULL
-        """)
+            WHERE s.score IS NOT NULL AND CAST(s.user_id AS TEXT) = ?
+        """, (clean_uid,))
         answers = [dict(ans) for ans in cursor.fetchall()]
     except Exception:
         answers = []
@@ -2206,17 +2217,24 @@ def update_candidate_platform_stats(user_id: str, p: dict):
     conn.close()
 
 def get_candidate_profile(user_id: str, email: str = None) -> dict:
+    search_id = str(user_id).strip() if user_id and str(user_id).strip().lower() not in ("none", "null", "undefined") else None
+    search_email = email.strip() if email and str(email).strip().lower() not in ("none", "null", "undefined") else (search_id if search_id and "@" in search_id else None)
+
+    if not search_id and not search_email:
+        return None
+
     conn = get_db_connection()
     cursor = conn.cursor()
+    row = None
     
     # 1. Direct match on user_id
-    cursor.execute("SELECT * FROM candidate_profiles WHERE user_id = ?", (str(user_id),))
-    row = cursor.fetchone()
+    if search_id:
+        cursor.execute("SELECT * FROM candidate_profiles WHERE user_id = ?", (search_id,))
+        row = cursor.fetchone()
     
     # 2. Match by email in users table
-    search_email = email or (user_id if "@" in str(user_id) else None)
     if not row and search_email:
-        cursor.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", (search_email.strip(),))
+        cursor.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", (search_email,))
         user_row = cursor.fetchone()
         if user_row:
             cursor.execute("SELECT * FROM candidate_profiles WHERE user_id = ?", (str(user_row["id"]),))
@@ -2225,18 +2243,10 @@ def get_candidate_profile(user_id: str, email: str = None) -> dict:
     # 3. Match via join
     if not row and search_email:
         try:
-            cursor.execute("SELECT * FROM candidate_profiles WHERE user_id IN (SELECT CAST(id AS TEXT) FROM users WHERE LOWER(email) = LOWER(?))", (search_email.strip(),))
+            cursor.execute("SELECT * FROM candidate_profiles WHERE user_id IN (SELECT CAST(id AS TEXT) FROM users WHERE LOWER(email) = LOWER(?))", (search_email,))
             row = cursor.fetchone()
         except Exception:
             pass
-
-    # 4. Graceful fallback for single-user dev environment if not found
-    if not row:
-        try:
-            cursor.execute("SELECT * FROM candidate_profiles ORDER BY created_at DESC LIMIT 1")
-            row = cursor.fetchone()
-        except Exception:
-            row = None
 
     conn.close()
     

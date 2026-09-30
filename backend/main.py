@@ -259,24 +259,38 @@ def read_root():
 async def ingest_details(
     resume: Optional[UploadFile] = File(None),
     github_url: Optional[str] = Form(None),
-    user_id: Optional[str] = Form(None)
+    user_id: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    auth_user: Optional[AuthUser] = Depends(optional_user)
 ):
-    print(f"Ingesting Details. GitHub: {github_url}, User ID: {user_id}")
+    clean_uid = (auth_user.uid if auth_user else None) or (str(user_id).strip() if user_id and str(user_id).strip().lower() not in ("none", "null", "undefined") else None)
+    clean_email = (auth_user.email if auth_user else None) or (email.strip().lower() if email and str(email).strip().lower() not in ("none", "null", "undefined") else None)
+
+    # Resolve user_id from email if missing
+    if not clean_uid and clean_email:
+        try:
+            u = database.get_user_by_email(clean_email)
+            if u:
+                clean_uid = str(u["id"])
+        except Exception as e:
+            print(f"Error resolving user from email {clean_email}: {e}")
+
+    print(f"Ingesting Details. GitHub: {github_url}, User ID: {clean_uid}, Email: {clean_email}")
     resume_text = ""
     resume_name = None
     
     # Check if we should load from stored profile
-    if user_id and not resume:
+    if (clean_uid or clean_email) and not resume:
         try:
-            profile = database.get_candidate_profile(user_id)
+            profile = database.get_candidate_profile(clean_uid or "", email=clean_email)
             if profile:
                 resume_text = profile.get("resume_text", "")
                 resume_name = profile.get("resume_name", "Saved_Resume.pdf")
                 if not github_url:
                     github_url = profile.get("github_url", "")
-                print(f"Loaded saved profile for user {user_id}. Resume Length: {len(resume_text)}, GitHub: {github_url}")
+                print(f"Loaded saved profile for user {clean_uid or clean_email}. Resume Length: {len(resume_text)}, GitHub: {github_url}")
         except Exception as profile_err:
-            print(f"Failed to load candidate profile for user {user_id}: {profile_err}")
+            print(f"Failed to load candidate profile for user {clean_uid or clean_email}: {profile_err}")
             
     # Fallback to github_url empty string if none provided
     if not github_url:
@@ -297,15 +311,16 @@ async def ingest_details(
             print(f"Parsed PDF. Length: {len(resume_text)}")
             
             # Auto-save resume to candidate profile in DB if user_id is provided
-            if user_id:
+            if clean_uid:
                 try:
-                    profile = database.get_candidate_profile(user_id) or {}
+                    profile = database.get_candidate_profile(clean_uid) or {}
+                    profile["user_id"] = clean_uid
                     profile["resume_name"] = resume_name
                     profile["resume_text"] = resume_text
                     if github_url:
                         profile["github_url"] = github_url
-                    database.save_candidate_profile(user_id, profile)
-                    print(f"Auto-saved uploaded resume to profile for user: {user_id}")
+                    database.save_candidate_profile(clean_uid, profile)
+                    print(f"Auto-saved uploaded resume to profile for user: {clean_uid}")
                 except Exception as db_err:
                     print(f"Failed to auto-save profile: {db_err}")
         except Exception as e:
@@ -350,7 +365,7 @@ async def ingest_details(
                 break
 
     # 4. Generate Initial Question & Create Session
-    session_id = database.create_session(github_url, resume_name, resume_text, role, user_id=user_id)
+    session_id = database.create_session(github_url, resume_name, resume_text, role, user_id=clean_uid)
     
     initial_payload = generate_initial_question(resume_text, repo_files, role)
     if initial_payload and "result" in initial_payload:
@@ -529,9 +544,10 @@ def speech_to_text(file: UploadFile = File(...), language_code: str = Form("en-I
 
 
 @app.get("/api/history")
-def get_history(user_id: Optional[str] = None):
+def get_history(user_id: Optional[str] = None, auth_user: Optional[AuthUser] = Depends(optional_user)):
+    effective_user_id = (auth_user.uid if auth_user else None) or user_id
     try:
-        history_data = database.get_history_data(user_id=user_id)
+        history_data = database.get_history_data(user_id=effective_user_id)
         return history_data
     except Exception as e:
         print(f"Error fetching history: {e}")

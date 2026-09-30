@@ -27,9 +27,16 @@ export default function InterviewPrep({ onEndInterview, user }) {
   const [useSavedProfile, setUseSavedProfile] = useState(false);
 
   useEffect(() => {
+    const userKey = user?.uid || user?.id || user?.email || "";
+    if (!userKey) {
+      setSavedProfile(null);
+      setUseSavedProfile(false);
+      return;
+    }
+    const cacheKey = `prepflow_candidate_profile_${userKey}`;
     // 1. Instant cache retrieval from localStorage
     if (typeof window !== "undefined") {
-      const cached = localStorage.getItem("prepflow_candidate_profile");
+      const cached = localStorage.getItem(cacheKey);
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
@@ -52,26 +59,39 @@ export default function InterviewPrep({ onEndInterview, user }) {
         if (uid) queryParams.append("user_id", uid);
         if (userEmail) queryParams.append("email", userEmail);
         
-        const res = await fetch(`${BACKEND_URL}/api/career/profile?${queryParams.toString()}`);
+        const token = typeof window !== "undefined" ? localStorage.getItem("prepflow_token") : null;
+        const headers = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const res = await fetch(`${BACKEND_URL}/api/career/profile?${queryParams.toString()}`, { headers });
         if (res.ok) {
           const data = await res.json();
-          if (data && (data.github_url || data.resume_name || data.user_id)) {
+          if (data && (data.github_url || data.resume_name)) {
             setSavedProfile(data);
             setUseSavedProfile(true); // default to using saved profile
             if (data.github_url) {
-              setGithubUrl(data.github_url);
+              setGithubUrl((prev) => prev || data.github_url);
             }
             if (typeof window !== "undefined") {
-              localStorage.setItem("prepflow_candidate_profile", JSON.stringify(data));
+              localStorage.setItem(cacheKey, JSON.stringify(data));
+            }
+          } else {
+            setSavedProfile(null);
+            setUseSavedProfile(false);
+            if (typeof window !== "undefined") {
+              localStorage.removeItem(cacheKey);
             }
           }
+        } else {
+          setSavedProfile(null);
+          setUseSavedProfile(false);
         }
       } catch (e) {
         console.warn("Failed to load saved profile:", e);
       }
     }
     loadSavedProfile();
-  }, [user]);
+  }, [user?.uid, user?.id, user?.email]);
 
   // Active interview states
   const [sessionStarted, setSessionStarted] = useState(false);
@@ -222,16 +242,25 @@ export default function InterviewPrep({ onEndInterview, user }) {
 
     try {
       const formData = new FormData();
-      if (!useSavedProfile && resumeFile) {
+      if (resumeFile) {
         formData.append("resume", resumeFile);
       }
       formData.append("github_url", targetGithubUrl);
-      if (user?.uid) {
-        formData.append("user_id", user.uid);
+      const uid = user?.uid || user?.id;
+      if (uid) {
+        formData.append("user_id", uid);
       }
+      if (user?.email) {
+        formData.append("email", user.email);
+      }
+
+      const token = typeof window !== "undefined" ? localStorage.getItem("prepflow_token") : null;
+      const headers = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
 
       const res = await fetch(`${BACKEND_URL}/api/ingest`, {
         method: "POST",
+        headers,
         body: formData
       });
 
@@ -416,6 +445,7 @@ export default function InterviewPrep({ onEndInterview, user }) {
     setDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       setResumeFile(e.dataTransfer.files[0]);
+      setUseSavedProfile(false);
     }
   };
 
@@ -604,6 +634,7 @@ export default function InterviewPrep({ onEndInterview, user }) {
                       onChange={(e) => {
                         if (e.target.files && e.target.files[0]) {
                           setResumeFile(e.target.files[0]);
+                          setUseSavedProfile(false);
                         }
                       }}
                       className="hidden"

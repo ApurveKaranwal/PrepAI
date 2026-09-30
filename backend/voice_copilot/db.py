@@ -417,16 +417,19 @@ def end_voice_session(
     finally:
         conn.close()
 
-def get_voice_history() -> List[Dict[str, Any]]:
+def get_voice_history(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    clean_uid = str(user_id).strip() if user_id and str(user_id).strip().lower() not in ("none", "null", "undefined") else None
+    if not clean_uid:
+        return []
     conn, is_pg = get_db_conn()
     try:
         if is_pg:
             from psycopg2.extras import RealDictCursor
             cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute("SELECT * FROM voice_sessions WHERE overall_rating IS NOT NULL ORDER BY id DESC")
+            cursor.execute("SELECT * FROM voice_sessions WHERE overall_rating IS NOT NULL AND CAST(user_id AS TEXT) = %s ORDER BY id DESC", (clean_uid,))
         else:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM voice_sessions WHERE overall_rating IS NOT NULL ORDER BY id DESC")
+            cursor.execute("SELECT * FROM voice_sessions WHERE overall_rating IS NOT NULL AND CAST(user_id AS TEXT) = ? ORDER BY id DESC", (clean_uid,))
         rows = cursor.fetchall()
         
         history = []

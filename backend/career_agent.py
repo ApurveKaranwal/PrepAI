@@ -241,8 +241,10 @@ async def onboard_candidate(
     return {"status": "success", "profile": profile}
 
 @router.get("/profile")
-def get_profile(user_id: str = "", email: str = ""):
-    profile = database.get_candidate_profile(user_id, email=email)
+def get_profile(user_id: str = "", email: str = "", auth_user: Optional[AuthUser] = Depends(optional_user)):
+    search_id = (auth_user.uid if auth_user else None) or user_id
+    search_email = (auth_user.email if auth_user else None) or email
+    profile = database.get_candidate_profile(search_id or "", email=search_email or "")
     if not profile:
         return {"status": "not_found", "message": "Candidate profile not found."}
     return profile
